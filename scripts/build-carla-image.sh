@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # 构建满足 C++ Bridge 运行的 CARLA 镜像（deploy/carla/Dockerfile），并保存为 tar 供后续加载使用。
-# 后续启动（start-all-nodes.sh / compose up carla）将优先使用本地该镜像；若无则从保存的 tar 加载。
+# 构建时会从 docker-compose.carla.yml 的 build.context（项目根目录）读取 Dockerfile。
+#
+# 注意：docker-compose.carla.yml 包含 build: 字段，故 "compose build carla" 会执行 Dockerfile 构建。
+# 构建后 docker-compose up carla 优先使用本地已有的 "remote-driving/carla-with-bridge:latest" 镜像；
+# 若需强制重新构建：先删除旧镜像 docker rmi remote-driving/carla-with-bridge:latest，再运行本脚本。
 #
 # 用法：
 #   ./scripts/build-carla-image.sh

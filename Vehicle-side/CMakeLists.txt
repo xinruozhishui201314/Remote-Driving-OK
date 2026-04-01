@@ -15,6 +15,15 @@ set(DEPS_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/deps/install" CACHE PATH "deps/inst
 # 依赖项获取
 # ==========================================
 
+# fmt (header-only library for formatting)
+set(FMT_DIR "${CMAKE_SOURCE_DIR}/../deps/fmt")
+if(EXISTS "${FMT_DIR}/include/fmt/format.h")
+    message(STATUS "Using fmt from: ${FMT_DIR}")
+    set(FMT_INCLUDE_DIR "${FMT_DIR}/include")
+else()
+    message(FATAL_ERROR "fmt not found. Please ensure ../deps/fmt exists with include/fmt/format.h")
+endif()
+
 # ROS2 支持（如果可用）
 find_package(ament_cmake QUIET)
 if(ament_cmake_FOUND)
@@ -179,6 +188,8 @@ set(HEADERS
     src/vehicle_config.h
     src/chassis_data_generator.h
     src/common/logger.h
+    src/common/error_code.h
+    src/common/log_macros.h
 )
 
 # ==========================================
@@ -204,7 +215,9 @@ endif()
 target_include_directories(VehicleSide PRIVATE
   ${PostgreSQL_INCLUDE_DIRS}
   ${CMAKE_SOURCE_DIR}/src
+  ${CMAKE_SOURCE_DIR}/src/common
   ${nlohmann_json_INCLUDE_DIR}
+  ${FMT_INCLUDE_DIR}
 )
 
 # 链接 spdlog

@@ -608,7 +608,7 @@ def run_one_stream(cam_id, x, y, z, yaw, q, stop, rtmp_url, cam_bp):
             return
 
         # 注册相机回调（在启动推流前先注册，确保帧计数从一开始就进行）
-        camera.listen(lambda img, cid=cam_id: _put_cam_frame(cid, img))
+        cam_actor.listen(lambda img, cid=cam_id: _put_cam_frame(cid, img))
 
         # ── 启动推流 worker（独立线程消费队列）───────────────────────────────
         # 使用 threading.Event 作为推流停止信号，不直接阻塞 spawn 流程
@@ -701,9 +701,59 @@ def _spawn_cameras_and_start_pushers_impl():
                 rtmp_base, vin_prefix, vin_prefix, vin_prefix, vin_prefix)
 
         cam_bp = blueprint_library.find("sensor.camera.rgb")
-        cam_bp.set_attribute("image_size_x", str(CAMERA_WIDTH))
-        cam_bp.set_attribute("image_size_y", str(CAMERA_HEIGHT))
-        cam_bp.set_attribute("sensor_tick", str(CAMERA_FPS))
+
+        # ── 基础分辨率与帧率 ──────────────────────────────────────────────────────
+        # sensor_tick 是秒的倒数，不是 FPS！FPS=15 → sensor_tick = 0.067
+        sensor_tick_seconds = 1.0 / CAMERA_FPS if CAMERA_FPS > 0 else 0.1
+        cam_bp.set_attribute("sensor_tick", str(sensor_tick_seconds))
+
+        # ── 渲染质量优化（offscreen EGL GPU 加速关键）────────────────────────────────
+        # fov: 视野角度，影响画面宽广程度
+        try:
+            cam_bp.set_attribute("fov", "90")  # 90度视野
+        except Exception as e:
+            log_zlm("相机属性设置警告(fov): %s", e)
+
+        # ★ gamma 校正：影响图像明暗对比
+        # 默认 2.2 (sRGB)，设为较低值会使画面变暗
+        # 设为 1.0 可获得更亮但对比度较低的画面
+        try:
+            _gamma = os.environ.get("CAMERA_GAMMA", "2.2")
+            cam_bp.set_attribute("gamma", _gamma)
+        except Exception:
+            pass
+
+        # ★ 曝光模式：影响相机对亮度的适应
+        # exposure_mode 可选:
+        #   - "histogram": 基于直方图自动调整 (适合快速变化场景)
+        #   - "manual": 手动设置曝光参数
+        #   - "auto": CARLA自动处理 (默认)
+        try:
+            _exp_mode = os.environ.get("CAMERA_EXPOSURE_MODE", "histogram")
+            cam_bp.set_attribute("exposure_mode", _exp_mode)
+            # 手动模式下的曝光补偿 (-2 到 2)
+            _exp_comp = os.environ.get("CAMERA_EXPOSURE_COMP", "0.0")
+            cam_bp.set_attribute("exposure_compensation", _exp_comp)
+        except Exception as e:
+            log_zlm("相机属性设置警告(曝光): %s", e)
+
+        # ── DRS (Dynamic Resolution Scaling) - 动态分辨率缩放 ─────────────────────
+        # GPU负载高时自动降低分辨率以维持帧率
+        try:
+            _enable_drs = os.environ.get("CAMERA_ENABLE_DRS", "false")
+            if _enable_drs.lower() in ("true", "1", "yes"):
+                cam_bp.set_attribute("enable_drs", "true")
+                cam_bp.set_attribute("drs_resolution_scale", "1.0")
+                cam_bp.set_attribute("drs_max_resolution_scale", "1.0")
+                cam_bp.set_attribute("drs_min_resolution_scale", "0.5")
+                log_zlm("DRS动态分辨率缩放: 已启用")
+        except Exception as e:
+            log_zlm("DRS设置警告: %s (可能版本不支持)", e)
+
+        log_zlm("相机完整配置: size=%dx%d fps=%d fov=90 gamma=%s exp_mode=%s",
+                CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS,
+                os.environ.get("CAMERA_GAMMA", "2.2"),
+                os.environ.get("CAMERA_EXPOSURE_MODE", "histogram"))
 
         for cam_id, x, y, z, yaw in CAMERA_CONFIGS:
             q = queue.Queue(maxsize=5)

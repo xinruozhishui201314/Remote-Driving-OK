@@ -7,6 +7,9 @@
 
 services:
   carla:
+    build:
+      context: .
+      dockerfile: deploy/carla/Dockerfile
     image: remote-driving/carla-with-bridge:latest
     container_name: carla-server
     # 使用挂载的 entrypoint（覆盖镜像内旧版）；显式用 bash 执行，避免 CRLF/权限问题

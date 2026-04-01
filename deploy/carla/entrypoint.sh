@@ -269,7 +269,12 @@ if [ "$USE_PYTHON_BRIDGE" = "1" ] && [ "$CARLA_PY3_OK" = "1" ] && [ -f "$BRIDGE_
   echo "[entrypoint] 命令: env -u PYTHONPATH $PYTHON_BRIDGE_CMD $BRIDGE_DIR/carla_bridge.py"
   exec env -u PYTHONPATH $PYTHON_BRIDGE_CMD "$BRIDGE_DIR/carla_bridge.py"
 fi
-# C++ Bridge 或回退到 Python（当 USE_PYTHON_BRIDGE=0 或 CARLA_PY3 不可用时）
+# C++ Bridge（优先从镜像内 /usr/local/bin 找——由 Dockerfile 固化，不被 volume 挂载遮蔽）
+if [ -x "/usr/local/bin/carla_bridge" ] 2>/dev/null; then
+  echo "[entrypoint] 启动 C++ Bridge (镜像内置): /usr/local/bin/carla_bridge"
+  exec /usr/local/bin/carla_bridge
+fi
+# C++ Bridge（挂载目录，docker-compose.carla.yml 挂载 ./carla-bridge → /workspace/carla-bridge）
 if [ -x "$BRIDGE_DIR/build/carla_bridge" ] 2>/dev/null; then
   echo "[entrypoint] 启动 C++ Bridge: $BRIDGE_DIR/build/carla_bridge"
   exec "$BRIDGE_DIR/build/carla_bridge"
