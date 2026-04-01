@@ -1,0 +1,31 @@
+# 开发模式 Dockerfile：包含编译工具和运行时依赖，源码通过 volume 挂载
+# 镜像只需构建一次，之后修改代码只需重启容器（容器内重新编译）
+
+FROM docker.1ms.run/library/ubuntu:22.04
+
+# 安装编译工具和运行时依赖（一次性安装）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    make \
+    g++ \
+    git \
+    ca-certificates \
+    libpq-dev \
+    libpq5 \
+    curl \
+    inotify-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 源码和 CMakeLists.txt 通过 volume 挂载（docker-compose.dev.yml）
+# 启动脚本会在容器启动时编译并运行
+
+EXPOSE 8080
+ENV PORT=8080
+
+# 启动脚本：每次容器启动时编译并运行
+COPY docker-entrypoint-dev.sh /docker-entrypoint-dev.sh
+RUN chmod +x /docker-entrypoint-dev.sh
+
+ENTRYPOINT ["/docker-entrypoint-dev.sh"]

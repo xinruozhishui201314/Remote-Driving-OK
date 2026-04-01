@@ -1,0 +1,1 @@
+install(TARGETS VehicleSide)

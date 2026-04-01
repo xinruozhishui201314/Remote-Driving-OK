@@ -1,0 +1,65 @@
+# Vehicle-side 开发模式 override
+#
+# 注意：Dockerfile.dev 现在将 deps（paho.mqtt.cpp、googletest）构建并安装到镜像内
+# deps/install/，CMakeLists.txt 通过 CMAKE_PREFIX_PATH 找到它们。
+# 不再需要通过 volume 挂载 deps，只需挂载 config/（运行时配置）和 scripts/（推流）。
+
+networks:
+  teleop-network:
+    external: true
+
+services:
+  vehicle:
+    build:
+      context: ./
+      dockerfile: Vehicle-side/Dockerfile.dev
+    container_name: teleop-vehicle
+    volumes:
+      # 运行时配置文件（可覆盖环境变量）
+      - ./Vehicle-side/config:/app/config:ro
+      # 推流脚本
+      - ./scripts:/app/scripts:ro
+      # 挂载 NuScenes 数据集（用于推流验证）
+      - /home/wqs/bigdata/data/nuscenes-mini/sweeps:/data/sweeps:ro
+    environment:
+      - MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883
+      - VEHICLE_VIN=${VEHICLE_VIN:-E2ETESTVIN0000001}
+      - ZLM_HOST=zlmediakit
+      - ZLM_RTMP_PORT=1935
+      - ZLM_APP=teleop
+      - VEHICLE_PUSH_SCRIPT=/app/scripts/push-nuscenes-cameras-to-zlm.sh
+      - SWEEPS_PATH=/data/sweeps
+      - NUSCENES_BITRATE=200k
+      - NUSCENES_MAXRATE=250k
+      - NUSCENES_BUFSIZE=100k
+    networks:
+      - teleop-network
+    depends_on:
+      - teleop-mosquitto
+    # CMake 默认 OUTPUT_DIRECTORY = build/，不是 build/bin/
+    entrypoint: ["/app/build/VehicleSide"]
+
+  client-dev:
+    image: remote-driving-client-dev:full
+    container_name: teleop-client-dev
+    # 确保有权限访问 X11
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+      - QT_X11_NO_MITSHM=1
+      # ZLM_VIDEO_URL：客户端容器内拉流时使用的 ZLM base 地址（Docker 网络内可解析）
+      # 当 WHEP URL 为空或 host 不可达时，client 回退到此地址
+      - ZLM_VIDEO_URL=http://zlmediakit:80
+    volumes:
+      # 挂载 X11 socket (Linux)
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # 挂载 Docker socket (用于容器内访问 Docker 控制其他服务，如果需要)
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # 挂载 client 源码，使 QML 等修改无需重建镜像即可生效
+      - ./client:/workspace/client:ro
+      # 宿主机 logs/ → 容器内统一日志（与 CLIENT_LOG_FILE=/workspace/logs/... 配合）
+      - ./logs:/workspace/logs:rw
+    networks:
+      - teleop-network
+    # 不依赖任何特定服务启动，作为开发调试容器
+    stdin_open: true
+    tty: true

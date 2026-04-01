@@ -1,0 +1,85 @@
+{
+  "status_publish_frequency": 50,
+  "chassis_data_fields": [
+    {
+      "name": "speed",
+      "enabled": true,
+      "type": "double",
+      "min_value": 0.0,
+      "max_value": 200.0,
+      "description": "车辆速度 (km/h)"
+    },
+    {
+      "name": "gear",
+      "enabled": true,
+      "type": "int",
+      "min_value": -1.0,
+      "max_value": 1.0,
+      "description": "档位 (-1:倒档, 0:空档, 1:前进)"
+    },
+    {
+      "name": "steering",
+      "enabled": true,
+      "type": "double",
+      "min_value": -1.0,
+      "max_value": 1.0,
+      "description": "转向角度"
+    },
+    {
+      "name": "throttle",
+      "enabled": true,
+      "type": "double",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "description": "油门 (0.0-1.0)"
+    },
+    {
+      "name": "brake",
+      "enabled": true,
+      "type": "double",
+      "min_value": 0.0,
+      "max_value": 1.0,
+      "description": "刹车 (0.0-1.0)"
+    },
+    {
+      "name": "battery",
+      "enabled": true,
+      "type": "double",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "description": "电池电量 (%)"
+    },
+    {
+      "name": "odometer",
+      "enabled": true,
+      "type": "double",
+      "min_value": 0.0,
+      "max_value": 999999.0,
+      "description": "累计里程 (km)"
+    },
+    {
+      "name": "voltage",
+      "enabled": true,
+      "type": "double",
+      "min_value": 0.0,
+      "max_value": 100.0,
+      "description": "电池电压 (V)"
+    },
+    {
+      "name": "current",
+      "enabled": true,
+      "type": "double",
+      "min_value": 0.0,
+      "max_value": 200.0,
+      "description": "电流 (A)"
+    },
+    {
+      "name": "temperature",
+      "enabled": true,
+      "type": "double",
+      "min_value": -40.0,
+      "max_value": 100.0,
+      "description": "温度 (°C)"
+    }
+  ]
+}

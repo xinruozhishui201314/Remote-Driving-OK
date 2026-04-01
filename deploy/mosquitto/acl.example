@@ -1,0 +1,50 @@
+# MQTT Broker ACL（访问控制列表）文件示例
+# 格式：topic [read|write|readwrite] <topic_pattern>
+
+# ────────────────────────
+# §1 车端权限（vehicle_side 用户）
+# ────────────────────────
+
+# 允许订阅控制主题（接收控制指令）
+user vehicle_side
+topic read vehicle/control
+topic read vehicle/+/control
+
+# 允许发布状态主题（上报车辆状态）
+topic write vehicle/status
+topic write vehicle/+/status
+
+# ────────────────────────
+# §2 客户端权限（client_user 用户）
+# ────────────────────────
+
+# 允许发布控制指令
+user client_user
+topic write vehicle/control
+topic write vehicle/+/control
+
+# 允许订阅状态主题（接收车辆状态）
+topic read vehicle/status
+topic read vehicle/+/status
+
+# ────────────────────────
+# §3 管理员权限（admin 用户）
+# ────────────────────────
+
+# 允许所有操作
+user admin
+topic readwrite #
+
+# ────────────────────────
+# §4 系统主题（仅管理员）
+# ────────────────────────
+
+# $SYS 主题（Broker 状态信息）
+user admin
+topic read $SYS/#
+
+# ────────────────────────
+# §5 默认拒绝（安全默认）
+# ────────────────────────
+
+# 未明确允许的主题默认拒绝访问

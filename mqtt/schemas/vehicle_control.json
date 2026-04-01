@@ -1,0 +1,79 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:teleop:schemas:vehicle_control:1.1.0",
+  "title": "MQTT vehicle/control message",
+  "version": "1.1.0",
+  "description": "版本1.1.0：新增emergency_brake、seq、timestamp、sessionId字段，保持与1.0.0兼容",
+  "type": "object",
+  "required": ["type", "vin", "schemaVersion"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Schema版本号，用于版本协商和向后兼容",
+      "default": "1.0.0",
+      "examples": ["1.0.0", "1.1.0"]
+    },
+    "type": {
+      "type": "string",
+      "enum": ["start_stream", "stop_stream", "remote_control", "remote_control_ack", "emergency_stop"]
+    },
+    "vin": {
+      "type": "string",
+      "minLength": 1,
+      "description": "目标VIN"
+    },
+    "steering": {
+      "type": "number",
+      "minimum": -1.0,
+      "maximum": 1.0,
+      "description": "方向盘，-1~1"
+    },
+    "throttle": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "油门，0~1"
+    },
+    "brake": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "制动，0~1"
+    },
+    "gear": {
+      "type": "integer",
+      "enum": [-1, 0, 1, 2, 3, 4],
+      "description": "档位，-1:R, 0:N, 1:P, 2:D, 3:L, 4:M"
+    },
+    "remote_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用远程控制"
+    },
+    "streaming": {
+      "type": "boolean",
+      "default": false,
+      "description": "是否在推流（仅用于状态同步）"
+    },
+    "emergency_brake": {
+      "type": "boolean",
+      "default": false,
+      "description": "急停命令（v1.1.0新增）"
+    },
+    "seq": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "消息序号（防重放，v1.1.0新增）"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "客户端时间戳（毫秒，v1.1.0新增）"
+    },
+    "sessionId": {
+      "type": "string",
+      "description": "会话ID（用于关联，v1.1.0新增）"
+    }
+  },
+  "additionalProperties": false
+}

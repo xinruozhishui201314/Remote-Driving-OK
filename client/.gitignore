@@ -1,0 +1,16 @@
+build/
+bin/
+lib/
+*.o
+*.obj
+*.a
+*.so
+*.dll
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.user
+*.pro.user
+*.qmlc
+*.jsc

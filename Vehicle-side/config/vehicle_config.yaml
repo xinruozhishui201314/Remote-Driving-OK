@@ -1,0 +1,387 @@
+# Vehicle-side Configuration File
+# 车端代理配置文件
+# 环境变量优先级高于配置文件
+
+# ========================================
+# 车辆标识
+# ========================================
+vehicle:
+  # 车辆 VIN
+  # 环境变量: VEHICLE_VIN
+  vin: ""
+  
+  # 车辆型号
+  model: "default"
+  
+  # 车辆唯一标识
+  id: "vehicle-001"
+
+# ========================================
+# MQTT 配置
+# ========================================
+mqtt:
+  # MQTT Broker 地址
+  # 环境变量: MQTT_BROKER_URL
+  broker_url: "mqtt://localhost:1883"
+  
+  # 客户端 ID
+  # 环境变量: MQTT_CLIENT_ID
+  client_id: "vehicle-side"
+  
+  # 控制主题模板
+  control_topic_template: "vehicle/{vin}/control"
+  
+  # 状态主题模板
+  status_topic_template: "vehicle/{vin}/status"
+  
+  # QoS 级别（0, 1, 2）
+  qos: 1
+  
+  # Keep-Alive 间隔（秒）
+  keep_alive: 60
+  
+  # 连接超时（秒）
+  connect_timeout: 10
+  
+  # 自动重连
+  auto_reconnect: true
+  
+  # 重连间隔（秒）
+  reconnect_interval: 5
+
+# ========================================
+# ZLMediaKit 配置
+# ========================================
+zlm:
+  # ZLM 主机地址
+  # 环境变量: ZLM_HOST
+  host: "127.0.0.1"
+  
+  # ZLM RTMP 端口
+  # 环境变量: ZLM_RTMP_PORT
+  rtmp_port: "1935"
+  
+  # ZLM 应用名称
+  # 环境变量: ZLM_APP
+  app: "teleop"
+  
+  # ZLM 控制 WebSocket URL（可选）
+  # 环境变量: ZLM_CONTROL_WS_URL
+  control_ws_url: ""
+
+# ========================================
+# 推流配置
+# ========================================
+streaming:
+  # 推流脚本路径
+  # 环境变量: VEHICLE_PUSH_SCRIPT
+  script_path: "scripts/push-nuscenes-cameras-to-zlm.sh"
+  
+  # PID 文件目录
+  # 环境变量: PIDFILE_DIR
+  pidfile_dir: "/tmp"
+  
+  # 启用推流健康检查
+  health_check_enabled: true
+  
+  # 健康检查间隔（秒）
+  health_check_interval: 10
+  
+  # 推流日志路径
+  log_path: "/tmp/push-stream.log"
+  
+  # WHIP Demo URL（可选）
+  # 环境变量: VEHICLE_WHIP_DEMO_URL
+  whip_demo_url: ""
+  
+  # WHIP URL（可选）
+  # 环境变量: WHIP_URL
+  whip_url: ""
+  
+  # 从后端自动获取 WHIP
+  # 环境变量: AUTO_WHIP_FROM_BACKEND
+  auto_whip_from_backend: false
+
+# ========================================
+# 状态发布配置
+# ========================================
+status_publish:
+  # 发布频率（Hz）
+  frequency: 50
+  
+  # 启用的底盘数据字段
+  chassis_data_fields:
+    - name: "speed"
+      type: "double"
+      enabled: true
+      min_value: 0.0
+      max_value: 200.0
+    
+    - name: "gear"
+      type: "int"
+      enabled: true
+      min_value: -1.0
+      max_value: 1.0
+    
+    - name: "steering"
+      type: "double"
+      enabled: true
+      min_value: -1.0
+      max_value: 1.0
+    
+    - name: "throttle"
+      type: "double"
+      enabled: true
+      min_value: 0.0
+      max_value: 1.0
+    
+    - name: "brake"
+      type: "double"
+      enabled: true
+      min_value: 0.0
+      max_value: 1.0
+    
+    - name: "battery"
+      type: "double"
+      enabled: true
+      min_value: 0.0
+      max_value: 100.0
+    
+    - name: "odometer"
+      type: "double"
+      enabled: true
+      min_value: 0.0
+      max_value: 999999.0
+    
+    - name: "voltage"
+      type: "double"
+      enabled: true
+      min_value: 0.0
+      max_value: 100.0
+    
+    - name: "current"
+      type: "double"
+      enabled: true
+      min_value: 0.0
+      max_value: 200.0
+    
+    - name: "temperature"
+      type: "double"
+      enabled: true
+      min_value: -40.0
+      max_value: 100.0
+
+# ========================================
+# 控制协议配置
+# ========================================
+control_protocol:
+  # 消息版本号
+  schema_version: 1
+  
+  # 时间戳窗口（毫秒）
+  timestamp_window_ms: 2000
+  
+  # 启用序列号验证
+  enable_seq_validation: true
+  
+  # 启用时间戳验证
+  enable_timestamp_validation: true
+  
+  # 启用签名验证
+  enable_signature_validation: false
+  
+  # 消息签名算法
+  signature_algorithm: "HMAC-SHA256"
+
+# ========================================
+# 安全配置
+# ========================================
+safety:
+  # 看门狗超时（毫秒）
+  watchdog_timeout_ms: 500
+  
+  # 网络质量评估间隔（秒）
+  network_quality_check_interval: 1
+  
+  # 重度降级 RTT 阈值（毫秒）
+  severe_degradation_rtt_ms: 300
+  
+  # 轻度降级 RTT 阈值（毫秒）
+  light_degradation_rtt_ms: 150
+  
+  # 重度降级策略
+  severe_degradation_strategy: "safe_stop"  # safe_stop, limit_speed
+  
+  # 轻度降级策略
+  light_degradation_strategy: "limit_throttle"  # limit_throttle, warn_only
+  
+  # 轻度降级油门限制（0.0-1.0）
+  light_degradation_throttle_limit: 0.2
+  
+  # 序列号重置时间窗口（毫秒）
+  seq_reset_window_ms: 2000
+
+# ========================================
+# 网络配置
+# ========================================
+network:
+  # 启用双网卡冗余
+  dual_nic_enabled: false
+  
+  # 主网卡
+  primary_nic: "eth0"
+  
+  # 备用网卡
+  secondary_nic: "eth1"
+  
+  # 链路切换 RTT 阈值（毫秒）
+  switch_rtt_threshold: 200
+  
+  # 链路切换丢包阈值（百分比）
+  switch_packet_loss_threshold: 10
+  
+  # 链路质量评估窗口（秒）
+  quality评估窗口_ms: 2000
+  
+  # 链路切换防抖时间（秒）
+  switch_debounce_seconds: 1
+
+# ========================================
+# 日志配置
+# ========================================
+logging:
+  # 日志级别: trace, debug, info, warn, error, critical, off
+  level: "info"
+  
+  # 日志格式: json, text
+  format: "json"
+  
+  # 日志输出: stdout, file, both
+  output: "both"
+  
+  # 日志文件路径
+  file_path: "/var/log/teleop-vehicle.log"
+  
+  # 日志轮转
+  rotation:
+    # 最大文件大小（MB）
+    max_size: 100
+    
+    # 保留的最大文件数
+    max_files: 10
+
+# ========================================
+# CARLA 仿真配置（可选）
+# ========================================
+carla:
+  # 启用 CARLA 仿真
+  # 环境变量: ENABLE_CARLA
+  enabled: false
+  
+  # CARLA 主机地址
+  # 环境变量: CARLA_HOST
+  host: "localhost"
+  
+  # CARLA 端口
+  # 环境变量: CARLA_PORT
+  port: 2000
+  
+  # 连接超时（秒）
+  timeout: 10
+  
+  # 地图名称
+  # 环境变量: CARLA_MAP
+  map: "Town01"
+  
+  # 车辆蓝图
+  # 环境变量: CARLA_VEHICLE_BP
+  vehicle_blueprint: "vehicle.*"
+  
+  # 车辆生成索引
+  # 环境变量: CARLA_SPAWN_INDEX
+  spawn_index: 0
+  
+  # 显示仿真窗口
+  # 环境变量: CARLA_SHOW_WINDOW
+  show_window: true
+
+# ========================================
+# ROS2 配置（可选）
+# ========================================
+ros2:
+  # 启用 ROS2
+  # 环境变量: ENABLE_ROS2
+  enabled: false
+  
+  # ROS 命名空间
+  namespace: "teleop"
+  
+  # 控制命令话题
+  control_topic: "/vehicle/control"
+  
+  # 状态话题
+  status_topic: "/vehicle/status"
+  
+  # 遥测话题
+  telemetry_topic: "/vehicle/telemetry"
+
+# ========================================
+# 硬件接口配置
+# ========================================
+hardware:
+  # 硬件类型: real, carla, mock
+  type: "mock"
+  
+  # CAN 总线接口
+  can_interface: "can0"
+  
+  # 串口设备
+  serial_device: "/dev/ttyUSB0"
+  
+  # 串口波特率
+  serial_baudrate: 115200
+  
+  # 启用硬件检查
+  hardware_check_enabled: true
+  
+  # 硬件检查间隔（秒）
+  hardware_check_interval: 10
+
+# ========================================
+# 性能配置
+# ========================================
+performance:
+  # 控制指令处理队列大小
+  control_queue_size: 100
+  
+  # 状态发布线程优先级
+  status_thread_priority: 0
+  
+  # 启用多线程处理
+  multi_threading_enabled: true
+
+# ========================================
+# 告警配置
+# ========================================
+alerts:
+  # 启用告警
+  enabled: true
+  
+  # 告警级别: info, warning, error, critical
+  min_level: "warning"
+  
+  # 告警保留时间（秒）
+  retention_seconds: 3600
+
+# ========================================
+# 远程控制配置
+# ========================================
+remote_control:
+  # 启用远程控制
+  enabled: true
+  
+  # 默认驾驶模式: autonomous, remote_control, remote_driving
+  default_mode: "autonomous"
+  
+  # 启用手动确认
+  require_manual_confirmation: false

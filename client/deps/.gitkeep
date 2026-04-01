@@ -1,0 +1,2 @@
+# client/deps：宿主机安装的 libdatachannel 将放入 libdatachannel-install，供容器挂载使用。
+# 运行: bash scripts/install-libdatachannel-for-client.sh

@@ -1,0 +1,252 @@
+# Remote-Driving System - 完整链路部署配置
+# 用于同时部署所有服务进行端到端测试
+#
+# 使用方法:
+#   docker compose up -d              # 启动所有服务
+#   docker compose down                # 停止所有服务
+#   docker compose logs -f backend     # 查看backend日志
+#
+# 各模块独立部署:
+#   cd backend && docker compose up -d
+#   cd client && docker run -d teleop-client:latest
+#   cd Vehicle-side && docker compose up -d
+
+services:
+  # MQTT Broker - 消息总线
+  teleop-mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: teleop-mosquitto
+    ports:
+      - "1883:1883"    # MQTT
+      - "9001:9001"    # WebSocket
+    networks: [teleop-network]
+    restart: unless-stopped
+
+  # ZLMediaKit - 流媒体服务器（视频推拉流、WebRTC）
+  zlmediakit:
+    image: zlmediakit/zlmediakit:master
+    container_name: teleop-zlmediakit
+    ports:
+      - "80:80"        # HTTP/WHEP
+      - "1935:1935"    # RTMP
+    volumes:
+      # 不挂载 config.ini：ZLM Docker 镜像无内置 config.ini，启动时自动生成默认 secret。
+      # 若挂载 config.ini 且 secret 与 ZLM 内置默认值相同，ZLM 会生成随机 secret 并覆盖挂载文件（即使 :ro），
+      # 导致 backend/client/vehicle 侧使用旧 secret 无法调用 ZLM API（getMediaList 失败）。
+      # 当前配置：不挂载 config.ini，让 ZLM 使用内置默认 secret "35c73f7bb6b4889a715d9eb2d1925cc"。
+      # 挂载数据目录以持久化录制文件和流状态。
+      - zlm-data:/opt/media
+    networks: [teleop-network]
+    restart: unless-stopped
+
+  # PostgreSQL - 数据库
+  teleop-postgres:
+    # 固定大版本：postgres:latest 会随时间升级到 18+，与既有 volume 数据目录布局不兼容会导致容器反复重启
+    image: postgres:16-bookworm
+    container_name: teleop-postgres
+    environment:
+      POSTGRES_DB: teleop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [teleop-network]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d teleop"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # 数据库初始化（执行 migrations + seed）
+  db-init:
+    image: postgres:16-bookworm
+    depends_on:
+      teleop-postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: teleop-postgres
+      PGPASSWORD: postgres
+      PGUSER: postgres
+      PGDATABASE: teleop
+    volumes:
+      - ./backend/migrations:/migrations:ro
+      - ./deploy/postgres/03_seed_test_data.sql:/seed.sql:ro
+    command: >
+      sh -c "
+      echo '[db-init] 等待 Postgres 就绪...';
+      until pg_isready -h teleop-postgres -U postgres -d teleop; do sleep 1; done;
+      if psql -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='users'\" | grep -q 1; then
+        echo '[db-init] users 表已存在，跳过 migrations，仅执行 seed（幂等）';
+        psql -v ON_ERROR_STOP=1 -f /seed.sql;
+      else
+        echo '[db-init] 执行 migrations...';
+        psql -v ON_ERROR_STOP=1 -f /migrations/001_initial_schema.sql;
+        psql -v ON_ERROR_STOP=1 -f /migrations/002_sessions_locks_mvp.sql;
+        psql -v ON_ERROR_STOP=1 -f /migrations/003_sessions_control_secret.sql;
+        echo '[db-init] 执行 seed...';
+        psql -v ON_ERROR_STOP=1 -f /seed.sql;
+      fi;
+      echo '[db-init] 完成'
+      "
+    restart: "no"
+    networks: [teleop-network]
+
+  # Keycloak - 认证服务
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: teleop-keycloak
+    command:
+      - "start-dev"
+      - "--import-realm"
+    environment:
+      KC_DB: postgres
+      # 使用 teleop 库（与 backend 同库，Keycloak 表名不冲突）
+      KC_DB_URL: jdbc:postgresql://teleop-postgres:5432/teleop
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_PORT: "8080"
+    volumes:
+      - ./deploy/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      teleop-postgres:
+        condition: service_healthy
+    networks: [teleop-network]
+    # Keycloak 24 官方镜像不含 curl；用 bash /dev/tcp 探测 /health/ready
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3 && timeout 5 cat <&3 | head -1 | grep -q \"200\"'",
+        ]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 60s
+    restart: unless-stopped
+
+  # Backend - 业务后端
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: teleop-backend
+    ports:
+      - "8000:8000"   # HTTP API
+    environment:
+      # 认证
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_ISSUER=http://keycloak:8080/realms/teleop
+
+      # 数据库
+      - DATABASE_URL=postgresql://postgres:postgres@teleop-postgres:5432/teleop
+
+      # 流媒体
+      # ZLM_API_URL：Backend 与 ZLM 之间的内部 API 地址（Docker 网络内可解析）
+      - ZLM_API_URL=http://zlmediakit/index/api
+      # ZLM_PUBLIC_BASE：客户端拉流时使用的 ZLM 可达地址（WHEP URL 的 host 部分）
+      #   - 若客户端在 Docker 网络内（如 client-dev 容器）：使用 http://zlmediakit:80
+      #   - 若客户端在宿主机或外网：使用 http://<HOST_IP>:80 并映射端口
+      #   - 可通过宿主机环境变量 ZLM_PUBLIC_BASE 覆盖，例如 ZLM_PUBLIC_BASE=http://192.168.1.100:80
+      - ZLM_PUBLIC_BASE=${ZLM_PUBLIC_BASE:-http://zlmediakit:80}
+      # ZLM_API_SECRET：ZLM Docker 镜像启动时自动生成的随机 secret（保存于 zlm-data volume）。
+      # 若需与 ZLM secret 保持一致，请先运行以下命令获取当前 secret：
+      #   docker exec teleop-zlmediakit cat /opt/media/conf/config.ini | grep ^secret=
+      # 若 ZLM volume 已被初始化，需重启后用新 secret 同步更新此配置。
+      - ZLM_API_SECRET=j9uH7zT0mawXzTrvqRythA48QvZ8rO2Y
+
+      # MQTT
+      - MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      teleop-mosquitto:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+    networks: [teleop-network]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Vehicle-side - 车辆端控制器
+  vehicle:
+    build:
+      context: ./Vehicle-side
+      dockerfile: Dockerfile.prod
+    container_name: teleop-vehicle
+    privileged: true  # 车辆端可能需要访问硬件设备
+    environment:
+      # MQTT
+      - MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883
+
+      # 流媒体推流
+      - ZLM_RTMP_URL=rtmp://zlmediakit:1935
+      - ZLM_WHIP_URL=http://zlmediakit/index/api/whip
+
+      # 车辆标识
+      - VIN=TEST_VEHICLE_001
+      - VEHICLE_CONTROL_SECRET=change_me_in_production
+
+      # 看门狗和安全
+      - WATCHDOG_TIMEOUT=5
+      - SAFE_STOP_ENABLED=true
+
+      # 日志
+      - LOG_LEVEL=info
+
+      # 数据库（用于健康检查）
+      - DATABASE_URL=postgresql://postgres:postgres@teleop-postgres:5432/teleop
+    depends_on:
+      - teleop-mosquitto
+      - zlmediakit
+      - backend
+    networks: [teleop-network]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+  # Client-dev - 开发环境客户端
+  client-dev:
+    build: ./client-dev
+    container_name: teleop-client-dev
+    environment:
+      # Backend
+      - BACKEND_URL=http://backend:8000
+
+      # Keycloak
+      - KEYCLOAK_URL=http://keycloak:8080
+
+      # MQTT
+      - MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883
+
+      # 流媒体（容器内用服务名，勿用 localhost）
+      - ZLM_WHEP_URL=http://zlmediakit:80/index/api/webrtc
+      # ZLM API secret：与 ZLM Docker 镜像生成的 secret 一致（volume 已初始化）
+      - ZLM_API_SECRET=j9uH7zT0mawXzTrvqRythA48QvZ8rO2Y
+    # 仅依赖 backend：CARLA 仿真推流不经过 teleop-vehicle；客户端可先启动再连车/仿真
+    depends_on:
+      - backend
+    networks: [teleop-network]
+    restart: unless-stopped
+
+networks:
+  teleop-network:
+    external: true
+
+volumes:
+  postgres-data:
+    driver: local
+  zlm-data:
+    driver: local

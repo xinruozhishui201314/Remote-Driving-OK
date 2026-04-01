@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  vehicle:
+    build: .
+    # 修复：移除了对 "mosquitto" 服务的依赖
+    # 原因：mosquitto 是挂载进来的本地库，而不是一个 Docker 服务
+    # depends_on:
+    #   - mosquitto
+    volumes:
+      # 假设 mosquitto 库通过 Dockerfile 的 COPY 指令已包含在镜像中
+      # 如果需要访问宿主机的 mosquitto 库源码，可以取消下面的注释
+      # - ./vehicle/deps/mosquitto:/app/deps/mosquitto:ro
+    # 根据实际需要映射串口或其他设备
+    # - /dev/ttyUSB0:/dev/ttyUSB0

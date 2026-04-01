@@ -1,0 +1,12 @@
+# 可选 override：从 Dockerfile 构建 client-dev 镜像（需在构建时从 GitHub 拉取 libdatachannel，网络需畅通）
+# 若构建时 git clone 失败，请改用宿主机安装并 commit 打 tag 方式：bash scripts/build-client-dev-full-image.sh
+#
+# 使用：docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
+#       docker compose -f docker-compose.yml -f docker-compose.client-dev.yml up -d client-dev
+
+services:
+  client-dev:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.client-dev
+    image: remote-driving-client-dev:full

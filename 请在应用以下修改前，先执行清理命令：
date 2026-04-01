@@ -1,0 +1,1 @@
+docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.carla.yml down --remove-orphans

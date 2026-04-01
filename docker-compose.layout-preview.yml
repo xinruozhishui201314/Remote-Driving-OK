@@ -1,0 +1,7 @@
+# 布局预览专用：client-dev 仅依赖 backend，无需 vehicle
+# 用于 bash scripts/show-driving-ui.sh 快速查看远驾操作界面布局
+# 使用 !override 完全替换 depends_on，避免合并时追加 vehicle
+services:
+  client-dev:
+    depends_on: !override
+      - backend

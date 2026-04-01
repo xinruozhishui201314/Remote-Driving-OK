@@ -1,0 +1,84 @@
+# Client 生产环境 Dockerfile
+# 基于 Ubuntu 22.04，使用 Qt6 和 C++ 编译
+
+FROM docker.1ms.run/library/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# 安装基础工具和开发库
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    ca-certificates \
+    libssl-dev \
+    pkg-config \
+    libgl1-mesa-dev \
+    libglib2.0-dev \
+    libx11-dev \
+    libxext-dev \
+    libxrender-dev \
+    libxrandr-dev \
+    libxi-dev \
+    libxcursor-dev \
+    libxinerama-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 Qt6
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    qt6-base-dev \
+    qt6-base-private-dev \
+    qt6-declarative-dev \
+    qt6-declarative-private-dev \
+    qt6-multimedia-dev \
+    qt6-websockets-dev \
+    qt6-quickcontrols2-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 FFmpeg（用于视频解码）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    libavcodec-dev \
+    libavutil-dev \
+    libswscale-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# 安装 MQTT 客户端库
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libmosquitto-dev \
+    libpaho-mqttpp-dev \
+    libpaho-mqttpp3-dev \
+    libpaho-mqttpp3as-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 复制共享依赖（从项目根目录的 deps/）
+COPY deps/ ./deps/
+
+# 复制源码
+COPY src/ ./src/
+COPY qml/ ./qml/
+COPY config/ ./config/
+COPY resources/ ./resources/
+COPY CMakeLists.txt ./
+
+# 编译项目
+RUN mkdir -p build && cd build \
+    && cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_PREFIX_PATH="/app/deps" \
+    && make -j$(nproc)
+
+# 设置环境变量
+ENV QT_QPA_PLATFORM=offscreen
+ENV BACKEND_URL=http://backend:8000
+ENV KEYCLOAK_URL=http://keycloak:8080
+ENV MQTT_BROKER_URL=mqtt://mosquitto:1883
+ENV ZLM_WHEP_URL=http://zlmediakit/index/api/webrtc
+
+# 设置工作目录
+WORKDIR /app/build
+
+# 运行程序
+CMD ["./client"]

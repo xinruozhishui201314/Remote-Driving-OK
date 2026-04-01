@@ -1,0 +1,38 @@
+# 开发模式 override：挂载源码，容器内编译运行
+# 使用方式：
+#   首次构建镜像：docker compose -f docker-compose.yml -f docker-compose.dev.yml build backend
+#   之后修改代码：docker compose -f docker-compose.yml -f docker-compose.dev.yml restart backend
+#   或直接启动：docker compose -f docker-compose.yml -f docker-compose.dev.yml up backend
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    # C++ Backend 默认 PORT=8080；宿主机 8081 供客户端默认连接（与 Client 默认 localhost:8081 一致）
+    ports:
+      - "8081:8080"
+    environment:
+      - BUILD_DIR=/app/build
+    volumes:
+      # 挂载源码和 CMakeLists.txt（可写，便于编译）
+      - ./backend/src:/app/src
+      - ./backend/CMakeLists.txt:/app/CMakeLists.txt
+      # 挂载 static（add-vehicle.html 等管理页），解决 404
+      - ./backend/static:/app/static:ro
+      # 挂载本地依赖项（如果存在，避免在容器内下载）
+      - ./backend/deps:/app/deps:ro
+      # 构建目录持久化，加快增量编译
+      - backend_build:/app/build
+    # 覆盖 command，使用开发入口脚本（编译并运行）
+    command: []
+
+  # 与 backend 8080 容器内端口一致；避免 client-dev 仍用 backend:8000 或登录页 localhost 导致容器内「不可达」
+  client-dev:
+    environment:
+      - BACKEND_URL=http://backend:8080
+      - DEFAULT_SERVER_URL=http://backend:8080
+      - ZLM_WHEP_URL=http://zlmediakit:80/index/api/webrtc
+
+volumes:
+  backend_build:

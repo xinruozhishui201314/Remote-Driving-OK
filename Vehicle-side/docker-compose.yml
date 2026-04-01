@@ -1,0 +1,98 @@
+# Vehicle-side 模块独立部署配置
+# 用于单独部署 Vehicle-side 服务及其依赖（MQTT Broker、ZLMediaKit）
+
+services:
+  vehicle:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+    container_name: teleop-vehicle
+    privileged: true  # 车辆端可能需要访问硬件设备
+    environment:
+      - MQTT_BROKER_URL=mqtt://mosquitto:1883
+      - ZLM_RTMP_URL=rtmp://zlmediakit:1935
+      - ZLM_WHIP_URL=http://zlmediakit/index/api/whip
+      - ZLM_API_SECRET=j9uH7zT0mawXzTrvqRythA48QvZ8rO2Y
+      - VIN=TEST_VEHICLE_001
+      - VEHICLE_CONTROL_SECRET=change_me_in_production
+      - LOG_LEVEL=info
+      - WATCHDOG_TIMEOUT=5
+      - SAFE_STOP_ENABLED=true
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/teleop
+      - VEHICLE_PUSH_SCRIPT=/app/scripts/push-testpattern-to-zlm.sh
+    depends_on:
+      mosquitto:
+        condition: service_started
+      zlmediakit:
+        condition: service_started
+    networks:
+      - vehicle-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MQTT Broker
+  mosquitto:
+    image: eclipse-mosquitto:latest
+    container_name: teleop-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-logs:/mosquitto/log
+    networks:
+      - vehicle-network
+    restart: unless-stopped
+
+  # ZLMediaKit 流媒体服务器
+  zlmediakit:
+    image: zlmediakit/zlmediakit:master
+    container_name: teleop-zlmediakit
+    ports:
+      - "80:80"        # HTTP/WHEP
+      - "1935:1935"    # RTMP
+      - "8554:8554"    # RTSP
+    volumes:
+      # 挂载 tuned 配置：secret / rtc.timeoutSec=120 / api.apiDebug=0 等
+      - ./deploy/zlm/config.ini:/opt/media/conf/config.ini:ro
+      - zlm-data:/opt/media
+    networks:
+      - vehicle-network
+    restart: unless-stopped
+
+  # PostgreSQL（可选，用于健康检查）
+  postgres:
+    image: postgres:16-bookworm
+    container_name: teleop-postgres
+    environment:
+      POSTGRES_DB: teleop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - vehicle-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d teleop"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  vehicle-network:
+    driver: bridge
+
+volumes:
+  mosquitto-data:
+    driver: local
+  mosquitto-logs:
+    driver: local
+  zlm-data:
+    driver: local
+  postgres-data:
+    driver: local

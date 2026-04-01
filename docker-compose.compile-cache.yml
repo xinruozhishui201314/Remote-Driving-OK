@@ -1,0 +1,11 @@
+# 并行编译验证用：固定使用已打 tag 的缓存镜像，避免每次重新 build。
+# 由 scripts/parallel-compile-verify.sh 在首次构建后打 tag，后续执行直接使用。
+# 用法：与 docker-compose.yml + docker-compose.dev.yml / docker-compose.vehicle.dev.yml 等一起使用，
+#       例如：docker compose -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.compile-cache.yml run --no-deps --rm backend ...
+# 强制重建时：FORCE_REBUILD_BACKEND=1 或 FORCE_REBUILD_VEHICLE=1 会跳过缓存并重新 build。
+
+services:
+  backend:
+    image: remote-driving-backend:compile-cache
+  vehicle:
+    image: remote-driving-vehicle:compile-cache

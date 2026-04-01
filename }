@@ -1,0 +1,29 @@
+
+### 11.2 日志分级策略
+根据系统生命周期定义不同阶段的日志策略：
+
+| 阶段 | 级别 (Level) | 用途 | 输出示例 |
+| :--- | :--- | :--- | :--- |
+| **开发调试** | VERBOSE | 开发期启用，打印所有内部变量、循环状态、原始数据包。 | `{"level": "VERBOSE", "msg": "Parsed header fields: ..."}` |
+| **验证测试** | INFO, LATENCY | 测试与性能分析。关注关键路径、时延打点。 | `{"level": "LATENCY", "msg": "Encoding time", "context": {"time_us": 15000}}` |
+| **生产部署** | ERROR, AUDIT | 生产环境默认级别。关注异常、安全事件。 | `{"level": "AUDIT", "msg": "User login", "context": {"user": "admin"}}` |
+
+### 11.3 TraceID 透传规范
+- **Client**：发起请求时生成 UUID `trace_id`，放入 HTTP Header (`X-Trace-ID`) 和 Control Message Header。
+- **Backend**：接收请求提取 `trace_id`，注入当前线程日志上下文；转发给 ZLM 时通过参数传递。
+- **ZLM/Vehicle**：从信令/DataChannel 提取 `trace_id`，写入所有相关日志（如接收指令、执行结果、上报遥测）。
+
+---
+
+## 12. 监控与可观测性
+### 12.1 标准错误码定义
+错误码格式：`<Domain>_<Severity>_<Code>`
+
+**Domains:**
+- **NET** (网络): `NET_E_1001` (链路丢失), `NET_W_1002` (丢包率升高)
+- **VEH** (车辆): `VEH_E_2001` (控制器超时), `VEH_C_2002` (碰撞检测)
+- **SEC** (安全): `SEC_E_3001` (签名验证失败), `SEC_E_3002` (防重放触发)
+- **SYS** (系统): `SYS_W_4001` (CPU过载), `SYS_E_4002` (存储空间不足)
+
+### 12.2 端到端心跳检测规范
+**心跳包结构**：

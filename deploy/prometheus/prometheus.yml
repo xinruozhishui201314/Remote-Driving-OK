@@ -1,0 +1,48 @@
+# Prometheus 配置
+# 用于监控远程驾驶系统各组件
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'teleop'
+    environment: 'development'
+
+# Alertmanager 配置（可选）
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets: []
+
+# 抓取配置
+scrape_configs:
+  # Prometheus 自身
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # 后端服务（待 M1 阶段实现）
+  - job_name: 'teleop-backend'
+    static_configs:
+      - targets: ['backend:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Keycloak（如果支持 metrics）
+  - job_name: 'keycloak'
+    static_configs:
+      - targets: ['keycloak:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # ZLMediaKit（如果支持 metrics）
+  - job_name: 'zlmediakit'
+    static_configs:
+      - targets: ['zlmediakit:80']
+    metrics_path: '/index/api/getMediaList'
+    scrape_interval: 15s
+
+  # PostgreSQL Exporter（需要单独部署）
+  # - job_name: 'postgres-exporter'
+  #   static_configs:
+  #     - targets: ['postgres-exporter:9187']

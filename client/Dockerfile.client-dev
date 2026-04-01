@@ -1,0 +1,87 @@
+# client-dev 完备镜像：Qt6 + 镜像内安装 libdatachannel（+ FFmpeg），启动容器即可编译/运行客户端并接收视频
+# 构建：docker build -f client/Dockerfile.client-dev -t remote-driving-client-dev:full client/
+# 或：docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
+#
+# 多阶段：在 Ubuntu 中编译 libdatachannel 再复制到 Qt 镜像，避免在 Qt 基础镜像中 apt 权限问题
+
+# ---------- 阶段 1：在 Ubuntu 中编译并安装 libdatachannel ----------
+FROM docker.1ms.run/library/ubuntu:22.04 AS libdatachannel-builder
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
+    git \
+    build-essential \
+    libssl-dev \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 避免 Docker 构建时 git clone 出现 "Error in the HTTP2 framing layer"（网络/代理环境常见）
+RUN git config --global http.version HTTP/1.1 \
+    && git config --global http.postBuffer 524288000
+
+ARG LIBDC_VERSION=master
+RUN git clone --depth 1 https://github.com/paullouisageneau/libdatachannel.git /tmp/libdatachannel \
+    && cd /tmp/libdatachannel \
+    && git submodule update --init --recursive --depth 1 \
+    && cmake -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/libdatachannel \
+        -DUSE_GNUTLS=OFF \
+        -DUSE_NICE=OFF \
+        -DNO_EXAMPLES=ON \
+        -DNO_TESTS=ON \
+    && cmake --build build -j$(nproc 2>/dev/null || echo 4) \
+    && cmake --install build \
+    && rm -rf /tmp/libdatachannel
+
+# ---------- 阶段 2：Qt6 镜像 + 拷贝 libdatachannel + 安装 qsb ----------
+FROM docker.1ms.run/stateoftheartio/qt6:6.8-gcc-aqt
+
+# 从阶段 1 拷贝已安装的 libdatachannel（无需在 Qt 镜像内 apt 编译工具）
+COPY --from=libdatachannel-builder /opt/libdatachannel /opt/libdatachannel
+
+# 安装 python3-pip（用于 aqtinstall）和 qsb（Qt ShaderTools 工具，用于编译 .qsb shader）
+# qsb 工具是 QSGMaterialShader 渲染管线的必要组件；无 qsb 则着色器无法编译，视频无法渲染
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libavcodec-dev \
+        libavutil-dev \
+        libswscale-dev \
+        libavformat-dev \
+        pkg-config \
+        fonts-wqy-zenhei \
+        cmake \
+        make \
+        g++ \
+        mosquitto-clients \
+        libxcb-cursor0 \
+        libxcb-xfixes0 \
+        libgl1-mesa-dev \
+        python3-pip \
+        curl \
+        unzip \
+    && rm -rf /var/lib/apt/lists/* \
+    && fc-cache -fv \
+    # 正确方式：aqt install-qt -m qtshadertools 安装 qtshadertools 模块（包含 qsb）
+    # 关键参数：
+    #   - 目标平台：linux desktop
+    #   - 架构名：linux_gcc_64（非 gcc_64）
+    #   - 模块名：qtshadertools（非 qt.tools.qsb，后者不存在）
+    # 安装后 qsb 位于 /opt/Qt/6.8.0/gcc_64/bin/qsb
+    && aqt install-qt -O /opt/Qt \
+        linux desktop 6.8.0 linux_gcc_64 \
+        -m qtshadertools 2>&1 | tail -5 \
+    && echo "✓ qsb 工具已安装到 /opt/Qt/6.8.0/gcc_64/bin/qsb" \
+    && /opt/Qt/6.8.0/gcc_64/bin/qsb --version 2>&1 | grep -v "Detected locale" | head -1 \
+    && pip3 uninstall -y aqtinstall pyzstd brotli py7zr pybcj psutil 2>/dev/null || true \
+    && apt-get purge -y python3-dev build-essential python3-pip 2>/dev/null || true \
+    && echo "✓ ShaderTools + FFmpeg + 中文字体已安装"
+
+# 编译时默认能找到 Qt + libdatachannel（FFmpeg 若安装成功则自动启用解码）
+ENV CMAKE_PREFIX_PATH=/opt/Qt/6.8.0/gcc_64:/opt/libdatachannel
+ENV LD_LIBRARY_PATH=/opt/Qt/6.8.0/gcc_64/lib:${LD_LIBRARY_PATH:-}
+ENV PATH=/opt/Qt/6.8.0/gcc_64/bin:${PATH:-}
+
+WORKDIR /workspace
+ENV DISPLAY=:0
+CMD ["/bin/bash"]

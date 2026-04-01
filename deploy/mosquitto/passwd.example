@@ -1,0 +1,10 @@
+# MQTT Broker 密码文件示例
+# 使用 mosquitto_passwd 命令生成：
+# mosquitto_passwd -c /mosquitto/config/passwd username
+
+# 格式：username:password_hash
+
+# 示例用户（生产环境必须修改）：
+# vehicle_side:password_hash_here
+# client_user:password_hash_here
+# admin:password_hash_here

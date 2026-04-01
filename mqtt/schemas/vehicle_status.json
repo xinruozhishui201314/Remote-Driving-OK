@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:teleop:schemas:vehicle_status:1.1.0",
+  "title": "MQTT vehicle/status message",
+  "version": "1.1.0",
+  "description": "版本1.1.0：新增network_quality、sessionId字段，保持与1.0.0兼容",
+  "type": "object",
+  "required": ["vin", "type", "timestamp", "schemaVersion"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Schema版本号，用于版本协商和向后兼容",
+      "default": "1.0.0",
+      "examples": ["1.0.0", "1.1.0"]
+    },
+    "vin": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "const": "vehicle_status"
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "毫秒时间戳"
+    },
+    "speed": {
+      "type": "number",
+      "minimum": 0.0,
+      "description": "速度 km/h"
+    },
+    "battery": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 100.0,
+      "description": "电池百分比"
+    },
+    "brake": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "throttle": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0
+    },
+    "steering": {
+      "type": "number",
+      "minimum": -1.0,
+      "maximum": 1.0
+    },
+    "gear": {
+      "type": "integer",
+      "enum": [-1, 0, 1, 2, 3, 4]
+    },
+    "odometer": {
+      "type": "number",
+      "minimum": 0.0,
+      "description": "里程 km"
+    },
+    "temperature": {
+      "type": "number",
+      "description": "温度"
+    },
+    "voltage": {
+      "type": "number",
+      "description": "电压 V"
+    },
+    "remote_control_enabled": {
+      "type": "boolean",
+      "description": "是否启用远程控制"
+    },
+    "driving_mode": {
+      "type": "string",
+      "enum": ["远驾", "自驾"]
+    },
+    "streaming": {
+      "type": "boolean",
+      "description": "是否在推流"
+    },
+    "network_quality": {
+      "type": "object",
+      "description": "网络质量（v1.1.0新增）",
+      "properties": {
+        "rtt_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "往返时延（毫秒）"
+        },
+        "packet_loss_rate": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0,
+          "description": "丢包率（0~1）"
+        },
+        "active_link": {
+          "type": "string",
+          "enum": ["5G", "4G", "WiFi", "Ethernet"],
+          "description": "当前活动链路"
+        },
+        "jitter_ms": {
+          "type": "number",
+          "minimum": 0,
+          "description": "抖动（毫秒）"
+        }
+      }
+    },
+    "sessionId": {
+      "type": "string",
+      "description": "会话ID（用于关联，v1.1.0新增）"
+    }
+  },
+  "additionalProperties": false
+}

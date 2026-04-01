@@ -1,0 +1,7 @@
+# 仅用于并行编译验证：为 vehicle/client-dev 的 depends_on: mosquitto 提供定义。
+# 用法：docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.compile.yml run --rm vehicle ...
+# 不单独使用；与 parallel-compile-verify.sh 配合（脚本只 run 单服务，不会 up mosquitto）。
+
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2

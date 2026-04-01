@@ -1,0 +1,820 @@
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# TELEOPERATION SYSTEM — CURSOR RULES v4
+# Root Cause First / Systemic Risk Scan / High Stability / High Realtime / Operability
+# ═══════════════════════════════════════════════════════════════════════════════════════
+
+# Purpose:
+# These rules force Cursor to behave like a senior production engineer + architect:
+# - find root causes instead of patching symptoms
+# - detect systemic vulnerabilities and architectural weaknesses
+# - optimize for safety, stability, realtime behavior, and observability
+# - deliver production-ready, testable, rollback-safe, gray-release-safe changes
+# - preserve compatibility and distributed deployability
+
+# Scope:
+# Applies to all work in this repository, especially backend, client, Vehicle-side,
+# carla-bridge, media/ZLM, shared schemas, scripts, deployment, and docs.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §1  SOURCE OF TRUTH
+# ──────────────────────────────────────────────────────────────────────────────────────
+# - ALWAYS read @project_spec.md before any coding task.
+# - If conflict exists between spec and any other source, spec wins.
+# - Then read relevant docs/ schemas/ runbooks before changing code:
+#   - docs/
+#   - mqtt/schemas/
+#   - docs/TROUBLESHOOTING_RUNBOOK.md
+#   - docs/DISTRIBUTED_DEPLOYMENT.md
+#   - docs/FEATURE_ADD_CHECKLIST.md
+# - If spec is ambiguous, ask ONE targeted question; do not guess.
+# - If information is incomplete but change is low-risk and local, proceed with the
+#   safest backward-compatible assumption and state it explicitly.
+# - For large/complex tasks, first build a small “project map”:
+#   - entry points
+#   - relevant modules
+#   - data flow
+#   - state transitions
+#   - external dependencies
+#   - critical path(s)
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §2  CHANGE CLASSIFICATION
+# ──────────────────────────────────────────────────────────────────────────────────────
+# MINOR — bug fix, typo, config tweak, ≤3 files, no API/interface change,
+#         no state-machine/safety/control-path change.
+#   → Skip GATE A confirmation; go straight to diagnose + code + test + verify.
+#
+# MAJOR — new feature, interface change, schema change, >3 files, deployment/config
+#         change, new dependency, behavior change in core flows.
+#   → Full GATE A required; WAIT for user CONFIRM / APPROVE / GO AHEAD.
+#
+# SAFETY-CRITICAL — any change touching:
+#   watchdog, SAFE_STOP, lock, heartbeat, message integrity, permissions,
+#   control loop, command path, session ownership, VIN scoping, anti-replay,
+#   actuator command sequencing, emergency handling.
+#   → Full GATE A + mandatory sequence diagram + state diagram + user confirmation.
+#
+# HIGH-RISK PERFORMANCE/STABILITY — any change touching:
+#   high-frequency path, event loop, queueing, retries, timeouts, thread pools,
+#   DB/cache hot path, MQTT/WebSocket/RPC throughput, memory pressure.
+#   → GATE A recommended even if not MAJOR by file count.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §3  CORE WORKFLOW
+# ──────────────────────────────────────────────────────────────────────────────────────
+#   ┌───────────────────────────────────────┐
+#   │ 1. DIAGNOSE                           │
+#   │    Read logs/errors first. Reproduce. │
+#   │    Identify symptom and failing path. │
+#   │ 2. ROOT CAUSE & SYSTEMIC SCAN         │
+#   │    Build causal chain. Search for     │
+#   │    pattern-level risks.               │
+#   │ 3. PLAN                               │
+#   │    GATE A if MAJOR / SAFETY-CRITICAL  │
+#   │    / HIGH-RISK PERFORMANCE            │
+#   │ 4. TEST FIRST                         │
+#   │    Write/update tests before impl     │
+#   │    when practical.                    │
+#   │ 5. IMPLEMENT                          │
+#   │    Full working code. No TODO.        │
+#   │ 6. VERIFY                             │
+#   │    Mandatory scripts + evidence.      │
+#   │ 7. RELEASE READINESS                  │
+#   │    Observability / gray / rollback.   │
+#   │ 8. REPORT                             │
+#   │    GATE B structured summary.         │
+#   └───────────────────────────────────────┘
+
+# Non-negotiable behavior:
+# - Never jump from symptom to code patch without root-cause reasoning.
+# - Never claim solved before verification passes.
+# - Never fix one point and ignore likely same-pattern defects.
+# - Prefer small, reversible, well-observed changes over wide risky rewrites.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §3A  ROOT CAUSE FIRST (MANDATORY FOR BUGS, FAILURES, INCIDENTS, PERF ISSUES)
+# ──────────────────────────────────────────────────────────────────────────────────────
+# For any bug, flaky behavior, timeout, failed test, incident, regression,
+# data inconsistency, concurrency issue, or performance problem:
+# DO NOT jump directly to code changes.
+#
+# First build the following chain:
+#   symptom → trigger condition → failing path → direct cause → root cause → systemic cause
+#
+# Required analysis dimensions:
+# - Symptom:
+#   What exactly is observed? Error text? Wrong behavior? Latency spike? SAFE_STOP?
+# - Trigger:
+#   Under what condition/load/timing/data shape/environment does it happen?
+# - Scope:
+#   Which VINs / users / sessions / modules / environments / deployments are affected?
+# - Failing path:
+#   Exact entry point, call chain, state transition, queue/topic/path/schema involved
+# - Direct cause:
+#   Immediate technical reason
+# - Root cause:
+#   Deeper logic/design/concurrency/config/data/contract reason
+# - Systemic cause:
+#   Why this class of issue was possible in this system
+# - Why now:
+#   Why it did not appear earlier:
+#   traffic increase / data skew / deployment change / timing / config / dependency change
+#
+# The following are NOT sufficient root causes:
+# - “Null pointer happened”
+# - “Timeout happened”
+# - “Retry fixed it”
+# - “Increasing timeout solved it”
+# - “Scaling up solved it”
+# These are usually symptoms or mitigations, not root causes.
+#
+# If evidence is insufficient, explicitly output:
+# - known facts
+# - unknowns
+# - highest-risk assumptions
+# - minimum-risk next validation step
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §3B  SYSTEMIC RISK SCAN (MANDATORY WHEN ANY DEFECT IS FOUND)
+# ──────────────────────────────────────────────────────────────────────────────────────
+# When a defect is found, assume similar defects may exist elsewhere.
+# Always scan for same-pattern weaknesses across code and architecture.
+#
+# Required same-pattern scan:
+# - Similar API handlers / RPC handlers / MQTT consumers / control commands
+# - Similar lock/session/watchdog flows
+# - Similar schema validation gaps
+# - Similar timeout/retry logic
+# - Similar stale-cache/shared-state/race patterns
+# - Similar VIN permission or anti-replay weaknesses
+# - Similar serialization / topic / field compatibility assumptions
+#
+# Classify findings:
+# - P0: safety / security / full-system availability / irreversible data/control issues
+# - P1: core functionality / command path / lock correctness / high tail-latency
+# - P2: performance / maintainability / observability gaps
+# - P3: code hygiene / refactor / readability
+#
+# If a local bug suggests an architectural weakness, say explicitly:
+# - this is not only a local bug
+# - this is a pattern-level issue
+# - hotfix / short-term / long-term remediation path
+#
+# If not all same-pattern issues are fixed now, list them in GATE B follow-ups.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §4  VERIFICATION RULES (NON-NEGOTIABLE)
+# ──────────────────────────────────────────────────────────────────────────────────────
+# RULE V1: Every code change MUST be followed by running verification commands.
+# RULE V2: A problem is NOT solved until verification passes. No exceptions.
+# RULE V3: If a test fails, read the FULL error output before attempting a fix.
+# RULE V4: On failure, produce structured diagnosis:
+#   - Error message (exact)
+#   - Failing test/file/line/assertion
+#   - Root cause hypothesis
+#   - Fix applied
+#   - Re-run result
+# RULE V5: Max 3 retries per failure. If still failing after 3, STOP and report to user.
+# RULE V6: 修改代码后一定要编译并运行自动化验证：./scripts/build-and-verify.sh
+# RULE V7: 每次增加功能后都要配套功能自动化测试，避免新功能带病上线；
+#          新增或扩展 scripts/verify-*.sh 或 e2e，并在 TEST PLAN / 交付清单中写明。
+# RULE V8: 新增功能必须配套日志记录（关键入口、成功/失败分支、关键参数），
+#          使用统一前缀便于精准定位：[Backend][...]、[Client][Auth]、
+#          [Client][车辆列表]、[Client][UI] 等；详见 docs/FEATURE_ADD_CHECKLIST.md。
+# RULE V9: 新增功能交付清单（每次加功能必做）：
+#   □ 功能实现（无 TODO/占位）
+#   □ 关键路径打日志（入口、成功/失败分支、关键参数，带 [Backend]/[Client] 前缀）
+#   □ 新增或扩展功能自动化测试（verify-*.sh 或 e2e 场景）
+#   □ 执行 ./scripts/build-and-verify.sh（或对应 verify-*.sh）通过
+#   □ 功能验证（手动或 e2e）
+# RULE V10: 任何关键路径修改都必须考虑：
+#   □ 回滚方式
+#   □ 灰度方式
+#   □ 兼容性
+#   □ 观测指标
+#   □ 失败告警
+# RULE V11: 对于 MAJOR / SAFETY-CRITICAL / HIGH-RISK PERFORMANCE 变更，
+#           若未说明 observability + rollback + rollout，则视为未完成。
+# RULE V12: For critical-path changes, verification is not only “tests green”;
+#           it also includes confirming logs/metrics/traces are sufficient to detect regressions.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §5  GATE A — PRE-CHANGE PROPOSAL (MAJOR & SAFETY-CRITICAL & HIGH-RISK PERFORMANCE)
+# ──────────────────────────────────────────────────────────────────────────────────────
+# Produce a concise Change Proposal:
+#
+# 1) PROBLEM DEFINITION
+#    - What is the exact user/business/system problem?
+#    - Symptom vs actual impact
+#    - Severity level
+#    - Blast radius (which VINs / modules / deployments / users are affected)
+#
+# 2) GOAL & NON-GOALS
+#    - What specific problem are we solving?
+#    - What are we explicitly NOT solving in this change?
+#
+# 3) ROOT CAUSE HYPOTHESIS
+#    - Direct cause
+#    - Root cause
+#    - Systemic cause
+#    - Why now / why not earlier
+#    - Confidence level + unknowns
+#
+# 4) SPEC REFERENCES
+#    - Relevant @project_spec.md sections
+#    - Related docs / schemas / contracts / runbooks
+#    - Unknowns (must be ≤2; ask if more)
+#
+# 5) SYSTEMIC RISK SCAN
+#    - Similar code paths / modules / interfaces
+#    - Safety / security / consistency / concurrency / performance risks
+#    - Whether this indicates a pattern-level weakness
+#
+# 6) DESIGN
+#    - Modules affected
+#    - Interfaces changed
+#    - Data / schema / topic / config / deployment impact
+#    - Compatibility impact
+#    - Why this design is lowest-risk practical option
+#    - Apply architecture checklist (§7, §7A, §7B, §12, §13A, §14A, §15A)
+#
+# 7) DIAGRAM (Mermaid, mandatory for all MAJOR/SAFETY-CRITICAL changes)
+#    - sequenceDiagram for request/response / command flows
+#    - Must show: vin, sessionId, lock, heartbeat, SAFE_STOP path
+#    - For safety changes: stateDiagram-v2 showing watchdog / SAFE_STOP transitions
+#
+# 8) OBSERVABILITY PLAN
+#    - Logs to add
+#    - Metrics to add
+#    - Trace spans / tags to add
+#    - Which operator-visible signals confirm success/regression within 5 minutes
+#
+# 9) TEST PLAN
+#    - Unit tests
+#    - Integration tests
+#    - E2E scenarios
+#    - Failure injection / timeout / retry / duplicate / out-of-order / reconnect tests if applicable
+#    - DONE = tests written + all scripts green
+#
+# 10) RELEASE PLAN
+#    - Feature flag / config switch?
+#    - Gray rollout scope (VIN / env / tenant / percentage)
+#    - Rollback triggers
+#    - Rollback steps
+#    - Compatibility / schema migration notes
+#
+# 11) COMMANDS TO RUN (exact list)
+#
+# 12) SUCCESS METRICS
+#    - correctness
+#    - stability
+#    - tail latency / realtime behavior
+#    - observability
+#    - safety invariants preserved
+#
+# >>> STOP HERE. WAIT for user confirmation. <<<
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §6  GATE B — POST-CHANGE REPORT
+# ──────────────────────────────────────────────────────────────────────────────────────
+# After verification passes, provide:
+#
+# 1) ROOT CAUSE STATUS
+#   - Confirmed root cause
+#   - Evidence used
+#   - Whether this was local-only or pattern-level
+#   - Why the chosen fix addresses root cause and not just symptoms
+#
+# 2) FILES CHANGED
+#   - list with one-line summary each
+#
+# 3) TESTS ADDED/UPDATED
+#   - unit / integration / e2e / failure-injection coverage
+#   - what exact behavior they protect
+#
+# 4) LOGS / METRICS / TRACES ADDED
+#   - key entry/success/failure logs
+#   - metrics added
+#   - trace/span updates
+#
+# 5) SYSTEMIC RISK SCAN RESULT
+#   - similar vulnerabilities checked
+#   - same-pattern sites fixed / not fixed
+#   - recommended follow-ups if not all addressed now
+#
+# 6) VERIFICATION RESULTS
+#   - ./scripts/build-and-verify.sh → PASS ✅ (or exact result)
+#   - ./scripts/check.sh → PASS ✅ / N/A
+#   - ./scripts/e2e.sh → PASS ✅ / N/A
+#   - other verify-*.sh → PASS ✅ / N/A
+#
+# 7) RELEASE READINESS
+#   - feature flag / switch
+#   - gray rollout plan
+#   - rollback steps
+#   - compatibility notes
+#
+# 8) SAFETY CHECKLIST
+#   - Schema validation on all external inputs
+#   - Message integrity + anti-replay (client AND vehicle)
+#   - Deny-by-default VIN permissions
+#   - Single-controller lock (server + vehicle)
+#   - Watchdog SAFE_STOP tested
+#   - No blocking calls in control loop
+#   - Structured logs with vin + sessionId correlation
+#   - New fields optional by default; existing consumers not broken
+#
+# 9) REMAINING RISKS / FOLLOW-UPS
+#   - unresolved risks
+#   - deferred refactors
+#   - technical debt
+#   - recommended next actions
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §7  ARCHITECTURE CHECKLIST (APPLY DURING DESIGN)
+# ──────────────────────────────────────────────────────────────────────────────────────
+# SAFETY:
+# - Watchdog: missing heartbeat/command → SAFE_STOP within configured timeout
+# - Single controller per VIN: lock enforced server-side + vehicle-side
+# - No blocking calls in control loop: async IO only
+# - Message integrity: anti-replay on client+vehicle; timestamps/sequence numbers
+# - Structured logs with vin + sessionId
+#
+# EXTENSIBILITY:
+# - APIs/messages must be versioned (major.minor.patch where applicable)
+# - New fields optional by default; never break existing consumers
+# - Message type registry / handler mapping for extension
+#
+# OPERABILITY:
+# - New behavior configurable, not hardcoded
+# - Critical behavior discoverable via logs/metrics/traces
+# - Failures diagnosable from runbook + telemetry
+#
+# DISTRIBUTED SAFETY:
+# - Never assume single host or localhost
+# - Network partitions, reconnects, timeouts, duplicates, out-of-order delivery must be considered
+#
+# COMPATIBILITY:
+# - No silent contract changes
+# - Schema/topic/path changes require all producers/consumers audited
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §7A  PERFORMANCE & REALTIME CHECKLIST
+# ──────────────────────────────────────────────────────────────────────────────────────
+# For any change affecting control path, heartbeat, watchdog, lock, streaming, MQTT,
+# WebSocket, RPC, DB, cache, or queue, evaluate performance and realtime behavior.
+#
+# Required dimensions:
+# - P50 / P95 / P99 latency impact
+# - Tail latency / jitter impact
+# - Blocking calls in critical path
+# - Event loop / thread pool starvation
+# - Lock contention and lock hold duration
+# - Queue backlog and backpressure behavior
+# - Retry amplification / timeout storm risk
+# - Serialization / deserialization overhead
+# - Payload size growth
+# - CPU hotspots / memory allocation pressure / GC pressure
+# - DB query count / slow queries / index usage
+# - Cache hit ratio / hotspot keys / cache stampede risk
+# - MQ lag / duplicate consumption / ordering impact
+#
+# Performance optimization priority:
+# 1) Correctness
+# 2) Stability
+# 3) Tail latency / realtime behavior
+# 4) Observability
+# 5) Throughput
+# 6) Code elegance
+#
+# Do not introduce “optimizations” that reduce safety, observability, compatibility,
+# or debuggability without explicitly stating the tradeoff.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §7B  CONCURRENCY, CONSISTENCY, AND ORDERING
+# ──────────────────────────────────────────────────────────────────────────────────────
+# For any stateful or distributed change, explicitly reason about:
+# - Single-writer / single-controller guarantees
+# - Shared mutable state
+# - Race conditions
+# - Duplicate delivery / duplicate execution
+# - Out-of-order messages
+# - Idempotency
+# - Lock acquisition / renewal / expiration / release correctness
+# - Cache-DB consistency
+# - Transaction boundaries
+# - Partial failure and compensation
+# - Clock skew / timestamp trust assumptions
+#
+# Required explanation when changing state/data flow:
+# - What consistency model is expected?
+# - What ordering assumptions exist?
+# - What happens on retry, duplicate, timeout, partial success?
+# - How recovery works after crash / reconnect / restart?
+#
+# For teleoperation flows, always validate:
+# - single-controller lock coherence (server + vehicle)
+# - session ownership correctness
+# - heartbeat timeout semantics
+# - SAFE_STOP transition determinism
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §8  CODING STANDARDS
+# ──────────────────────────────────────────────────────────────────────────────────────
+# - Full working code only. No TODO, no placeholder, no “implement later”.
+# - Small, well-named modules. One responsibility per module.
+# - Explicit types. No `any` unless truly unavoidable (with comment).
+# - No magic numbers; centralize constants in config.
+# - Error handling: every async call must handle rejection/error explicitly.
+# - Logging: structured JSON preferred; include vin + sessionId where available.
+# - Avoid hidden side effects.
+# - Avoid silent failure and swallowed exceptions.
+# - Avoid unbounded retries, unbounded queues, unbounded caches.
+# - Avoid wide refactors unless required and approved.
+# - Complex state/concurrency logic must explain invariants in comments.
+# - 新增功能必须配套日志记录（关键入口、成功/失败分支、关键参数），
+#   使用统一前缀便于精准定位：[Backend][...]、[Client][Auth]、
+#   [Client][车辆列表]、[Client][UI] 等；详见 docs/FEATURE_ADD_CHECKLIST.md。
+#
+# Production-oriented preference order:
+# correctness > stability > observability > maintainability > performance > elegance
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §9  DEBUGGING PROTOCOL
+# ──────────────────────────────────────────────────────────────────────────────────────
+# When fixing a bug or test failure:
+#   STEP 1: READ THE FULL error output. Do not skip.
+#   STEP 2: IDENTIFY the failing file, line, assertion, and environment.
+#   STEP 3: TRACE the data flow from input to failure point.
+#   STEP 4: TRACE the control flow / state transition / concurrency interaction.
+#   STEP 5: FORM a root-cause hypothesis (one sentence direct cause + one sentence deeper cause).
+#   STEP 6: CHECK whether same-pattern defects likely exist elsewhere.
+#   STEP 7: MAKE the minimal fix that addresses root cause.
+#   STEP 8: RUN verification. If fail, go to STEP 1 (max 3 cycles).
+#   STEP 9: If 3 cycles exhausted, STOP and present findings to user.
+#
+# ANTI-PATTERNS (DO NOT):
+# - Do not change multiple things at once hoping one works.
+# - Do not delete/skip failing tests to make suite pass.
+# - Do not add try/catch that silently allows errors.
+# - Do not “fix” by loosening type checks or validation.
+# - Do not increase timeout / retries as the first or only fix.
+# - Do not claim root cause without evidence or a clear causal chain.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §10  SCRIPTS CONTRACT
+# ──────────────────────────────────────────────────────────────────────────────────────
+# These scripts must exist and function:
+#   ./scripts/setup.sh                 — install deps, generate types, prepare env
+#   ./scripts/check.sh                 — lint + typecheck + unit tests (MUST be fast <60s)
+#   ./scripts/dev.sh                   — start dev server
+#   ./scripts/e2e.sh                   — end-to-end tests
+#   ./scripts/build-and-verify.sh      — build + run verify-all/check (post-change)
+#   ./scripts/analyze.sh               — log / trace / artifact analysis
+#   ./scripts/verify-*.sh              — feature / integration / compatibility verification
+# If a script doesn't exist or fails on infra issues, fix/create it first.
+# Script quality requirements:
+# - deterministic when possible
+# - clear exit codes
+# - actionable error output
+# - safe for CI usage
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §11  INTERFACE CONTRACT & SYNC-ON-CHANGE
+# ──────────────────────────────────────────────────────────────────────────────────────
+# - All cross-module interfaces are the single source of truth; see docs/ and mqtt/schemas/.
+# - API: versioned (/api/v1); HTTP request/response schemas in docs; Backend implements.
+# - MQTT: topic + payload schema in mqtt/schemas/*.json; Backend/Client/Vehicle-side/carla-bridge consume.
+# - When changing any interface (field add/remove/rename, topic, path):
+#   1) Update the canonical schema (JSON Schema / OpenAPI / mqtt/schemas).
+#   2) Update ALL producers and consumers (backend, client, Vehicle-side, carla-bridge)
+#      in the same change or an explicitly tracked follow-up.
+#   3) Add or extend tests that encode/decode/validate the new shape;
+#      run ./scripts/check.sh and e2e.
+# - Grep for topic names, API paths, and message field names to find all call sites before changing.
+# - Default rule: additive, backward-compatible changes only unless explicitly approved.
+# - New fields must be optional by default.
+# - Never silently change semantics of existing fields.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §12  STABILITY & EXCEPTION HANDLING
+# ──────────────────────────────────────────────────────────────────────────────────────
+# - Each module must be robust: explicit error handling, no silent swallow, graceful degradation.
+# - Transient errors (network, timeout): retry with backoff + jitter where safe and idempotent.
+# - Non-transient (auth, validation, permission): fail fast, log clearly, return clear error.
+# - Every async/network call: handle failure path; log with [Module][Component]
+#   and vin/sessionId when applicable.
+# - Health: expose /health and /ready (or equivalent); dependencies reported in health response.
+# - Shutdown: SIGINT/SIGTERM → stop accepting new work → drain in-flight → release resources → exit.
+# - For critical flows, define behavior under:
+#   - dependency timeout
+#   - partial failure
+#   - duplicate message
+#   - reconnect
+#   - stale session
+#   - expired lock
+# - Prefer bounded resource usage:
+#   - bounded retries
+#   - bounded queues
+#   - bounded memory growth
+#   - bounded lock hold time
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §13  LOGGING & ANALYSIS TOOLCHAIN
+# ──────────────────────────────────────────────────────────────────────────────────────
+# - Log format: structured (JSON preferred); ISO8601 timestamp; include vin, sessionId where available.
+# - Log prefix by module: [Backend], [Client], [Vehicle-side], [carla-bridge], [media] for quick grep.
+# - Maintain and use:
+#   - scripts/analyze.sh
+#   - scripts/auto_diagnose.py
+#   - docs/TROUBLESHOOTING_RUNBOOK.md
+# - After any change that touches a critical path: ensure logs exist at:
+#   - entry
+#   - success
+#   - failure
+#   - retry / timeout / fallback / SAFE_STOP branches
+# - Logs must help answer:
+#   - what happened
+#   - for which VIN/session
+#   - which upstream/downstream dependency was involved
+#   - whether recovery happened
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §13A  OBSERVABILITY FIRST
+# ──────────────────────────────────────────────────────────────────────────────────────
+# Any critical-path change must improve or preserve observability.
+# Logging alone is not sufficient for critical flows.
+#
+# Explicitly consider:
+# - Metrics
+# - Traces
+# - Correlation IDs
+# - Error counters
+# - Timeout counters
+# - Retry counters
+# - Queue depth / lag
+# - Lock wait time / lock conflict count
+# - Heartbeat missed count
+# - SAFE_STOP trigger count
+# - End-to-end command latency
+# - Session acquisition / release success rates
+#
+# For each critical change, specify:
+# - What log lines are added?
+# - What metrics should be emitted?
+# - What trace spans / tags should be added?
+# - How operators detect regression within 5 minutes after deploy?
+#
+# Prefer telemetry that supports:
+# - fast diagnosis
+# - alerting
+# - SLO tracking
+# - before/after comparison during rollout
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §14  MANDATORY TESTING (UNIT + INTEGRATION AFTER EVERY CHANGE)
+# ──────────────────────────────────────────────────────────────────────────────────────
+# - After EVERY code change: run unit tests and integration/verify scripts before done.
+# - Commands (in order): ./scripts/build-and-verify.sh or ./scripts/check.sh;
+#   if API/integration changed, run ./scripts/e2e.sh.
+# - New behavior MUST add or extend tests (unit and/or verify-*.sh / e2e);
+#   no “done” without green scripts.
+# - Required test dimensions when applicable:
+#   - normal path
+#   - invalid input / schema mismatch
+#   - timeout
+#   - retry
+#   - duplicate message / duplicate request
+#   - out-of-order message
+#   - reconnect / restart recovery
+#   - stale lock / expired session
+#   - SAFE_STOP trigger
+#   - backward compatibility
+#
+# For performance-sensitive changes, add at least one of:
+# - latency-sensitive integration test
+# - queue/backpressure validation
+# - load-test script hook
+# - benchmark or profiling note
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §14A  RELEASE SAFETY: GRAY, FEATURE FLAG, ROLLBACK
+# ──────────────────────────────────────────────────────────────────────────────────────
+# For MAJOR, SAFETY-CRITICAL, or high-risk performance/stability changes:
+# release safety must be designed before implementation is complete.
+#
+# Required:
+# - Is the change behind a feature flag or config switch?
+# - Can it be gray-released by VIN / tenant / environment / percentage?
+# - Which metrics/logs indicate success during rollout?
+# - What are rollback triggers?
+# - What exact rollback steps should operators execute?
+# - Does rollback require schema compatibility or dual-read/write support?
+#
+# Prefer:
+# - backward-compatible changes
+# - optional new fields
+# - additive schemas
+# - staged rollout
+# - kill switch for new behavior
+#
+# Do not ship high-risk changes that cannot be observed and rolled back safely.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §15  DISTRIBUTED DEPLOYMENT (FIVE MODULES)
+# ──────────────────────────────────────────────────────────────────────────────────────
+# - The five modules backend, carla-bridge, client, media (ZLM), Vehicle-side MUST be
+#   deployable independently on different hosts/networks; no hardcoded localhost or
+#   single-LAN assumption.
+# - All “who connects where” is via config (env or config file):
+#   Broker URL, Backend URL, ZLM URL, Keycloak URL, etc.
+# - See docs/DISTRIBUTED_DEPLOYMENT.md for endpoint matrix and connection graph.
+# - When adding a new dependency between modules:
+#   - document the endpoint
+#   - make it configurable
+#   - define timeout/retry/failure behavior
+#   - define health/readiness impact
+# - Network realities must be assumed:
+#   - disconnects
+#   - latency spikes
+#   - packet loss
+#   - reconnect races
+#   - duplicate delivery
+#   - ordering drift
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §15A  PRODUCTIZATION & OPERABILITY
+# ──────────────────────────────────────────────────────────────────────────────────────
+# Solutions must be production-ready, not demo-ready.
+#
+# Every non-trivial change must consider:
+# - configurability
+# - backward compatibility
+# - multi-environment deployment
+# - multi-host/distributed operation
+# - operability
+# - runbook impact
+# - SLA/SLO impact
+# - failure recovery
+# - maintenance burden
+# - future extensibility
+#
+# When proposing design changes, include:
+# - short-term mitigation
+# - medium-term optimization
+# - long-term architecture evolution
+#
+# If a requirement is better solved by configuration, policy, schema, or workflow
+# rather than hardcoded logic, prefer the more operable/productized design.
+#
+# Product-minded default questions:
+# - How will this be configured in dev/staging/prod?
+# - How will operators observe and support it?
+# - How will future clients/vehicles remain compatible?
+# - What is the rollback path?
+# - What is the cost of maintenance after 3 months?
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §16  WORKING MODE SWITCH
+# ──────────────────────────────────────────────────────────────────────────────────────
+# Switch behavior based on user intent:
+#
+# If user mentions:
+# - “bug”, “incident”, “线上”, “偶发”, “诡异”, “root cause”
+#   → Root Cause Analysis Mode
+#
+# - “systemic”, “全局排查”, “同类问题”, “架构隐患”
+#   → Systemic Risk Audit Mode
+#
+# - “latency”, “P99”, “性能”, “高并发”, “realtime”, “卡顿”
+#   → Performance & Realtime Mode
+#
+# - “直接改”, “fix it now”
+#   → Minimal Safe Fix Mode
+#
+# - “重构”, “治理”, “演进”
+#   → Phased Architecture Evolution Mode
+#
+# In Root Cause Analysis Mode:
+# - prioritize diagnosis before implementation
+# - propose evidence collection if confidence is low
+#
+# In Systemic Risk Audit Mode:
+# - expand from one bug to same-pattern scans across the codebase
+# - identify architecture-level weaknesses
+#
+# In Performance & Realtime Mode:
+# - analyze tail latency, contention, queues, retries, serialization, blocking
+#
+# In Minimal Safe Fix Mode:
+# - still analyze risk, but keep changes small, reversible, and observable
+#
+# In Phased Architecture Evolution Mode:
+# - split into hotfix / stabilization / optimization / refactor / long-term evolution
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §17  DEFAULT OUTPUT STRUCTURE FOR COMPLEX TASKS
+# ──────────────────────────────────────────────────────────────────────────────────────
+# For complex analysis tasks, default to this structure unless user explicitly wants brief output:
+#
+# A. Problem Overview
+# - business/context
+# - symptom
+# - impact scope
+# - severity
+#
+# B. Root Cause Analysis
+# - direct cause
+# - deeper root cause
+# - systemic cause
+# - why now / why not earlier
+#
+# C. Evidence & Validation
+# - confirmed facts
+# - unknowns
+# - logs/metrics/traces to inspect
+#
+# D. Systemic Risk Scan
+# - same-pattern defect candidates
+# - concurrency / consistency / security / performance risks
+#
+# E. Fix Options
+# - option 1: minimum stop-bleeding fix
+# - option 2: recommended production fix
+# - tradeoffs
+#
+# F. Code Changes
+# - files/modules changed
+# - compatibility notes
+#
+# G. Tests
+# - unit
+# - integration
+# - e2e
+# - failure injection / edge cases
+#
+# H. Release Plan
+# - feature flag / gray rollout
+# - observability
+# - rollback
+#
+# I. Follow-ups
+# - technical debt
+# - systemic治理
+# - architecture improvements
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §18  DEFAULT REVIEW CHECKLIST
+# ──────────────────────────────────────────────────────────────────────────────────────
+# When reviewing or generating code, always check:
+# - input validation and schema compliance
+# - permission / VIN scoping
+# - anti-replay / message integrity
+# - null / boundary / empty handling
+# - timeout / retry correctness
+# - duplicate / out-of-order handling
+# - shared state / race / lock correctness
+# - cache / DB / MQ consistency
+# - blocking calls in critical path
+# - resource leaks (memory / thread / connection / fd)
+# - logging coverage and sensitivity
+# - metrics/traces for critical paths
+# - backward compatibility
+# - deployability across distributed hosts
+# - rollback feasibility
+#
+# If any of the above is uncertain, say so explicitly and recommend validation.
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §19  PROHIBITED BEHAVIORS
+# ──────────────────────────────────────────────────────────────────────────────────────
+# DO NOT:
+# - patch symptoms without root-cause reasoning
+# - skip reading full error output
+# - change multiple unrelated things at once
+# - delete or weaken tests to make pipeline pass
+# - hide failures with broad try/catch
+# - replace root-cause fixes with “just retry more”
+# - silently change schemas/topics/field semantics
+# - break existing consumers without explicit approval
+# - assume localhost or single-host deployment
+# - add blocking work to control loop
+# - ignore rollback / observability / compatibility on risky changes
+# - output demo-grade code as production-ready code
+# - claim “done” without verification evidence
+
+# ──────────────────────────────────────────────────────────────────────────────────────
+# §20  FINAL GOAL
+# ──────────────────────────────────────────────────────────────────────────────────────
+# The goal is not merely to generate code that compiles.
+# The goal is to produce:
+# - code that is safe in a teleoperation context
+# - fixes that address root causes, not just symptoms
+# - solutions that detect systemic weaknesses, not just local bugs
+# - production-grade implementations with strong stability and realtime behavior
+# - high observability and diagnosability
+# - backward-compatible, testable, rollback-safe, gray-release-safe changes
+# - designs the team can operate, maintain, and evolve over time
+#
+# Cursor must behave like an engineer responsible for production outcomes,
+# not a code autocomplete tool.

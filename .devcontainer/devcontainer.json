@@ -1,0 +1,54 @@
+// {
+//   "name": "Qt6 Remote Driving Dev",
+//   "image": "docker.1ms.run/stateoftheartio/qt6:6.8-gcc-aqt",
+
+//   // 1. 自动定位工作目录
+//   "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+
+//   // 2. 【核心修复】不要运行那个脚本了！
+//   // 直接在这里执行 xhost 命令，并且加上 "|| true" 
+//   // 意思是：尝试设置X11权限，就算失败了也闭嘴，继续启动容器，不要报错退出。
+//   "initializeCommand": "xhost +local:docker || xhost + || true",
+
+//   "remoteUser": "root",
+
+//   // 3. 挂载 X11
+//   "mounts": [
+//     "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+//   ],
+
+//   "containerEnv": {
+//     "QT_VERSION": "6.8.0",
+//     "QT_PATH": "/opt/Qt",
+//     "QT_GCC": "/opt/Qt/6.8.0/gcc_64",
+//     "CMAKE_PREFIX_PATH": "/opt/Qt/6.8.0/gcc_64",
+//     "LD_LIBRARY_PATH": "/opt/Qt/6.8.0/gcc_64/lib",
+//     "DISPLAY": "${localEnv:DISPLAY}",
+//     "QT_QPA_PLATFORM": "xcb"
+//   },
+
+//   "customizations": {
+//     "vscode": {
+//       "extensions": [
+//         "ms-vscode.cpptools",
+//         "ms-vscode.cmake-tools"
+//       ],
+//       "settings": {
+//         "cmake.configureOnOpen": false
+//       }
+//     }
+//   },
+
+//   "runArgs": [
+//     "--privileged",
+//     "--network=host",
+//     "--ipc=host",
+//     "--pid=host",
+//     "-e", "DISPLAY=${localEnv:DISPLAY}"
+//   ],
+
+//   "overrideCommand": true,
+  
+//   // 4. 容器启动后执行的命令（后台运行，不阻塞终端）
+//   "postCreateCommand": "bash .devcontainer/start-background.sh"
+// }

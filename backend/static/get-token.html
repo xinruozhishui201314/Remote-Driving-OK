@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>获取 JWT Token - 远驾管理</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 520px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+    .hint { color: #666; font-size: 0.875rem; margin-bottom: 1rem; }
+    label { display: block; margin-top: 0.75rem; font-weight: 500; }
+    input { width: 100%; padding: 0.5rem; margin-top: 0.25rem; border: 1px solid #ccc; border-radius: 4px; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    .msg { margin-top: 1rem; padding: 0.5rem; border-radius: 4px; }
+    .msg.ok { background: #dcfce7; color: #166534; }
+    .msg.err { background: #fee2e2; color: #991b1b; }
+    textarea { width: 100%; min-height: 100px; margin-top: 0.5rem; padding: 0.5rem; font-family: monospace; font-size: 0.75rem; }
+  </style>
+</head>
+<body>
+  <h1>获取 JWT Token</h1>
+  <p class="hint">用 e2e-test 账号获取 token 后，可粘贴到 <a href="/admin/add-vehicle">增加车辆</a> 页面的 JWT Token 框。</p>
+  <form id="f">
+    <label>用户名</label>
+    <input type="text" id="username" value="e2e-test" placeholder="e2e-test">
+    <label>密码</label>
+    <input type="password" id="password" placeholder="e2e-test-password">
+    <label>Client Secret（可选。新 realm 为 change-me-in-production；若提示 Invalid client credentials 请改为 -change-me-in-production）</label>
+    <input type="text" id="clientSecret" value="" placeholder="change-me-in-production 或 -change-me-in-production">
+    <button type="submit">获取 Token</button>
+  </form>
+  <div id="msg"></div>
+  <label style="margin-top:1rem;">access_token（复制到增加车辆页）：</label>
+  <textarea id="tokenOut" readonly placeholder="点击上方按钮获取后显示"></textarea>
+  <script>
+    (function(){
+      var form = document.getElementById('f');
+      var tokenOut = document.getElementById('tokenOut');
+      var msgEl = document.getElementById('msg');
+      function showMsg(text, isErr) {
+        msgEl.textContent = text;
+        msgEl.className = 'msg ' + (isErr ? 'err' : 'ok');
+      }
+      form.addEventListener('submit', function(e){
+        e.preventDefault();
+        var username = (document.getElementById('username').value || '').trim();
+        var password = (document.getElementById('password').value || '');
+        var clientSecret = (document.getElementById('clientSecret').value || '').trim();
+        if (!username) { showMsg('请填写用户名', true); return; }
+        msgEl.textContent = '请求中…';
+        msgEl.className = 'msg';
+        tokenOut.value = '';
+        fetch('/admin/proxy-token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username, password: password, client_secret: clientSecret || 'change-me-in-production' })
+        }).then(function(r){ return r.json(); }).then(function(data){
+          if (data.access_token) {
+            tokenOut.value = data.access_token;
+            showMsg('获取成功，请复制上方 token 到增加车辆页。', false);
+          } else {
+            showMsg('失败：' + (data.error_description || data.error || JSON.stringify(data)), true);
+          }
+        }).catch(function(err){
+          showMsg('请求失败：' + err.message, true);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

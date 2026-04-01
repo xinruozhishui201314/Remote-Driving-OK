@@ -1,0 +1,10 @@
+# 无 GPU 模式：当宿主机未安装 nvidia-container-toolkit 时使用，去掉 runtime: nvidia。
+# 用法：CARLA_NO_GPU=1 ./scripts/start-all-nodes.sh
+# 或：docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.carla.yml -f docker-compose.carla.nogpu.yml up -d carla
+# 注意：CARLA 仿真器通常需要 GPU，无 GPU 时服务可能无法正常启动或极慢。
+
+services:
+  carla:
+    runtime: null
+    deploy:
+      resources: {}

@@ -1,0 +1,2 @@
+# Git LFS：将 deploy/carla/deps 下的大体积 tar.gz（如 CMake 预编译包）交给 LFS 管理
+deploy/carla/deps/*.tar.gz filter=lfs diff=lfs merge=lfs -text

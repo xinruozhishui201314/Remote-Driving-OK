@@ -1,0 +1,322 @@
+# Vehicle-side 开发模式 Dockerfile
+#
+# 构建上下文 = 项目根目录 (.)，Dockerfile 在 Vehicle-side/ 子目录下。
+# COPY 路径全部相对于项目根目录：
+#   deps/            → 项目根目录 deps/
+#   Vehicle-side/   → Vehicle-side/ 源码目录
+#
+# 推荐构建命令（从项目根目录运行）：
+#   docker build -f Vehicle-side/Dockerfile.dev -t remote-driving-vehicle-test .
+#
+# 脚本构建（自动检测）：
+#   ./scripts/build-vehicle.sh dev --no-cache
+
+FROM docker.1ms.run/library/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── 1. 安装编译工具 + 系统库 ──────────────────────────────────────────
+RUN echo "========================================" && \
+    echo " [Step 1/8] 安装系统依赖包" && \
+    echo "========================================" && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+    cmake \
+    make \
+    g++ \
+    git \
+    ca-certificates \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libmosquittopp-dev \
+    inotify-tools \
+    libspdlog-dev \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/* && \
+    echo "[Step 1/8] 系统依赖安装完成 ✓" && \
+    cmake --version && \
+    g++ --version | head -1
+
+WORKDIR /app
+
+# ── 2. 复制 deps 源码（上下文 = 项目根目录）────────────────────────
+COPY deps/ ./deps/
+
+RUN echo "========================================" && \
+    echo " [Step 2/8] 复制 deps 源码" && \
+    echo "========================================" && \
+    echo "[Step 2/8] >>> 构建上下文路径: /app (WORKDIR)" && \
+    echo "[Step 2/8] >>> deps 复制目标: /app/deps/" && \
+    echo "[Step 2/8] >>> deps 目录内容:" && \
+    ls -la /app/deps/ && \
+    echo "" && \
+    echo "[Step 2/8] >>> 各依赖实际路径验证:" && \
+    echo "    cpp-httplib:    $(test -d /app/deps/cpp-httplib && echo OK || echo MISSING)  → /app/deps/cpp-httplib $(ls /app/deps/cpp-httplib/httplib.h 2>/dev/null | head -1)" && \
+    echo "    nlohmann_json:  $(test -d /app/deps/nlohmann_json && echo OK || echo MISSING)  → /app/deps/nlohmann_json $(ls /app/deps/nlohmann_json/json.hpp 2>/dev/null | head -1)" && \
+    echo "    googletest:     $(test -d /app/deps/googletest && echo OK || echo MISSING)  → /app/deps/googletest $(ls /app/deps/googletest/CMakeLists.txt 2>/dev/null | head -1)" && \
+    echo "    paho.mqtt.cpp:  $(test -d /app/deps/paho.mqtt.cpp && echo OK || echo MISSING)  → /app/deps/paho.mqtt.cpp $(ls /app/deps/paho.mqtt.cpp/CMakeLists.txt 2>/dev/null | head -1)" && \
+    echo "    paho.mqtt.c:    $(test -d /app/deps/paho.mqtt.cpp/externals/paho.mqtt.c && echo OK || echo MISSING)  → /app/deps/paho.mqtt.cpp/externals/paho.mqtt.c $(ls /app/deps/paho.mqtt.cpp/externals/paho.mqtt.c/CMakeLists.txt 2>/dev/null | head -1)" && \
+    echo "" && \
+    echo "[Step 2/8] deps 源码复制完成 ✓"
+
+# ── 3. 从源码构建并安装 paho.mqtt.c ─────────────────────────────────
+RUN echo "========================================" && \
+    echo " [Step 3/8] 构建 paho.mqtt.c" && \
+    echo "========================================" && \
+    echo "[Step 3/8] >>> 源码路径: /app/deps/paho.mqtt.cpp/externals/paho.mqtt.c" && \
+    echo "[Step 3/8] >>> 构建目录: /app/deps/build-paho-c" && \
+    echo "[Step 3/8] >>> 安装前缀: /app/deps/install" && \
+    echo "[Step 3/8] 验证源码目录:" && \
+    ls -la /app/deps/paho.mqtt.cpp/externals/paho.mqtt.c/ && \
+    mkdir -p /app/deps/build-paho-c && \
+    cmake -S /app/deps/paho.mqtt.cpp/externals/paho.mqtt.c -B /app/deps/build-paho-c \
+        -DPAHO_WITH_SSL=ON \
+        -DPAHO_BUILD_STATIC=OFF \
+        -DPAHO_BUILD_SHARED=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/app/deps/install && \
+    echo "[Step 3/8] CMake 配置完成，开始编译..." && \
+    make -C /app/deps/build-paho-c -j$(nproc) && \
+    echo "[Step 3/8] 编译完成，开始安装..." && \
+    make -C /app/deps/build-paho-c install && \
+    echo "[Step 3/8] 验证安装文件:" && \
+    echo "    库文件 → /app/deps/install/lib/:" && \
+    ls -la /app/deps/install/lib/ && \
+    echo "    头文件 → /app/deps/install/include/:" && \
+    ls -la /app/deps/install/include/ 2>/dev/null || echo "    (无 include 目录)" && \
+    echo "[Step 3/8] paho.mqtt.c 构建安装完成 ✓"
+
+# ── 4. 从源码构建并安装 paho.mqtt.cpp ────────────────────────────────
+RUN echo "========================================" && \
+    echo " [Step 4/8] 构建 paho.mqtt.cpp" && \
+    echo "========================================" && \
+    echo "[Step 4/8] >>> 源码路径: /app/deps/paho.mqtt.cpp" && \
+    echo "[Step 4/8] >>> 构建目录: /app/deps/build-paho-cpp" && \
+    echo "[Step 4/8] >>> 安装前缀: /app/deps/install" && \
+    echo "[Step 4/8] >>> CMAKE_PREFIX_PATH: /app/deps/install" && \
+    echo "[Step 4/8] 验证源码目录:" && \
+    ls -la /app/deps/paho.mqtt.cpp/ && \
+    mkdir -p /app/deps/build-paho-cpp && \
+    cmake -S /app/deps/paho.mqtt.cpp -B /app/deps/build-paho-cpp \
+        -DPAHO_WITH_SSL=ON \
+        -DPAHO_BUILD_SHARED=ON \
+        -DPAHO_BUILD_STATIC=OFF \
+        -DPAHO_BUILD_SAMPLES=OFF \
+        -DPAHO_BUILD_EXAMPLES=OFF \
+        -DPAHO_BUILD_TESTS=OFF \
+        -DPAHO_WITH_MQTT_C=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_PREFIX_PATH=/app/deps/install \
+        -DCMAKE_INSTALL_PREFIX=/app/deps/install && \
+    echo "[Step 4/8] CMake 配置完成，开始编译..." && \
+    make -C /app/deps/build-paho-cpp -j$(nproc) && \
+    echo "[Step 4/8] 编译完成，开始安装..." && \
+    make -C /app/deps/build-paho-cpp install && \
+    echo "[Step 4/8] 验证安装文件:" && \
+    echo "    库文件(paho):" && \
+    ls -la /app/deps/install/lib/ | grep paho && \
+    echo "    头文件(mqtt):" && \
+    ls -la /app/deps/install/include/mqtt/ 2>/dev/null || echo "    (无 mqtt include 目录)" && \
+    echo "    CMake config:" && \
+    ls /app/deps/install/lib/cmake/PahoMqttCpp/ 2>/dev/null || echo "    (无 PahoMqttCpp cmake dir)" && \
+    echo "[Step 4/8] paho.mqtt.cpp 构建安装完成 ✓"
+
+# ── 5. 从源码构建并安装 googletest ──────────────────────────────────
+RUN echo "========================================" && \
+    echo " [Step 5/8] 构建 googletest" && \
+    echo "========================================" && \
+    echo "[Step 5/8] >>> 源码路径: /app/deps/googletest" && \
+    echo "[Step 5/8] >>> 构建目录: /app/deps/build-gtest" && \
+    echo "[Step 5/8] >>> 安装前缀: /app/deps/install" && \
+    echo "[Step 5/8] 验证源码目录:" && \
+    ls -la /app/deps/googletest/ && \
+    mkdir -p /app/deps/build-gtest && \
+    cmake -S /app/deps/googletest -B /app/deps/build-gtest \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/app/deps/install \
+        -DBUILD_GMOCK=ON \
+        -DBUILD_GTEST=ON \
+        -DBUILD_SHARED_LIBS=OFF && \
+    echo "[Step 5/8] CMake 配置完成，开始编译..." && \
+    make -C /app/deps/build-gtest -j$(nproc) && \
+    echo "[Step 5/8] 编译完成，开始安装..." && \
+    make -C /app/deps/build-gtest install && \
+    echo "[Step 5/8] 验证安装文件:" && \
+    echo "    库文件(gtest):" && \
+    ls -la /app/deps/install/lib/ | grep -i gtest && \
+    echo "    CMake config:" && \
+    ls /app/deps/install/lib/cmake/GTest/ 2>/dev/null || echo "    (无 GTest cmake dir)" && \
+    echo "    头文件:" && \
+    ls -la /app/deps/install/include/gtest/ 2>/dev/null || echo "    (无 gtest include 目录)" && \
+    echo "[Step 5/8] googletest 构建安装完成 ✓"
+
+# ── 6. 复制源码（上下文 = 项目根目录）────────────────────────────────
+COPY Vehicle-side/src/ ./src/
+COPY Vehicle-side/CMakeLists.txt ./
+
+RUN echo "========================================" && \
+    echo " [Step 6/8] 复制项目源码" && \
+    echo "========================================" && \
+    echo "[Step 6/8] >>> 源码目录: /app/src" && \
+    echo "[Step 6/8] >>> CMakeLists.txt: /app/CMakeLists.txt" && \
+    echo "[Step 6/8] 验证源码文件:" && \
+    echo "    .cpp 文件:" && \
+    find ./src -name "*.cpp" && \
+    echo "    .h 文件:" && \
+    find ./src -name "*.h" && \
+    echo "    计数: $(find ./src -name "*.cpp" | wc -l) 个 .cpp, $(find ./src -name "*.h" | wc -l) 个 .h" && \
+    echo "    CMakeLists.txt:" && \
+    ls -la ./CMakeLists.txt && \
+    echo "" && \
+    echo "[Step 6/8] 源码复制完成 ✓"
+
+# ── 7. 构建项目（/app/deps/install 中的已安装依赖）─────────────────
+RUN echo "========================================" && \
+    echo " [Step 7/8] 构建 VehicleSide 项目" && \
+    echo "========================================"
+
+# 7a. 验证依赖安装
+RUN echo "[Step 7a/8] 验证依赖安装..." && \
+    echo ">>> DEPS_INSTALL_PREFIX: /app/deps/install" && \
+    echo ">>> CMAKE_PREFIX_PATH:   /app/deps/install" && \
+    echo "" && \
+    echo "--- /app/deps/install 目录结构 ---" && \
+    find /app/deps/install -maxdepth 3 -type d 2>/dev/null && \
+    echo "" && \
+    echo "--- 已安装的库文件 (.so* / .a) ---" && \
+    find /app/deps/install -name "*.so*" -o -name "*.a" 2>/dev/null | sort && \
+    echo "" && \
+    echo "--- 已安装的头文件 ---" && \
+    find /app/deps/install -name "*.h" 2>/dev/null | sort && \
+    echo "" && \
+    echo "--- CMake 配置文件 ---" && \
+    find /app/deps/install -name "*.cmake" -o -name "Config.cmake" 2>/dev/null | sort && \
+    echo "[Step 7a/8] 依赖验证完成 ✓"
+
+# ── 修复 nlohmann_json 路径映射 ──────────────────────────────────
+# 问题：deps/nlohmann_json/json.hpp 在根目录，但 CMakeLists.txt:108 期望 include/nlohmann/json.hpp
+# 解决：建立 include/nlohmann/ 目录结构以兼容
+RUN echo "========================================" && \
+    echo " [nlohmann_json] 路径修复" && \
+    echo "========================================" && \
+    echo ">>> CMakeLists.txt 期望路径: /app/deps/nlohmann_json/include/nlohmann/json.hpp" && \
+    echo ">>> 实际文件位置:           /app/deps/nlohmann_json/json.hpp" && \
+    echo "" && \
+    echo "--- 修复前状态 ---" && \
+    echo "    /app/deps/nlohmann_json/:" && \
+    ls -la /app/deps/nlohmann_json/ && \
+    echo "    /app/deps/nlohmann_json/include/:" && \
+    ls -la /app/deps/nlohmann_json/include/ 2>/dev/null || echo "    (不存在)" && \
+    echo "" && \
+    echo "--- 执行修复 ---" && \
+    mkdir -p /app/deps/nlohmann_json/include/nlohmann && \
+    ln -sf ../../json.hpp /app/deps/nlohmann_json/include/nlohmann/json.hpp && \
+    echo "    符号链接已创建" && \
+    echo "" && \
+    echo "--- 修复后验证 ---" && \
+    echo "    /app/deps/nlohmann_json/include/nlohmann/json.hpp:" && \
+    ls -la /app/deps/nlohmann_json/include/nlohmann/json.hpp && \
+    echo "    符号链接指向: $(readlink -f /app/deps/nlohmann_json/include/nlohmann/json.hpp)" && \
+    echo "    文件头部:" && \
+    head -3 /app/deps/nlohmann_json/include/nlohmann/json.hpp && \
+    echo "" && \
+    echo "[nlohmann_json] 路径修复完成 ✓"
+
+# 7b. CMake 配置
+RUN echo "========================================" && \
+    echo " [Step 7b/8] CMake 配置" && \
+    echo "========================================" && \
+    echo ">>> 项目源码路径:  /app" && \
+    echo ">>> 构建目录:      /app/build" && \
+    echo ">>> 源码树:" && \
+    ls -la /app/ && \
+    echo "" && \
+    echo ">>> CMake 参数:" && \
+    echo "    -DCMAKE_BUILD_TYPE:   Release" && \
+    echo "    -DCMAKE_PREFIX_PATH: /app/deps/install" && \
+    echo "" && \
+    echo ">>> 关键依赖路径检查:" && \
+    echo "    paho cmake:    $(test -f /app/deps/install/lib/cmake/PahoMqttCpp/PahoMqttCppConfig.cmake && echo OK || echo MISSING) → /app/deps/install/lib/cmake/PahoMqttCpp/PahoMqttCppConfig.cmake" && \
+    echo "    gtest cmake:   $(test -f /app/deps/install/lib/cmake/GTest/GTestConfig.cmake && echo OK || echo MISSING) → /app/deps/install/lib/cmake/GTest/GTestConfig.cmake" && \
+    echo "    spdlog cmake:  $(test -f /usr/lib/x86_64-linux-gnu/cmake/spdlog/spdlogConfig.cmake && echo OK || echo MISSING) → /usr/lib/x86_64-linux-gnu/cmake/spdlog/spdlogConfig.cmake" && \
+    echo "    nlohmann json: $(test -f /app/deps/nlohmann_json/include/nlohmann/json.hpp && echo OK || echo MISSING) → /app/deps/nlohmann_json/include/nlohmann/json.hpp" && \
+    echo "    cpp-httplib:   $(test -f /app/deps/cpp-httplib/httplib.h && echo OK || echo MISSING) → /app/deps/cpp-httplib/httplib.h" && \
+    echo "    libpq:         $(test -f /usr/include/postgresql/libpq-fe.h && echo OK || echo MISSING) → /usr/include/postgresql/libpq-fe.h" && \
+    echo "    libcurl:       $(test -f /usr/include/curl/curl.h && echo OK || echo MISSING) → /usr/include/curl/curl.h" && \
+    mkdir -p /app/build && \
+    cmake -S /app -B /app/build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_PREFIX_PATH=/app/deps/install && \
+    echo "" && \
+    echo "--- CMakeCache 关键变量 ---" && \
+    cat /app/build/CMakeCache.txt | grep -E "CMAKE_BUILD_TYPE|CMAKE_PREFIX_PATH|ENABLE_MQTT|ENABLE_SPDLOG|GTEST_FROM|nlohmann|httplib" | head -30 && \
+    echo "" && \
+    echo "--- build/ 目录内容 ---" && \
+    ls -la /app/build/ && \
+    echo "[Step 7b/8] CMake 配置完成 ✓"
+
+# 7c. 编译
+RUN echo "========================================" && \
+    echo " [Step 7c/8] 编译" && \
+    echo "========================================" && \
+    echo ">>> 构建目录: /app/build" && \
+    echo ">>> 编译命令: make -C /app/build -j$(nproc)" && \
+    echo "" && \
+    make -C /app/build -j$(nproc) && \
+    echo "" && \
+    echo "--- 编译产物 ---" && \
+    echo "    可执行文件:" && \
+    find /app/build -type f -executable | sort && \
+    echo "    库文件:" && \
+    find /app/build -name "*.so*" -o -name "*.a" 2>/dev/null | sort && \
+    echo "[Step 7c/8] 编译完成 ✓"
+
+# 7d. 验证产物
+RUN echo "========================================" && \
+    echo " [Step 7d/8] 验证可执行文件" && \
+    echo "========================================" && \
+    echo ">>> 查找 VehicleSide 可执行文件..." && \
+    echo "" && \
+    echo "--- build/ 目录树(顶层) ---" && \
+    ls -la /app/build/ && \
+    echo "" && \
+    if [ -f "/app/build/VehicleSide" ]; then \
+        echo ">>> 找到: /app/build/VehicleSide ✓"; \
+        file /app/build/VehicleSide; \
+        ls -lh /app/build/VehicleSide; \
+    elif [ -f "/app/build/bin/VehicleSide" ]; then \
+        echo ">>> 找到: /app/build/bin/VehicleSide ✓"; \
+        file /app/build/bin/VehicleSide; \
+        ls -lh /app/build/bin/VehicleSide; \
+    else \
+        echo ">>> ✗ 错误: VehicleSide 可执行文件不存在!"; \
+        echo ""; \
+        echo ">>> 所有可执行文件:"; \
+        find /app/build -type f -executable | while read f; do echo "    $f"; done; \
+        echo ""; \
+        echo ">>> CMakeLists.txt 可执行目标名称:"; \
+        grep "add_executable" /app/CMakeLists.txt | head -10; \
+        exit 1; \
+    fi && \
+    echo "" && \
+    echo "[Step 7d/8] VehicleSide 项目构建完成 ✓"
+
+# ── 8. 暴露端口 + 启动命令 ──────────────────────────────────────────
+COPY Vehicle-side/docker-entrypoint-dev.sh /docker-entrypoint-dev.sh
+
+RUN echo "========================================" && \
+    echo " [Step 8/8] 最终验证" && \
+    echo "========================================" && \
+    echo ">>> 入口脚本: /docker-entrypoint-dev.sh" && \
+    ls -la /docker-entrypoint-dev.sh && \
+    echo "" && \
+    echo ">>> 最终产物:" && \
+    ls -la /app/build/VehicleSide 2>/dev/null && \
+    echo "" && \
+    echo "[Step 8/8] 最终验证完成 ✓"
+
+EXPOSE 9000
+ENV VEHICLE_APP_PORT=9000
+
+ENTRYPOINT ["/docker-entrypoint-dev.sh"]
+CMD ["/app/build/VehicleSide"]

@@ -1,0 +1,15 @@
+# 客户端字体安装 Dockerfile
+# 用于在客户端容器中安装中文字体
+
+FROM docker.1ms.run/stateoftheartio/qt6:6.8-gcc-aqt
+
+# 安装中文字体
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        fonts-noto-cjk \
+        fonts-wqy-microhei \
+        fontconfig \
+    && rm -rf /var/lib/apt/lists/*
+
+# 更新字体缓存
+RUN fc-cache -fv

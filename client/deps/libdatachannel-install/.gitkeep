@@ -1,0 +1,1 @@
+# 占位：宿主机执行 scripts/install-libdatachannel-for-client.sh 后，libdatachannel 将安装到此目录，供 client-dev 挂载。

@@ -1,0 +1,90 @@
+# C++ / CMake Build Files
+build/
+bin/
+lib/
+out/
+*.o
+*.obj
+*.lib
+*.a
+*.so
+*.dll
+*.dylib
+*.exe
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+
+# Qt Generated Files
+moc_*
+ui_*
+qrc_*
+*.moc
+*.ui
+.qmake.stash
+.QMake.stash
+
+# IDE / Editor Files
+.vscode/
+.idea/
+*.user
+*.swp
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+.Python
+
+# Logs & Temp
+*.log
+*.pid
+tmp/media/ZLMediaKit/
+# 模块间交互记录（开发调试用，含敏感信息不提交）
+recordings/
+# 诊断收集目录（临时的日志与信息）
+diags/
+
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# CARLA 源码（克隆到工程目录供容器挂载，不提交）
+carla-src/
+# CARLA 构建镜像保存文件（build-carla-image.sh 生成，体量大不提交）
+deploy/carla/carla-with-bridge-latest.tar
+deploy/carla/*.tar
+# CARLA 构建依赖（由 deploy/carla/clone-deps.sh 克隆，不提交嵌套仓库）
+deploy/carla/deps/paho.mqtt.c/
+deploy/carla/deps/paho.mqtt.cpp/
+
+# Media & Large Files
+media/ZLMediaKit/
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.flv
+
+# Docker volumes
+docker-volumes/
+
+# 宿主机安装的 libdatachannel（供 client-dev 挂载），保留目录与 .gitkeep
+client/deps/libdatachannel-src/
+client/deps/libdatachannel-build/
+client/deps/libdatachannel-install/*
+.aider*
+.cecli*
+
+# 开发依赖（通过脚本克隆的第三方库，不提交）
+deps/
+logs/

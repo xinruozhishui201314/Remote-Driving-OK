@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>增加车辆 - 远驾管理</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 520px; margin: 2rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; margin-bottom: 0.5rem; }
+    .hint { color: #666; font-size: 0.875rem; margin-bottom: 1rem; }
+    label { display: block; margin-top: 0.75rem; font-weight: 500; }
+    input, textarea { width: 100%; padding: 0.5rem; margin-top: 0.25rem; border: 1px solid #ccc; border-radius: 4px; }
+    textarea { min-height: 80px; font-family: monospace; font-size: 0.8rem; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; background: #2563eb; color: #fff; border: none; border-radius: 4px; cursor: pointer; }
+    button:hover { background: #1d4ed8; }
+    .msg { margin-top: 1rem; padding: 0.5rem; border-radius: 4px; }
+    .msg.ok { background: #dcfce7; color: #166534; }
+    .msg.err { background: #fee2e2; color: #991b1b; }
+  </style>
+</head>
+<body>
+  <h1>增加车辆</h1>
+  <p class="hint">添加后，使用同一账号登录远驾客户端即可在车辆列表中看到并选择该车辆。</p>
+  <form id="f">
+    <label>JWT Token（必填）</label>
+    <textarea id="token" placeholder="粘贴 Keycloak 登录后获得的 access_token（可从远驾客户端或 Keycloak 获取）"></textarea>
+    <label>VIN（必填，建议 17 位）</label>
+    <input type="text" id="vin" maxlength="17" placeholder="例如 carla-sim-003" required>
+    <label>车型/型号（选填）</label>
+    <input type="text" id="model" placeholder="例如 carla-sim">
+    <button type="submit">提交添加</button>
+  </form>
+  <div id="msg"></div>
+  <script>
+    (function(){
+      var form = document.getElementById('f');
+      var tokenEl = document.getElementById('token');
+      var vinEl = document.getElementById('vin');
+      var modelEl = document.getElementById('model');
+      var msgEl = document.getElementById('msg');
+      function showMsg(text, isErr) {
+        msgEl.textContent = text;
+        msgEl.className = 'msg ' + (isErr ? 'err' : 'ok');
+      }
+      form.addEventListener('submit', function(e){
+        e.preventDefault();
+        var token = (tokenEl.value || '').trim().replace(/^Bearer\s+/i, '');
+        var vin = (vinEl.value || '').trim();
+        var model = (modelEl.value || '').trim();
+        if (!token) { showMsg('请填写 JWT Token', true); return; }
+        if (!vin) { showMsg('请填写 VIN', true); return; }
+        console.log('[AddVehicle] 提交 vin=' + vin + ' model=' + model);
+        msgEl.textContent = '提交中…';
+        msgEl.className = 'msg';
+        fetch('/api/v1/vehicles', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+          body: JSON.stringify({ vin: vin, model: model })
+        }).then(function(r){
+          return r.json().then(function(data){ return { status: r.status, data: data }; });
+        }).then(function(result){
+          console.log('[AddVehicle] 响应 status=' + result.status + ' data=', result.data);
+          if (result.status === 201) {
+            showMsg('添加成功：VIN=' + result.data.vin + '。请在远驾客户端刷新或重新进入选车页查看。', false);
+          } else {
+            showMsg('失败：' + (result.data.details || result.data.error || result.status), true);
+          }
+        }).catch(function(err){
+          console.log('[AddVehicle] 请求异常', err);
+          showMsg('请求失败：' + err.message, true);
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

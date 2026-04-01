@@ -1,0 +1,230 @@
+# Client Configuration File
+# 驾驶舱客户端配置文件
+# 环境变量优先级高于配置文件
+
+# ========================================
+# 应用配置
+# ========================================
+app:
+  # 应用名称
+  name: "Remote Driving Client"
+  
+  # 应用版本
+  version: "1.0.0"
+  
+  # 组织名称
+  organization: "RemoteDriving"
+
+# ========================================
+# 日志配置
+# ========================================
+logging:
+  # 日志文件路径
+  # 环境变量: CLIENT_LOG_FILE
+  file_path: "/tmp/remote-driving-client.log"
+  
+  # 日志级别: debug, info, warning, error
+  level: "info"
+  
+  # 启用控制台输出
+  console_enabled: true
+
+# ========================================
+# Keycloak 认证配置
+# ========================================
+auth:
+  # 后端服务器地址
+  # 环境变量: BACKEND_URL 或 REMOTE_DRIVING_SERVER
+  backend_url: ""
+  
+  # 默认服务器地址（登录页面显示）
+  # 环境变量: DEFAULT_SERVER_URL
+  default_server_url: "http://localhost:8081"
+  
+  # Keycloak 服务器地址
+  # 环境变量: KEYCLOAK_URL
+  keycloak_url: "http://keycloak:8080"
+  
+  # Realm 名称
+  # 环境变量: KEYCLOAK_REALM
+  realm: "teleop"
+  
+  # 客户端 ID
+  # 环境变量: KEYCLOAK_CLIENT_ID
+  client_id: "teleop-client"
+
+# ========================================
+# MQTT 配置（控制通道）
+# ========================================
+mqtt:
+  # MQTT Broker 地址
+  # 环境变量: MQTT_BROKER_URL
+  broker_url: "mqtt://localhost:1883"
+  
+  # 客户端 ID
+  # 环境变量: MQTT_CLIENT_ID
+  client_id: "remote_driving_client"
+  
+  # 控制主题模板
+  control_topic_template: "vehicle/{vin}/control"
+  
+  # 状态主题模板
+  status_topic_template: "vehicle/{vin}/status"
+  
+  # QoS 级别（0, 1, 2）
+  qos: 1
+  
+  # Keep-Alive 间隔（秒）
+  keep_alive: 60
+  
+  # 连接超时（秒）
+  connect_timeout: 10
+  
+  # 自动重连
+  auto_reconnect: true
+
+# ========================================
+# 控制通道配置
+# ========================================
+control_channel:
+  # 首选通道类型: auto, data_channel, mqtt, websocket
+  # 环境变量: CONTROL_CHANNEL_PREFERRED
+  preferred_channel: "auto"
+  
+  # 通道优先级列表（按优先级降序）
+  priority:
+    - "data_channel"
+    - "mqtt"
+    - "websocket"
+  
+  # DataChannel 配置
+  data_channel:
+    # 最大消息大小（字节）
+    max_message_size: 65536
+    
+    # 消息队列大小
+    queue_size: 100
+
+# ========================================
+# WebRTC 配置
+# ========================================
+webrtc:
+  # 视频编解码器优先级
+  codec_preference:
+    - "H264"
+    - "VP8"
+    - "VP9"
+    - "AV1"
+  
+  # 视频分辨率
+  video_resolution: "1280x720"
+  
+  # 视频帧率
+  video_fps: 30
+  
+  # 音频启用
+  audio_enabled: true
+  
+  # STUN 服务器列表
+  stun_servers:
+    - "stun:stun.l.google.com:19302"
+    - "stun:stun1.l.google.com:19302"
+  
+  # TURN 服务器配置（可选）
+  turn_servers: []
+
+# ========================================
+# 界面配置
+# ========================================
+ui:
+  # 字体配置
+  fonts:
+    # 优先的中文字体列表
+    chinese:
+      - "WenQuanYi Zen Hei"
+      - "WenQuanYi Micro Hei"
+      - "Noto Sans CJK SC"
+      - "Source Han Sans SC"
+      - "Droid Sans Fallback"
+      - "SimHei"
+      - "Microsoft YaHei"
+    
+    # 默认字体
+    default: "Arial"
+    
+    # 默认字体大小
+    default_size: 12
+  
+  # QML 样式（如果 QuickControls2 可用）
+  quick_style: "Material"
+  
+  # 启用自动连接视频（测试模式）
+  # 环境变量: CLIENT_AUTO_CONNECT_VIDEO
+  auto_connect_video: false
+
+# ========================================
+# 开发调试配置
+# ========================================
+development:
+  # 重置登录状态（清除保存的凭据）
+  # 环境变量: CLIENT_RESET_LOGIN
+  reset_login: false
+  
+  # 启用视频帧日志
+  # 环境变量: ENABLE_VIDEO_FRAME_LOG
+  enable_video_frame_log: false
+  
+  # QML 文件搜索路径列表
+  qml_search_paths:
+    - "../qml/main.qml"
+    - "qml/main.qml"
+    - "/workspaces/Remote-Driving/client/qml/main.qml"
+    - "/workspace/client/qml/main.qml"
+
+# ========================================
+# 车辆管理配置
+# ========================================
+vehicle:
+  # 测试车辆列表（开发模式）
+  test_vehicles:
+    - vin: "123456789"
+      model: "测试车辆"
+  
+  # 车辆列表刷新间隔（秒）
+  refresh_interval: 30
+
+# ========================================
+# 安全配置
+# ========================================
+security:
+  # 控制指令时间窗口（毫秒）
+  timestamp_window_ms: 2000
+  
+  # 启用消息序列号验证
+  enable_seq_validation: true
+  
+  # 启用时间戳验证
+  enable_timestamp_validation: true
+
+# ========================================
+# 性能配置
+# ========================================
+performance:
+  # MQTT 消息处理队列大小
+  mqtt_queue_size: 100
+  
+  # 视频渲染缓冲区大小
+  video_buffer_size: 5
+  
+  # 遥测数据更新频率限制（Hz）
+  telemetry_update_limit: 30
+
+# ========================================
+# 日志采样配置
+# ========================================
+log_sampling:
+  # MQTT 消息日志采样（每 N 条记录一条）
+  mqtt_message_sample_rate: 50
+  
+  # 时间采样间隔（毫秒）
+  time_sample_interval: 5000

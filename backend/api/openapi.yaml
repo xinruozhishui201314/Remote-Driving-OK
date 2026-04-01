@@ -1,0 +1,720 @@
+openapi: 3.0.2
+info:
+  title: Teleop Backend API
+  version: 1.1.0
+  description: |
+    Teleoperation Backend API
+    
+    ## Version Compatibility
+    - **Major version change** (e.g., v2.0.0): Breaking change, URL path changes to /api/v2/
+    - **Minor version change** (e.g., v1.1.0): Backward compatible feature additions
+    - All new response fields are optional by default to ensure old clients work properly
+    
+    ## Version Negotiation
+    Clients can specify desired version via `API-Version` request header:
+    - Server returns `API-Version` in response header indicating actual version
+    - If client version is incompatible, returns 400 error
+    
+    ## Supported Versions
+    - 1.0.0 (Base version)
+    - 1.1.0 (Current version, added network quality, emergency stop features)
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+  - url: https://api.teleop.example.com
+    description: Production environment
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  
+  /ready:
+    get:
+      summary: Readiness check (includes DB connection)
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Ready
+        '503':
+          description: Not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/v1/me:
+    get:
+      summary: Get current user information
+      tags:
+        - User
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: API-Version
+          in: header
+          description: Desired API version from client
+          schema:
+            type: string
+            default: "1.0.0"
+            examples:
+              v1_0_0: "1.0.0"
+              v1_1_0: "1.1.0"
+      responses:
+        '200':
+          description: Success
+          headers:
+            API-Version:
+              schema:
+                type: string
+              description: Server supported version
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserInfoV1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/VersionMismatch'
+
+  /api/v1/vins:
+    get:
+      summary: Get accessible VIN list for current user
+      tags:
+        - Vehicles
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: API-Version
+          in: header
+          schema:
+            type: string
+            default: "1.0.0"
+      responses:
+        '200':
+          description: Success
+          headers:
+            API-Version:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  apiVersion:
+                    type: string
+                    description: API version identifier
+                    example: "1.1.0"
+                  vins:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VinInfoV1_1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/vins/{vin}/sessions:
+    post:
+      summary: Create session for specified VIN
+      tags:
+        - Sessions
+      parameters:
+        - name: vin
+          in: path
+          required: true
+          description: Vehicle VIN
+          schema:
+            type: string
+            example: "carla-sim-001"
+        - name: API-Version
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateSessionRequest'
+      responses:
+        '201':
+          description: Session created
+          headers:
+            API-Version:
+              schema:
+                type: string
+            Location:
+              schema:
+                type: string
+              description: Session resource URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionCreatedV1_1'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/v1/sessions/{sessionId}/end:
+    post:
+      summary: End session
+      tags:
+        - Sessions
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: API-Version
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  description: End reason
+                  example: "User requested"
+      responses:
+        '200':
+          description: Session ended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionEnded'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/sessions/{sessionId}/unlock:
+    post:
+      summary: Release session control lock
+      tags:
+        - Sessions
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: API-Version
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Lock released
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionId:
+                    type: string
+                    format: uuid
+                  unlocked:
+                    type: boolean
+                  unlockedAt:
+                    type: string
+                    format: date-time
+                  unlockedBy:
+                    type: string
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/vins/{vin}/grant:
+    post:
+      summary: Grant VIN access to user
+      tags:
+        - Permissions
+      parameters:
+        - name: vin
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: API-Version
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GrantRequest'
+      responses:
+        '201':
+          description: Grant successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GrantResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/vins/{vin}/revoke:
+    post:
+      summary: Revoke VIN access
+      tags:
+        - Permissions
+      parameters:
+        - name: vin
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: API-Version
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [grantee_username]
+              properties:
+                grantee_username:
+                  type: string
+                permissions:
+                  type: array
+                  items:
+                    type: string
+      responses:
+        '204':
+          description: Grant revoked
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /api/v1/vins/{vin}/permissions:
+    get:
+      summary: Get VIN grant list
+      tags:
+        - Permissions
+      parameters:
+        - name: vin
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: API-Version
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vin:
+                    type: string
+                  permissions:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        grantee_user_id:
+                          type: string
+                        grantee_username:
+                          type: string
+                        permissions:
+                          type: array
+                          items:
+                            type: string
+                        expires_at:
+                          type: string
+                          format: date-time
+                        created_by:
+                          type: string
+                        created_at:
+                          type: string
+                          format: date-time
+
+  /api/v1/vins/{vin}/check-permission:
+    post:
+      summary: Check if user has specific permission for VIN
+      tags:
+        - Permissions
+      parameters:
+        - name: vin
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: API-Version
+          in: header
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [permission]
+              properties:
+                permission:
+                  type: string
+                  example: "vin.view"
+      responses:
+        '200':
+          description: Check result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  vin:
+                    type: string
+                  permission:
+                    type: string
+                  has_permission:
+                    type: boolean
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Keycloak JWT, from Authorization: Bearer <token>
+
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, version, dependencies]
+      properties:
+        status:
+          type: string
+          enum: [up, down]
+        version:
+          type: string
+          description: Backend version number
+        dependencies:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [ok, error]
+            keycloak:
+              type: string
+              enum: [ok, error]
+            mqtt:
+              type: string
+              enum: [ok, error]
+            zlm:
+              type: string
+              enum: [ok, error]
+
+    ErrorResponse:
+      type: object
+      required: [error, apiVersion, timestamp]
+      properties:
+        error:
+          type: string
+          enum: [unauthorized, forbidden, not_found, internal, bad_request, version_mismatch, unsupported_version]
+        details:
+          type: string
+        apiVersion:
+          type: string
+        timestamp:
+          type: integer
+          description: Millisecond timestamp
+
+    UserInfoV1:
+      type: object
+      required: [sub, username, apiVersion]
+      properties:
+        apiVersion:
+          type: string
+          const: "1.0.0"
+        sub:
+          type: string
+          description: Keycloak subject (user ID)
+        username:
+          type: string
+          description: Username
+        email:
+          type: string
+          description: Email (v1.1.0 addition)
+        roles:
+          type: array
+          items:
+            type: string
+
+    VinInfoV1_1:
+      type: object
+      required: [vin, model, status, apiVersion]
+      properties:
+        apiVersion:
+          type: string
+          const: "1.1.0"
+        vin:
+          type: string
+        model:
+          type: string
+        status:
+          type: string
+          enum: [online, offline]
+        controller_user_id:
+          type: string
+          nullable: true
+        last_heartbeat:
+          type: string
+          format: date-time
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: Vehicle capabilities list (v1.1.0 addition)
+          example: ["whip", "whep", "mqtt_control"]
+        network_quality:
+          $ref: '#/components/schemas/NetworkQuality'
+
+    NetworkQuality:
+      type: object
+      description: Network quality (v1.1.0 addition)
+      properties:
+        rtt_ms:
+          type: number
+          minimum: 0
+        packet_loss_rate:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+        active_link:
+          type: string
+          enum: ["5G", "4G", "WiFi", "Ethernet"]
+        jitter_ms:
+          type: number
+          minimum: 0
+
+    CreateSessionRequest:
+      type: object
+      properties:
+        requested_capabilities:
+          type: array
+          items:
+            type: string
+
+    SessionCreatedV1_1:
+      type: object
+      required: [sessionId, vin, apiVersion, media, control]
+      properties:
+        apiVersion:
+          type: string
+          const: "1.1.0"
+        sessionId:
+          type: string
+          format: uuid
+        vin:
+          type: string
+        state:
+          type: string
+          enum: [REQUESTED, ACTIVE, ENDED, FAILED]
+        media:
+          $ref: '#/components/schemas/MediaUrlsV1_1'
+        control:
+          $ref: '#/components/schemas/ControlConfigV1_1'
+
+    MediaUrlsV1_1:
+      type: object
+      required: [whip, whep, apiVersion]
+      properties:
+        apiVersion:
+          type: string
+          const: "1.1.0"
+        whip:
+          type: string
+          format: uri
+          example: whip://stream.example.com:443/index/api/webrtc?app=teleop&stream=carla-001-uuid&type=push&apiVersion=1.1.0
+        whep:
+          type: string
+          format: uri
+          example: whep://stream.example.com:443/index/api/webrtc?app=teleop&stream=carla-001-uuid&type=play&apiVersion=1.1.0
+
+    ControlConfigV1_1:
+      type: object
+      required: [algo, seqStart, tsWindowMs, mqttConfig, apiVersion]
+      properties:
+        apiVersion:
+          type: string
+          const: "1.1.0"
+        algo:
+          type: string
+          enum: [HMAC-SHA256, NONE]
+        seqStart:
+          type: integer
+          minimum: 0
+        tsWindowMs:
+          type: integer
+          minimum: 0
+        mqttConfig:
+          $ref: '#/components/schemas/MqttConfigV1_1'
+
+    MqttConfigV1_1:
+      type: object
+      required: [brokerUrl, clientId, topics, apiVersion]
+      properties:
+        apiVersion:
+          type: string
+          const: "1.1.0"
+        brokerUrl:
+          type: string
+          format: uri
+        clientId:
+          type: string
+        topics:
+          type: object
+          properties:
+            control:
+              type: string
+              example: vehicle/control
+            status:
+              type: string
+              example: vehicle/status
+        qos:
+          type: integer
+          enum: [0, 1, 2]
+          default: 1
+        schemaVersion:
+          type: string
+          description: MQTT message schema version
+          default: "1.1.0"
+
+    SessionEnded:
+      type: object
+      required: [sessionId, vin, state, apiVersion, endedAt]
+      properties:
+        apiVersion:
+          type: string
+        sessionId:
+          type: string
+          format: uuid
+        vin:
+          type: string
+        state:
+          type: string
+          const: "ENDED"
+        endedAt:
+          type: string
+          format: date-time
+
+    GrantRequest:
+      type: object
+      required: [grantee_username]
+      properties:
+        grantee_username:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+            enum: [vin.view, vin.control, vin.maintain]
+          default: ["vin.view", "vin.control", "vin.maintain"]
+        expires_at:
+          type: string
+          format: date-time
+
+    GrantResponse:
+      type: object
+      required: [vin, grantee_user_id, grantee_username, permissions, apiVersion]
+      properties:
+        apiVersion:
+          type: string
+        vin:
+          type: string
+        grantee_user_id:
+          type: string
+        grantee_username:
+          type: string
+        permissions:
+          type: array
+          items:
+            type: string
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Forbidden:
+      description: Forbidden (insufficient permissions or VIN not authorized)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    BadRequest:
+      description: Invalid request format
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    InternalServerError:
+      description: Internal error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    VersionMismatch:
+      description: Version incompatible
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [error, clientVersion, serverVersion, details]
+            properties:
+              error:
+                type: string
+                const: "version_mismatch"
+              clientVersion:
+                type: string
+              serverVersion:
+                type: string
+              details:
+                type: string
+              timestamp:
+                type: integer

@@ -1,0 +1,70 @@
+# 注意：不要定义 networks，直接使用主文件中的 teleop-network
+# CARLA GPU 渲染模式说明（默认 offscreen = EGL GPU 加速，无需 DISPLAY）：
+#   offscreen (默认) : EGL GPU 加速无头渲染（推荐，相机帧率可达 15+ FPS）
+#   offscreen-x11   : X11 DISPLAY 无头渲染（DISPLAY 必需，无 DISPLAY 时用 llvmpipe 软件渲染，FPS 极低）
+#   window           : 显示仿真窗口（需 DISPLAY 环境变量）
+# 相机帧率低时，先确认 entrypoint.sh 日志中显示 "无头 GPU 加速（EGL，无 DISPLAY）"
+
+services:
+  carla:
+    image: remote-driving/carla-with-bridge:latest
+    container_name: carla-server
+    # 使用挂载的 entrypoint（覆盖镜像内旧版）；显式用 bash 执行，避免 CRLF/权限问题
+    entrypoint: ["/bin/bash", "/workspace/entrypoint.sh"]
+    runtime: nvidia
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: all
+      CARLA_MAP: ${CARLA_MAP:-Town01}
+      CARLA_HOST: "127.0.0.1"
+      CARLA_PORT: "2000"
+      MQTT_BROKER: teleop-mosquitto
+      MQTT_PORT: "1883"
+      ZLM_HOST: zlmediakit
+      ZLM_RTMP_PORT: "1935"
+      VIN: ${CARLA_VIN:-carla-sim-001}
+      USE_PYTHON_BRIDGE: ${USE_PYTHON_BRIDGE:-1}
+      # ── 渲染模式配置 ──────────────────────────────────────────────────────
+      # CARLA_SHOW_WINDOW: 0=无头(默认) / 1=窗口模式（需 DISPLAY）
+      # CARLA_GPU_RENDER_MODE: offscreen=EGL GPU 无头(默认) / offscreen-x11=X11 DISPLAY / window=显示窗口
+      CARLA_SHOW_WINDOW: ${CARLA_SHOW_WINDOW:-0}
+      CARLA_GPU_RENDER_MODE: ${CARLA_GPU_RENDER_MODE:-offscreen}
+      # DISPLAY: 仅 window / offscreen-x11 模式需要。offscreen 模式不需要 DISPLAY（entrypoint 会清除）。
+      DISPLAY: ${DISPLAY:-}
+      # testsrc 降级策略（用于诊断 CARLA 相机低 FPS 问题）：
+      #   FORCE_TESTSRC=1    完全跳过 CARLA 相机，始终使用 testsrc（用于无 GPU 环境）
+      #   USE_TESTSRC_FALLBACK=1  若 CARLA 相机 10s 内 < 3fps，自动降级到 testsrc
+      FORCE_TESTSRC: ${FORCE_TESTSRC:-0}
+      USE_TESTSRC_FALLBACK: ${USE_TESTSRC_FALLBACK:-1}
+      # 相机推流帧率（可降低到 10 或 5 以缓解 CARLA 渲染压力）
+      CAMERA_FPS: ${CAMERA_FPS:-15}
+      # 车辆与视角：CARLA_VEHICLE_BP 如 vehicle.tesla.model3；SPECTATOR_VIEW_MODE=driver 主视角
+      CARLA_VEHICLE_BP: ${CARLA_VEHICLE_BP:-vehicle.*}
+      CARLA_SPAWN_INDEX: ${CARLA_SPAWN_INDEX:-0}
+      SPECTATOR_FOLLOW_VEHICLE: ${SPECTATOR_FOLLOW_VEHICLE:-1}
+      SPECTATOR_VIEW_MODE: ${SPECTATOR_VIEW_MODE:-driver}
+      CAMERA_DRIVER_VIEW: ${CAMERA_DRIVER_VIEW:-1}
+      SPECTATOR_DEBUG: ${SPECTATOR_DEBUG:-0}
+      CONTROL_HZ: ${CONTROL_HZ:-50}
+      CONTROL_DEBUG: ${CONTROL_DEBUG:-0}
+    volumes:
+      - ./carla-bridge:/workspace/carla-bridge:ro
+      - ./deploy/carla/entrypoint.sh:/workspace/entrypoint.sh:ro
+      - carla_dataset_empty:/data/carla:ro
+      - /tmp/.X11-unix:/tmp/.X11-unix:ro
+    ports:
+      - "2000-2002:2000-2002"
+    networks:
+      - teleop-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  carla_dataset_empty:
+    name: carla_dataset_empty

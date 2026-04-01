@@ -1,0 +1,2 @@
+module RemoteDriving
+# C++ 类型由 main.cpp 中 qmlRegisterType 注册，此处不引用 QML 文件避免加载缺失文件导致崩溃

@@ -1,0 +1,216 @@
+# Backend Configuration File
+# 远程驾驶业务后端配置文件
+# 环境变量优先级高于配置文件
+
+# ========================================
+# 服务器配置
+# ========================================
+server:
+  # HTTP 服务监听端口
+  # 环境变量: PORT
+  port: 8080
+  
+  # 监听地址
+  host: "0.0.0.0"
+
+# ========================================
+# Keycloak 认证配置
+# ========================================
+keycloak:
+  # Keycloak 服务器地址
+  # 环境变量: KEYCLOAK_URL
+  url: "http://keycloak:8080"
+  
+  # Realm 名称
+  # 环境变量: KEYCLOAK_REALM
+  realm: "teleop"
+  
+  # 客户端 ID
+  # 环境变量: KEYCLOAK_CLIENT_ID
+  client_id: "teleop-backend"
+  
+  # 客户端密钥（生产环境必须修改）
+  # 环境变量: KEYCLOAK_CLIENT_SECRET
+  client_secret: "change-me-in-production"
+  
+  # 额外的 issuer 列表（逗号分隔）
+  # 环境变量: KEYCLOAK_ISSUER_EXTRA
+  issuer_extra: ""
+  
+  # 预期的 audience 列表
+  expected_aud:
+    - "teleop-backend"
+    - "account"
+    - "teleop-client"
+
+# ========================================
+# 数据库配置
+# ========================================
+database:
+  # PostgreSQL 连接字符串
+  # 环境变量: DATABASE_URL
+  url: ""
+  
+  # 连接超时（秒）
+  connection_timeout: 10
+  
+  # 查询超时（秒）
+  query_timeout: 30
+
+# ========================================
+# ZLMediaKit 配置
+# ========================================
+zlm:
+  # ZLM API 地址
+  # 环境变量: ZLM_API_URL
+  api_url: "http://zlmediakit/index/api"
+  
+  # ZLM 公网访问地址（客户端可见的地址）
+  # 环境变量: ZLM_PUBLIC_BASE
+  public_base: ""
+  
+  # 应用名称（用于生成 WHIP/WHEP URL）
+  app: "teleop"
+
+# ========================================
+# MQTT 配置（内部控制通道）
+# ========================================
+mqtt:
+  # MQTT Broker 地址
+  # 环境变量: MQTT_BROKER_URL
+  broker_url: "mqtt://teleop-mosquitto:1883"
+  
+  # 客户端 ID
+  # 环境变量: MQTT_CLIENT_ID
+  client_id: "backend-mqtt-client"
+  
+  # 控制主题模板
+  control_topic_template: "vehicle/{vin}/control"
+  
+  # 状态主题模板
+  status_topic_template: "vehicle/{vin}/status"
+  
+  # QoS 级别（0, 1, 2）
+  qos: 1
+  
+  # Keep-Alive 间隔（秒）
+  keep_alive: 60
+  
+  # 连接超时（秒）
+  connect_timeout: 10
+  
+  # 自动重连
+  auto_reconnect: true
+
+# ========================================
+# 会话管理配置
+# ========================================
+session:
+  # 会话 TTL（秒）
+  # 环境变量: SESSION_TTL_SECONDS
+  ttl: 1800  # 30分钟
+  
+  # 锁 TTL（秒）
+  # 环境变量: LOCK_TTL_SECONDS
+  lock_ttl: 1800  # 30分钟
+  
+  # 控制密钥长度（字节）
+  control_secret_length: 32
+
+# ========================================
+# 内部 API 配置
+# ========================================
+internal_api:
+  # 内部控制 API Token（用于 /internal/sessions/*/control）
+  # 环境变量: INTERNAL_CONTROL_API_TOKEN
+  token: ""
+  
+  # 启用内部 API 鉴权
+  require_auth: true
+
+# ========================================
+# 静态文件配置
+# ========================================
+static_files:
+  # 静态文件目录
+  # 环境变量: STATIC_DIR
+  dir: "/app/static"
+  
+  # 启用静态文件服务
+  enabled: true
+
+# ========================================
+# 日志配置
+# ========================================
+logging:
+  # 日志级别: trace, debug, info, warn, error, critical, off
+  level: "info"
+  
+  # 日志格式: json, text
+  format: "json"
+  
+  # 日志输出: stdout, file, both
+  output: "both"
+  
+  # 日志文件路径（当 output=file 或 both 时）
+  file_path: "/var/log/teleop-backend.log"
+  
+  # 日志轮转
+  rotation:
+    # 最大文件大小（MB）
+    max_size: 100
+    
+    # 保留的最大文件数
+    max_files: 10
+
+# ========================================
+# 安全配置
+# ========================================
+security:
+  # 启用 CORS
+  cors_enabled: true
+  
+  # 允许的源（* 表示全部允许）
+  cors_origins: "*"
+  
+  # 允许的方法
+  cors_methods:
+    - "GET"
+    - "POST"
+    - "PUT"
+    - "DELETE"
+    - "OPTIONS"
+  
+  # 允许的头部
+  cors_headers:
+    - "Content-Type"
+    - "Authorization"
+  
+  # 启用速率限制
+  rate_limit_enabled: true
+  
+  # 速率限制（每分钟请求数）
+  rate_limit_requests_per_minute: 60
+
+# ========================================
+# 健康检查配置
+# ========================================
+health:
+  # 启用健康检查端点
+  enabled: true
+  
+  # 数据库健康检查间隔（秒）
+  db_check_interval: 30
+  
+  # ZLM 健康检查间隔（秒）
+  zlm_check_interval: 30
+
+# ========================================
+# 版本信息
+# ========================================
+version:
+  # 版本文件路径
+  file: "VERSION.txt"
+  
+  # 默认版本（当文件不存在时）
+  default: "unknown"

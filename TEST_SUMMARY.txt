@@ -1,0 +1,24 @@
+脚本测试验证总结
+==================
+
+✓ 所有脚本语法检查通过
+✓ Client 脚本已支持 Docker 容器环境
+✓ 容器环境检测逻辑正确
+✓ Qt6 路径检测逻辑正确
+✓ Makefile 功能正常
+✓ 文件权限已修复
+
+重要提示：
+- 所有编译和运行必须在 Docker 容器内进行
+- 不能在宿主机上直接运行脚本
+- 使用 Dev Container 或手动启动 Docker 容器
+
+下一步：
+1. 启动 Docker 容器（Dev Container 或手动）
+2. 在容器内运行: cd /workspace/client && ./build.sh
+3. 在容器内运行: ./run.sh
+
+详细文档：
+- DOCKER_USAGE.md - Docker 容器使用指南
+- client/DOCKER_BUILD.md - Client 容器内编译指南
+- BUILD_GUIDE.md - 详细构建指南

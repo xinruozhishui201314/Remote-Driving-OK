@@ -1,0 +1,112 @@
+# 远程驾驶系统 Taskfile
+# 使用 Task 工具进行任务管理: https://taskfile.dev/
+# 安装: go install github.com/go-task/task/v3/cmd/task@latest
+
+version: '3'
+
+vars:
+  BUILD_TYPE: Debug
+
+tasks:
+  default:
+    desc: 显示帮助信息
+    cmds:
+      - task --list
+
+  # ========== 客户端工程 ==========
+  client:build:
+    desc: 编译客户端工程（台式机）
+    dir: client
+    cmds:
+      - ./build.sh
+
+  client:run:
+    desc: 运行客户端
+    dir: client
+    cmds:
+      - ./run.sh
+
+  client:debug:
+    desc: 调试客户端（GDB）
+    dir: client
+    cmds:
+      - ./debug.sh
+
+  client:clean:
+    desc: 清理客户端构建文件
+    dir: client
+    cmds:
+      - rm -rf build
+
+  # ========== 媒体服务器工程 ==========
+  media:build:
+    desc: 编译媒体服务器工程（流媒体服务器）
+    dir: media
+    cmds:
+      - ./build.sh
+
+  media:run:
+    desc: 运行媒体服务器
+    dir: media
+    cmds:
+      - ./run.sh
+
+  media:debug:
+    desc: 调试媒体服务器（GDB）
+    dir: media
+    cmds:
+      - ./debug.sh
+
+  media:clean:
+    desc: 清理媒体服务器构建文件
+    dir: media
+    cmds:
+      - rm -rf ZLMediaKit/build
+
+  # ========== 车辆端工程 ==========
+  vehicle:build:
+    desc: 编译车辆端工程（车上）
+    dir: Vehicle-side
+    cmds:
+      - ./build.sh
+
+  vehicle:run:
+    desc: 运行车辆端控制器
+    dir: Vehicle-side
+    cmds:
+      - ./run.sh
+
+  vehicle:debug:
+    desc: 调试车辆端（GDB）
+    dir: Vehicle-side
+    cmds:
+      - ./debug.sh
+
+  vehicle:clean:
+    desc: 清理车辆端构建文件
+    dir: Vehicle-side
+    cmds:
+      - rm -rf build
+
+  # ========== 统一操作 ==========
+  build:
+    desc: 编译所有工程
+    deps:
+      - client:build
+      - media:build
+      - vehicle:build
+
+  clean:
+    desc: 清理所有构建文件
+    deps:
+      - client:clean
+      - media:clean
+      - vehicle:clean
+
+  # ========== 快速启动 ==========
+  start:all:
+    desc: 启动所有服务（后台运行）
+    cmds:
+      - task: media:run
+      - task: vehicle:run
+      - task: client:run

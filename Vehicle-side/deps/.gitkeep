@@ -1,0 +1,1 @@
+# 占位：若 backend/deps 下无 cpp-httplib、nlohmann_json，Docker 构建时会从 GitHub 拉取

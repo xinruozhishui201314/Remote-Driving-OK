@@ -1,0 +1,122 @@
+# Backend 模块独立部署配置
+# 用于单独部署 Backend 服务及其依赖（PostgreSQL、Keycloak）
+
+services:
+  backend:
+    build: .
+    container_name: teleop-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/teleop
+      - KEYCLOAK_URL=http://keycloak:8080
+      - KEYCLOAK_ISSUER=http://keycloak:8080/realms/teleop
+      - ZLM_API_URL=http://zlmediakit/index/api
+      # ZLM_PUBLIC_BASE：客户端拉流时使用的 ZLM 可达地址，可通过宿主机环境变量覆盖
+      - ZLM_PUBLIC_BASE=${ZLM_PUBLIC_BASE:-http://zlmediakit:80}
+      - MQTT_BROKER_URL=mqtt://mosquitto:1883
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+      keycloak:
+        condition: service_healthy
+    networks:
+      - backend-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL 数据库
+  postgres:
+    image: postgres:16-bookworm
+    container_name: teleop-postgres
+    environment:
+      POSTGRES_DB: teleop
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d teleop"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # 数据库初始化（执行 migrations 和 seed）
+  db-init:
+    image: postgres:16-bookworm
+    depends_on:
+      - postgres
+    environment:
+      PGHOST: postgres
+      PGPASSWORD: postgres
+      PGUSER: postgres
+      PGDATABASE: teleop
+    volumes:
+      - ../backend/migrations:/migrations:ro
+      - ../deploy/postgres/03_seed_test_data.sql:/seed.sql:ro
+    command: >
+      sh -c "
+      echo '[db-init] 等待 Postgres 就绪...';
+      until pg_isready -h postgres -U postgres -d teleop; do sleep 1; done;
+      if psql -tAc \"SELECT 1 FROM information_schema.tables WHERE table_schema='public' AND table_name='users'\" | grep -q 1; then
+        echo '[db-init] users 表已存在，跳过 migrations，仅执行 seed';
+        psql -v ON_ERROR_STOP=1 -f /seed.sql;
+      else
+        echo '[db-init] 执行 migrations...';
+        psql -v ON_ERROR_STOP=1 -f /migrations/001_initial_schema.sql;
+        psql -v ON_ERROR_STOP=1 -f /migrations/002_sessions_locks_mvp.sql;
+        psql -v ON_ERROR_STOP=1 -f /migrations/003_sessions_control_secret.sql;
+        echo '[db-init] 执行 seed...';
+        psql -v ON_ERROR_STOP=1 -f /seed.sql;
+      fi;
+      echo '[db-init] 完成'
+      "
+    restart: "no"
+    networks:
+      - backend-network
+
+  # Keycloak 认证服务
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: teleop-keycloak
+    command:
+      - "start-dev"
+      - "--import-realm"
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/teleop
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: postgres
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_PORT: "8080"
+    volumes:
+      - ../deploy/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+    networks:
+      - backend-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  backend-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
+    driver: local

@@ -1,0 +1,121 @@
+# Vehicle-side 生产环境 Dockerfile
+#
+# 构建上下文 = 项目根目录 (.)，Dockerfile 在 Vehicle-side/ 子目录下。
+# COPY 路径全部相对于项目根目录：
+#   deps/            → 项目根目录 deps/
+#   Vehicle-side/   → Vehicle-side/ 源码目录
+#
+# 推荐构建命令（从项目根目录运行）：
+#   docker build -f Vehicle-side/Dockerfile.prod -t remote-driving-vehicle:prod .
+#
+# 脚本构建：
+#   ./scripts/build-vehicle.sh prod --no-cache
+
+FROM docker.1ms.run/library/ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── 1. 安装编译工具 + 系统库 ──────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    ca-certificates \
+    libcurl4-openssl-dev \
+    libssl-dev \
+    libpq-dev \
+    wget \
+    pkg-config \
+    libmosquittopp-dev \
+    libspdlog-dev \
+    inotify-tools \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# ── 2. 复制 deps 源码（上下文 = 项目根目录）────────────────────────
+COPY deps/ ./deps/
+
+# ── 3. 从源码构建并安装 paho.mqtt.c ─────────────────────────────────
+RUN echo "==== [A1] Build paho.mqtt.c ====" \
+    && mkdir -p deps/build-paho-c \
+    && cd deps/build-paho-c \
+    && cmake ../deps/paho.mqtt.cpp/externals/paho.mqtt.c \
+        -DPAHO_WITH_SSL=ON \
+        -DPAHO_BUILD_STATIC=OFF \
+        -DPAHO_BUILD_SHARED=ON \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/app/deps/install \
+    && make -j$(nproc) \
+    && make install \
+    && echo "==== [A1] paho.mqtt.c installed ====" \
+    && cd /app
+
+# ── 4. 从源码构建并安装 paho.mqtt.cpp ────────────────────────────────
+RUN echo "==== [A2] Build paho.mqtt.cpp ====" \
+    && mkdir -p deps/build-paho-cpp \
+    && cd deps/build-paho-cpp \
+    && cmake ../deps/paho.mqtt.cpp \
+        -DPAHO_WITH_SSL=ON \
+        -DPAHO_BUILD_SHARED=ON \
+        -DPAHO_BUILD_STATIC=OFF \
+        -DPAHO_BUILD_SAMPLES=OFF \
+        -DPAHO_BUILD_EXAMPLES=OFF \
+        -DPAHO_BUILD_TESTS=OFF \
+        -DPAHO_WITH_MQTT_C=OFF \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_PREFIX_PATH=/app/deps/install \
+        -DCMAKE_INSTALL_PREFIX=/app/deps/install \
+    && make -j$(nproc) \
+    && make install \
+    && echo "==== [A2] paho.mqtt.cpp installed ====" \
+    && cd /app
+
+# ── 5. 从源码构建并安装 googletest ──────────────────────────────────
+RUN echo "==== [A3] Build googletest ====" \
+    && mkdir -p deps/build-gtest \
+    && cd deps/build-gtest \
+    && cmake ../deps/googletest \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/app/deps/install \
+        -DBUILD_GMOCK=ON \
+        -DBUILD_GTEST=ON \
+        -DBUILD_SHARED_LIBS=OFF \
+    && make -j$(nproc) \
+    && make install \
+    && echo "==== [A3] googletest installed ====" \
+    && cd /app
+
+# ── 6. 复制源码（上下文 = 项目根目录）────────────────────────────────
+COPY Vehicle-side/src/             ./src/
+COPY Vehicle-side/config/           ./config/
+COPY Vehicle-side/CMakeLists.txt   ./
+
+# ── 7. 构建项目（每条 g++ 编译命令实时输出）─────────────────────────
+RUN export BUILDKIT_PROGRESS=plain \
+    && echo "==== [B1] Creating build directory ====" \
+    && mkdir -p build \
+    && echo "==== [B2] CMake configure ====" \
+    && cd build \
+    && cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_PREFIX_PATH=/app/deps/install \
+    && echo "==== [B3] make -j$(nproc) (verbose) ====" \
+    && make -j$(nproc) VERBOSE=1 \
+    && echo "==== [DONE] Build completed successfully ===="
+
+# ── 8. 环境变量与启动 ───────────────────────────────────────────────
+EXPOSE 9000
+ENV VEHICLE_APP_PORT=9000
+ENV MQTT_BROKER_URL=mqtt://mosquitto:1883
+ENV ZLM_RTMP_URL=rtmp://zlmediakit:1935
+ENV VIN=TEST_VEHICLE_001
+ENV VEHICLE_CONTROL_SECRET=change_me_in_production
+ENV LOG_LEVEL=info
+
+# 健康检查
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:9000/health || exit 1
+
+WORKDIR /app/build
+CMD ["./VehicleSide"]
