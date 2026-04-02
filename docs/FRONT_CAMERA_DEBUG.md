@@ -40,19 +40,12 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image)
 }
 ```
 
-**videorenderer.cpp**:
+**src/presentation/renderers/VideoRenderer.cpp**:
 ```cpp
-void VideoRenderer::setFrame(const QImage &image)
+void VideoRenderer::setFrame(const QImage& image)
 {
-    if (image.isNull()) {
-        qWarning() << "[VideoRenderer] 收到空图像，label=" << m_label;
-        return;
-    }
-    // ... 设置帧 ...
-    qDebug() << "[VideoRenderer] 设置视频帧 label=" << m_label 
-             << "size=" << m_currentFrame.size() 
-             << "format=" << m_currentFrame.format();
-    update();
+    // 新实现：qImageToYuv420Frame → 三缓冲 deliverFrame → updatePaintNode(GPU)
+    // 详见 client/src/presentation/renderers/VideoRenderer.cpp
 }
 ```
 
@@ -162,7 +155,7 @@ function onVideoFrameReady(image) {
 
 - `client/src/webrtcclient.cpp` - WebRTC 客户端实现
 - `client/src/webrtcclient.h` - WebRTC 客户端头文件
-- `client/src/videorenderer.cpp` - 视频渲染器实现
+- `client/src/presentation/renderers/VideoRenderer.cpp` - GPU 加速视频渲染器实现
 - `client/src/h264decoder.cpp` - H264 解码器实现
 - `client/qml/DrivingInterface.qml` - 主驾驶界面 QML
 - `client/qml/VideoView.qml` - 视频显示组件 QML

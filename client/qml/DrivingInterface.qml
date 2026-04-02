@@ -14,6 +14,10 @@ import RemoteDriving 1.0
 Rectangle {
     id: drivingInterface
     color: "#0F0F1A"
+
+    // 日志计数器（module-level，用于限制日志输出频率）
+    property int _mainCameraHandlerLogCount: 0
+    property int _mainCameraHandlerLogCount2: 0
     
     // ==================== 布局诊断日志（[Client][UI][Layout] 便于精准定位） ====================
     function logLayout(reason) {
@@ -270,7 +274,7 @@ Rectangle {
         if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && 
             webrtcStreamManager.anyConnected && webrtcStreamManager.frontClient &&
             typeof webrtcStreamManager.frontClient.sendDataChannelMessage === "function") {
-            console.log("[Command] Sending via WebRTC DataChannel (Priority):", type);
+            console.log("[Client][Command] Sending via WebRTC DataChannel (Priority):", type);
             webrtcStreamManager.frontClient.sendDataChannelMessage(msg);
             return;
         }
@@ -278,13 +282,13 @@ Rectangle {
         // 2. 降级至 MQTT (规范 §8.2: 链路劣化回退)
         // ★ 统一发送 JSON 格式，与 DataChannel 保持一致，便于车端统一解析
         if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
-            console.log("[Command] Sending via MQTT (Fallback):", type);
+            console.log("[Client][Command] Sending via MQTT (Fallback):", type);
             if (typeof mqttController.publish === "function") {
                 // 推荐方式：直接发送 JSON 字符串到统一 Topic，车端只需一个监听器
                 mqttController.publish("vehicle/control", msg);
             } else {
                 // 兼容旧方式：若 mqttController 无通用 publish 方法，则映射到特定命令方法
-                console.warn("[Command] mqttController.publish not found, fallback to legacy methods");
+                console.warn("[Client][Command] mqttController.publish not found, fallback to legacy methods");
                 switch (type) {
                     case "gear":
                         if (typeof mqttController.sendGearCommand === "function") mqttController.sendGearCommand(payload.value);
@@ -302,11 +306,11 @@ Rectangle {
                         if (typeof mqttController.sendSweepCommand === "function") mqttController.sendSweepCommand(payload.name, payload.active);
                         break;
                     default:
-                        console.warn("[Command] Unknown MQTT command type:", type);
+                        console.warn("[Client][Command] Unknown MQTT command type:", type);
                 }
             }
         } else {
-            console.warn("[Command] No channel available (WebRTC disconnected, MQTT disconnected)");
+            console.warn("[Client][Command] No channel available (WebRTC disconnected, MQTT disconnected)");
         }
     }
 
@@ -332,7 +336,7 @@ Rectangle {
             remoteControlEnabled = (vehicleStatus.drivingMode === "远驾");
         }
         if (!remoteControlEnabled) {
-            console.log("[GEAR] ⚠ 远驾接管未启用，无法发送档位命令")
+            console.log("[Client][UI][Gear] ⚠ 远驾接管未启用，无法发送档位命令")
             return;
         }
 
@@ -341,7 +345,7 @@ Rectangle {
         else if (currentGear === "D") gearValue = 1;
         else if (currentGear === "P") gearValue = 2;
 
-        console.log("[GEAR] 档位变化: " + currentGear + " (数值: " + gearValue + ")，准备发送");
+        console.log("[Client][UI][Gear] 档位变化: " + currentGear + " (数值: " + gearValue + ")，准备发送");
         
         // ★ 使用统一发送接口 (DataChannel 优先)
         sendControlCommand("gear", { value: gearValue });
@@ -514,14 +518,35 @@ Rectangle {
                 Connections {
                     target: streamClient
                     ignoreUnknownSignals: true
-                    function onVideoFrameReady(frame) {
+
+                    // ── 诊断：Connections.target 绑定状态（帮助排查「信号未被接收」问题）───────────
+                    onTargetChanged: {
+                        console.warn("[Client][UI][Video] VideoPanel[" + title + "] Connections.target changed: "
+                                    + " streamClient=" + streamClient
+                                    + " ★ 若 streamClient=null → signal 不会到达 onVideoFrameReady，检查 QML Connections 绑定")
+                    }
+
+                    // 四参数版本：与 C++ 4-param signal 重载匹配，frameId 用于端到端追踪。
+                    // 注意：不要调用 image.isNull() / image.width() / image.height()——
+                    // image 在 QML 中是 QVariant，这些方法在 QVariant 上不存在，会 TypeError。
+                    // 使用显式参数 frameWidth/frameHeight 判断有效性。
+                    function onVideoFrameReady(frame, frameWidth, frameHeight, frameId) {
+                        var handlerStartTime = Date.now()
                         placeholderClearTimer.stop()
-                        if (frame && videoRenderer) {
-                            videoRenderer.setFrame(frame)
+                        var hasValidSize = (frameWidth > 0 && frameHeight > 0)
+                        if (hasValidSize && videoRenderer) {
+                            // ★★★ QML→C++ 跨语言调用确认 ★★★
+                            // 对比 C++ 日志中 frameId 确认 emit→setFrame 链路完整
+                            console.log("[Client][UI][Video] ★★★ VideoPanel[" + title + "] calling setFrame frameId=" + frameId
+                                        + " frame=" + frameWidth + "x" + frameHeight + " renderer=" + videoRenderer)
+                            // 传递 frameId 给 C++（用于 C++→QML→C++→updatePaintNode 端到端追踪）
+                            videoRenderer.setFrame(frame, frameId)
                             hasVideoFrame = true
-                            console.log("[Client][UI][Video] VideoPanel onVideoFrameReady hasVideoFrame=true")
+                            console.log("[Client][UI][Video] ★★★ VideoPanel[" + title + "] setFrame done frameId=" + frameId
+                                        + " ★ 对比 C++ ★ VideoRenderer setFrame 日志确认链路")
                         } else {
-                            console.warn("[Client][UI][Video] VideoPanel onVideoFrameReady: 空帧或渲染器缺失")
+                            console.warn("[Client][UI][Video] VideoPanel[" + title + "] onVideoFrameReady: 尺寸无效或渲染器缺失 frame="
+                                        + frameWidth + "x" + frameHeight + " frameId=" + frameId + " renderer=" + videoRenderer)
                         }
                     }
                     function onConnectionStatusChanged(connected) {
@@ -671,19 +696,19 @@ Rectangle {
                                 // 先发送停止推流指令给车端
                                 if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
                                     mqttController.requestStreamStop()
-                                    console.log("[QML] 已发送停止推流指令给车端")
+                                    console.log("[Client][UI][Stream] 已发送停止推流指令给车端")
                                 }
                                 // 然后断开视频流连接
                                 webrtcStreamManager.disconnectAll()
                                 // ★ 标记推流已停止，按钮文本将变为"连接车辆"
                                 streamStopped = true
-                                console.log("[QML] 推流已停止，按钮状态更新为 streamStopped=true")
+                                console.log("[Client][UI][Stream] 推流已停止，按钮状态更新为 streamStopped=true")
                                 return
                             }
                             // ★ 重新连接时重置停止状态
                             streamStopped = false
                             var currentVin = (typeof vehicleManager !== "undefined" && vehicleManager) ? vehicleManager.currentVin : ""
-                            console.log("[CLIENT][连接车端] 点击连接 当前VIN=" + currentVin + " (仿真车选 carla-sim-001 连接 CARLA)")
+                            console.log("[Client][UI][Connect] 点击连接 当前VIN=" + currentVin + " (仿真车选 carla-sim-001 连接 CARLA)")
                             var cfg = (typeof vehicleManager !== "undefined" && vehicleManager) ? vehicleManager.lastControlConfig : ({})
                             var brokerUrl = (cfg && (cfg.mqtt_broker_url || cfg["mqtt_broker_url"])) ? (cfg.mqtt_broker_url || cfg["mqtt_broker_url"]) : ((typeof mqttController !== "undefined" && mqttController) ? mqttController.brokerUrl : "")
                             var clientId = (cfg && (cfg.mqtt_client_id || cfg["mqtt_client_id"])) ? (cfg.mqtt_client_id || cfg["mqtt_client_id"]) : ""
@@ -693,20 +718,20 @@ Rectangle {
                                 mqttController.brokerUrl = brokerUrl
                             if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
                                 // 先发 start_stream，再延迟 25s 拉流，给车端（CARLA Bridge 约 5~25s）启动推流并注册到 ZLM
-                                console.log("[CLIENT][连接车端] 环节: MQTT 已连接，发送 start_stream currentVin=" + currentVin + " (若为空车端可能不响应，请先选车 carla-sim-001)")
+                                console.log("[Client][UI][Connect] 环节: MQTT 已连接，发送 start_stream currentVin=" + currentVin + " (若为空车端可能不响应，请先选车 carla-sim-001)")
                                 mqttController.requestStreamStart()
                                 connectVideoDelayTimer.whepUrl = (typeof vehicleManager !== "undefined" && vehicleManager) ? vehicleManager.lastWhepUrl : ""
                                 connectVideoDelayTimer.start()
-                                console.log("[CLIENT][连接车端] 环节: 已启动拉流延迟定时器 25s，到时将调用 connectFourStreams")
+                                console.log("[Client][UI][Connect] 环节: 已启动拉流延迟定时器 25s，到时将调用 connectFourStreams")
                                 return
                             }
                             if (!brokerUrl || brokerUrl.length === 0) {
-                                console.log("[CLIENT][连接车端] ✗ brokerUrl 为空，请先在连接设置中填写 MQTT 地址")
+                                console.log("[Client][UI][Connect] ✗ brokerUrl 为空，请先在连接设置中填写 MQTT 地址")
                                 openMqttDialogRequested()
                                 return
                             }
                             pendingConnectVideo = true
-                            console.log("[CLIENT][连接车端] 正在连接 MQTT brokerUrl=" + brokerUrl + " currentVin=" + currentVin + " (选车后 VIN 应由 vehicleManager 已设置)")
+                            console.log("[Client][UI][Connect] 正在连接 MQTT brokerUrl=" + brokerUrl + " currentVin=" + currentVin + " (选车后 VIN 应由 vehicleManager 已设置)")
                             if (typeof mqttController !== "undefined" && mqttController)
                                 mqttController.connectToBroker()
                         }
@@ -771,28 +796,28 @@ Rectangle {
                                                     
                             // Plan 4.1: Ensure we don't attempt actions if MQTT is disconnected
                             if (!isConn) {
-                                console.log("[REMOTE_CONTROL][CLICK] ✗ 未发送：MQTT 未连接")
+                                console.log("[Client][UI][RemoteControl][Click] ✗ 未发送：MQTT 未连接")
                                 return
                             }
-                            console.log("[REMOTE_CONTROL][CLICK] >>> 用户点击远驾接管按钮 <<< isConnected=" + isConn + " buttonEnabled=" + parent.buttonEnabled + " remoteControlConfirmed=" + parent.remoteControlConfirmed)
+                            console.log("[Client][UI][RemoteControl][Click] >>> 用户点击远驾接管按钮 <<< isConnected=" + isConn + " buttonEnabled=" + parent.buttonEnabled + " remoteControlConfirmed=" + parent.remoteControlConfirmed)
                             if (!parent.buttonEnabled) {
-                                console.log("[REMOTE_CONTROL][CLICK] ✗ 未发送：视频流未连接")
+                                console.log("[Client][UI][RemoteControl][Click] ✗ 未发送：视频流未连接")
                                 return
                             }
                             if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
                                 // 如果已经是"远驾已接管"状态，点击则取消接管
                                 var newState = !parent.remoteControlConfirmed
                                 parent.remoteControlActive = newState
-                                console.log("[REMOTE_CONTROL][CLICK] 调用 requestRemoteControl(" + newState + ") topic=vehicle/control")
+                                console.log("[Client][UI][RemoteControl][Click] 调用 requestRemoteControl(" + newState + ") topic=vehicle/control")
                                 mqttController.requestRemoteControl(newState)
                                 if (typeof systemStateMachine !== "undefined" && systemStateMachine && typeof systemStateMachine.fireByName === "function") {
                                     if (newState) systemStateMachine.fireByName("START_SESSION")
                                     else systemStateMachine.fireByName("STOP_SESSION")
                                 }
-                                console.log("[REMOTE_CONTROL] ========== [QML] 点击远驾接管按钮 ==========")
-                                console.log("[REMOTE_CONTROL] 发送指令: enable=" + newState + "（等待车端 vehicle/status 确认）")
+                                console.log("[Client][UI][RemoteControl] 点击远驾接管按钮 ==========")
+                                console.log("[Client][UI][RemoteControl] 发送指令: enable=" + newState + "（等待车端 vehicle/status 确认）")
                             } else {
-                                console.log("[REMOTE_CONTROL][CLICK] ✗ 未发送：MQTT 未连接 isConnected=" + isConn)
+                                console.log("[Client][UI][RemoteControl][Click] ✗ 未发送：MQTT 未连接 isConnected=" + isConn)
                             }
                         }
                     }
@@ -803,10 +828,10 @@ Rectangle {
                         ignoreUnknownSignals: true
                         function onRemoteControlEnabledChanged() {
                             var confirmed = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.remoteControlEnabled : false
-                            console.log("[REMOTE_CONTROL] ========== [QML] 车端远驾接管状态变化 ==========")
-                            console.log("[REMOTE_CONTROL] 状态确认: " + (confirmed ? "已启用" : "已禁用"))
-                            console.log("[REMOTE_CONTROL] 当前 remoteControlConfirmed: " + parent.remoteControlConfirmed)
-                            console.log("[REMOTE_CONTROL] 当前 remoteControlActive: " + parent.remoteControlActive)
+                            console.log("[Client][UI][RemoteControl] 车端远驾接管状态变化 ==========")
+                            console.log("[Client][UI][RemoteControl] 状态确认: " + (confirmed ? "已启用" : "已禁用"))
+                            console.log("[Client][UI][RemoteControl] 当前 remoteControlConfirmed: " + parent.remoteControlConfirmed)
+                            console.log("[Client][UI][RemoteControl] 当前 remoteControlActive: " + parent.remoteControlActive)
                             
                             // 同步本地状态（注意：parent 指向 Rectangle，remoteControlActive 是其属性）
                             // remoteControlConfirmed 是计算属性，会自动更新
@@ -814,20 +839,20 @@ Rectangle {
                             if (parent) {
                                 var oldActive = parent.remoteControlActive
                                 parent.remoteControlActive = confirmed
-                                console.log("[REMOTE_CONTROL] ✓ 已更新按钮本地状态: remoteControlActive " + oldActive + " -> " + confirmed)
-                                console.log("[REMOTE_CONTROL] 更新后 remoteControlConfirmed: " + parent.remoteControlConfirmed)
-                                console.log("[REMOTE_CONTROL] 按钮文本应显示: " + (parent.remoteControlConfirmed ? "远驾已接管" : "远驾接管"))
+                                console.log("[Client][UI][RemoteControl] ✓ 已更新按钮本地状态: remoteControlActive " + oldActive + " -> " + confirmed)
+                                console.log("[Client][UI][RemoteControl] 更新后 remoteControlConfirmed: " + parent.remoteControlConfirmed)
+                                console.log("[Client][UI][RemoteControl] 按钮文本应显示: " + (parent.remoteControlConfirmed ? "远驾已接管" : "远驾接管"))
                             } else {
-                                console.log("[REMOTE_CONTROL] ⚠ parent 为空，无法更新按钮状态")
+                                console.log("[Client][UI][RemoteControl] ⚠ parent 为空，无法更新按钮状态")
                             }
-                            console.log("[REMOTE_CONTROL] ========================================")
+                            console.log("[Client][UI][RemoteControl] ========================================")
                         }
                         function onDrivingModeChanged() {
                             var mode = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.drivingMode : "自驾"
-                            console.log("[REMOTE_CONTROL] ========== [QML] 驾驶模式变化 ==========")
-                            console.log("[REMOTE_CONTROL] 新驾驶模式: " + mode)
-                            console.log("[REMOTE_CONTROL] 当前按钮文本应显示: " + (parent.remoteControlConfirmed ? "远驾已接管" : "远驾接管"))
-                            console.log("[REMOTE_CONTROL] ========================================")
+                            console.log("[Client][UI][RemoteControl] 驾驶模式变化 ==========")
+                            console.log("[Client][UI][RemoteControl] 新驾驶模式: " + mode)
+                            console.log("[Client][UI][RemoteControl] 当前按钮文本应显示: " + (parent.remoteControlConfirmed ? "远驾已接管" : "远驾接管"))
+                            console.log("[Client][UI][RemoteControl] ========================================")
                         }
                     }
                     
@@ -842,16 +867,16 @@ Rectangle {
                             } else {
                                 if (remoteControlTakeoverRect.hadVideoConnectedBefore) {
                                     remoteControlTakeoverRect.hadVideoConnectedBefore = false
-                                    console.log("[REMOTE_CONTROL] ⚠ [QML] 视频流已断开（曾连接过），发送 remote_control false")
+                                    console.log("[Client][UI][RemoteControl] ⚠ 视频流已断开（曾连接过），发送 remote_control false")
                                     if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
                                         mqttController.requestRemoteControl(false)
                                         if (typeof systemStateMachine !== "undefined" && systemStateMachine && typeof systemStateMachine.fireByName === "function")
                                             systemStateMachine.fireByName("STOP_SESSION")
-                                        console.log("[REMOTE_CONTROL] ✓ 已发送远驾接管禁用指令到车端（视频流断开）")
+                                        console.log("[Client][UI][RemoteControl] ✓ 已发送远驾接管禁用指令到车端（视频流断开）")
                                     }
                                 }
                             }
-                            console.log("[REMOTE_CONTROL] [QML] anyConnected=" + videoConnected + "（聚合）远驾按钮" + (videoConnected ? "已启用" : "已禁用") + "；主视图是否出画请看 [Client][VideoFrame]/[Client][UI][Video]")
+                            console.log("[Client][UI][RemoteControl] anyConnected=" + videoConnected + "（聚合）远驾按钮" + (videoConnected ? "已启用" : "已禁用") + "；主视图是否出画请看 [Client][VideoFrame]/[Client][UI][Video]")
                         }
                     }
                     
@@ -903,7 +928,7 @@ Rectangle {
                         ignoreUnknownSignals: true
                         function onDrivingModeChanged() {
                             var mode = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.drivingMode : "自驾"
-                            console.log("[QML] 驾驶模式更新: " + mode)
+                            console.log("[Client][UI] 驾驶模式更新: " + mode)
                         }
                     }
                     
@@ -955,7 +980,7 @@ Rectangle {
                         ignoreUnknownSignals: true
                         function onSweepActiveChanged() {
                             var active = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.sweepActive : false
-                            console.log("[SWEEP] [QML] 清扫状态更新: " + (active ? "启用" : "禁用"))
+                            console.log("[Client][UI][Sweep] 清扫状态更新: " + (active ? "启用" : "禁用"))
                         }
                     }
                     
@@ -1007,7 +1032,7 @@ Rectangle {
                         ignoreUnknownSignals: true
                         function onBrakeActiveChanged() {
                             var active = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.brakeActive : false
-                            console.log("[BRAKE] [QML] 刹车状态更新: " + (active ? "启用" : "禁用"))
+                            console.log("[Client][UI][Brake] 刹车状态更新: " + (active ? "启用" : "禁用"))
                         }
                     }
                     
@@ -1029,10 +1054,10 @@ Rectangle {
                     property string whepUrl: ""
                     onTriggered: {
                         var u = whepUrl || ""
-                        console.log("[CLIENT][连接车端] 环节: 25s 延迟到，开始拉流（CARLA/Bridge 约 5~25s 推流就绪）whepUrl=" + (u.length > 60 ? u.substring(0, 60) + "..." : u))
+                        console.log("[Client][UI][Connect] 环节: 25s 延迟到，开始拉流（CARLA/Bridge 约 5~25s 推流就绪）whepUrl=" + (u.length > 60 ? u.substring(0, 60) + "..." : u))
                         if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) {
                             webrtcStreamManager.connectFourStreams(u)
-                            console.log("[CLIENT][连接车端] 环节: 已调用 connectFourStreams，四路流将向 ZLM 发起 WebRTC 拉流")
+                            console.log("[Client][UI][Connect] 环节: 已调用 connectFourStreams，四路流将向 ZLM 发起 WebRTC 拉流")
                         }
                     }
                 }
@@ -1240,9 +1265,29 @@ Rectangle {
                             height: parent.height - 24
                             radius: 4
                             color: colorBackground
-                            
+
+                            // 与 VideoPanel 组件保持一致：通过 property 间接绑定 streamClient，
+                            // 使 Connections.target 在 webrtcStreamManager.frontClient 就绪时可响应式更新。
+                            // 之前直接写 Connections.target: webrtcStreamManager.frontClient 存在绑定时机问题，
+                            // 导致 onVideoFrameReady 信号从未被触发（虽然 onConnectionStatusChanged 正常），
+                            // 根因：QML Connections.target 表达式求值时序与信号注册冲突。
+                            property QtObject streamClient: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager)
+                                                            ? webrtcStreamManager.frontClient : null
+
                             // 视频帧状态跟踪（占位 Canvas/文案是否盖在视频上；渲染器始终参与 update，避免 visible=false 丢首帧）
                             property bool hasVideoFrame: false
+
+                            onStreamClientChanged: {
+                                // 增强诊断：记录 target 变化时的详细信息
+                                // 注意：QML Connections.target 通过 property 间接绑定，
+                                // 若 target=null 而 console.log 显示 webrtcStreamManager.frontClient 正常
+                                // → 说明是 Connections 初始化时序问题（target=null 时已创建，信号连接未建立）
+                                console.log("[Client][UI][Video] 主视图 streamClient changed (QML property): "
+                                            + (streamClient !== null
+                                               ? ("valid, isConnected=" + streamClient.isConnected
+                                                  + " ★ 对比 Connections.target 日志确认绑定同步")
+                                               : "null"))
+                            }
                             
                             Timer {
                                 id: frontFrameClearTimer
@@ -1263,26 +1308,64 @@ Rectangle {
                             }
                             
                             Connections {
-                                target: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager.frontClient : null
+                                // 改用 mainCameraView.streamClient property 间接绑定，
+                                // 与 VideoPanel(streamClient: ...) 保持一致，确保信号连接可响应式更新。
+                                target: mainCameraView.streamClient
                                 ignoreUnknownSignals: true
-                                function onVideoFrameReady(image) {
+
+                                // ── 诊断：Connections.target 绑定状态 ─────────────────────────────────
+                                onTargetChanged: {
+                                    console.warn("[Client][UI][Video] mainCameraView Connections.target changed: "
+                                                + " streamClient=" + streamClient
+                                                + " ★ 若 streamClient=null → onVideoFrameReady 不会触发，"
+                                                + " 检查 webrtcStreamManager.frontClient 是否正确赋值")
+                                }
+
+                                // 注意：优先绑定 onVideoFrameReady(size) 四参数信号，
+                                // 该信号由 C++ WebRtcClient 在 emit 时显式传入宽高+frameId，
+                                // 解决了 QImage 跨线程 QueuedConnection 到 QML 时，
+                                // QVariant 包装导致 image.width/height/isNull 方法返回异常的问题。
+                                // frameWidth > 0 是唯一可靠的图像有效性判断（显式 C++ 参数，无 Qt 元对象边界问题）。
+                                function onVideoFrameReady(image, frameWidth, frameHeight, frameId) {
+                                    var handlerStartTime = Date.now()
                                     frontFrameClearTimer.stop()
-                                    var imgSize = image ? ((image.width && image.height) ? (image.width + "x" + image.height) : "unknown") : "null"
-                                    var videoLogEnabled = Qt.application.arguments.indexOf("--enable-video-log") >= 0 ||
-                                                          (typeof process !== "undefined" && process.env && process.env.ENABLE_VIDEO_FRAME_LOG === "1")
-                                    if (videoLogEnabled) {
-                                        console.log("[Client][UI][Video] 主视图 onVideoFrameReady size=" + imgSize)
-                                    }
-                                    if (image && frontVideoRenderer) {
-                                        frontVideoRenderer.setFrame(image)
+                                    // 图像有效性判断：只使用 frameWidth/frameHeight（显式参数，无 QVariant 边界问题）。
+                                    // 不要调用 image.isNull() / image.width() / image.height()——image 在 QML 中是 QVariant，
+                                    // 这些方法在 QVariant 上不存在，会 TypeError（实际日志中已观察到大量 TypeError）。
+                                    var hasValidSize = (frameWidth > 0 && frameHeight > 0)
+                                    if (hasValidSize && frontVideoRenderer) {
+                                        // ★★★ QML→C++ 跨语言调用确认 ★★★
+                                        // 对比 C++ 日志中 frameId 确认 emit→setFrame→updatePaintNode 链路完整
+                                        console.log("[Client][UI][Video] ★★★ mainCameraView calling setFrame frameId=" + frameId
+                                                    + " frame=" + frameWidth + "x" + frameHeight + " renderer=" + frontVideoRenderer)
+                                        frontVideoRenderer.setFrame(image, frameId)  // 传递 frameId 给 C++
                                         mainCameraView.hasVideoFrame = true
-                                        if (videoLogEnabled) {
-                                            console.log("[Client][UI][Video] 主视图 setFrame 已调用")
-                                        }
+                                        console.log("[Client][UI][Video] ★★★ mainCameraView setFrame done frameId=" + frameId
+                                                    + " ★ 对比 C++ ★ updatePaintNode 日志确认渲染链路")
                                     } else {
-                                        console.warn("[Client][UI][Video] 主视图帧无效或渲染器缺失", image, frontVideoRenderer)
+                                        console.warn("[Client][UI][Video] 主视图 尺寸无效或渲染器缺失 "
+                                                    + "frame=" + frameWidth + "x" + frameHeight + " frameId=" + frameId
+                                                    + " renderer=" + frontVideoRenderer)
                                         mainCameraView.hasVideoFrame = false
                                     }
+                                    // 零延迟回调：handler 返回后立即调度（相当于 setTimeout(fn, 0)）。
+                                    // 不影响主线程，不累积定时器资源。
+                                    // 注意：QML/V4 不支持 Timer.createSingleShotTimer，改用 Qt.callLater。
+                                    if (_mainCameraHandlerLogCount < 10) {
+                                        var capturedFrameWidth = frameWidth
+                                        var capturedFrameHeight = frameHeight
+                                        var capturedFrameId = frameId
+                                        var capturedHasVideo = mainCameraView.hasVideoFrame
+                                        var capturedHandlerCost = Date.now() - handlerStartTime
+                                        Qt.callLater(function() {
+                                            console.log("[Client][UI][Video] 主视图 handlerDone frame="
+                                                        + (capturedFrameWidth > 0 && capturedFrameHeight > 0 ? (capturedFrameWidth + "x" + capturedFrameHeight) : "invalid")
+                                                        + " handlerCost=" + capturedHandlerCost + "ms"
+                                                        + " hasVideo=" + capturedHasVideo
+                                                        + " frameId=" + capturedFrameId)
+                                        })
+                                    }
+                                    _mainCameraHandlerLogCount++
                                 }
                                 function onConnectionStatusChanged(connected) {
                                     console.log("[Client][UI][Video] 主视图 onConnectionStatusChanged connected=" + connected)
@@ -1740,12 +1823,12 @@ Rectangle {
                                             remoteControlEnabled = (vehicleStatus.drivingMode === "远驾");
                                         }
                                         if (!remoteControlEnabled) {
-                                            console.log("[SWEEP] ⚠ 远驾接管未启用，无法发送清扫命令")
+                                            console.log("[Client][UI][Sweep] ⚠ 远驾接管未启用，无法发送清扫命令")
                                             return;
                                         }
 
                                         sweepActive = !sweepActive
-                                        console.log("[SWEEP] 清扫状态: " + (sweepActive ? "启用" : "禁用") + "，准备发送");
+                                        console.log("[Client][UI][Sweep] 清扫状态: " + (sweepActive ? "启用" : "禁用") + "，准备发送");
                                         
                                         // ★ 使用统一发送接口 (DataChannel 优先)
                                         sendControlCommand("sweep", { name: "sweep", active: sweepActive });
@@ -2019,7 +2102,7 @@ Rectangle {
                                 }
                                 
                                 Component.onCompleted: {
-                                    console.log("[WATER_TANK] [QML] 水箱组件初始化: " + waterTankLevel + "%")
+                                    console.log("[Client][UI][WaterTank] 水箱组件初始化: " + waterTankLevel + "%")
                                 }
                             }
                             
@@ -2029,7 +2112,7 @@ Rectangle {
                                 ignoreUnknownSignals: true
                                 function onWaterTankLevelChanged() {
                                     var percent = Math.round(drivingInterface.waterTankLevel)
-                                    console.log("[WATER_TANK] [QML] 水箱水位变化: " + drivingInterface.waterTankLevel + " -> " + percent + "%")
+                                    console.log("[Client][UI][WaterTank] 水箱水位变化: " + drivingInterface.waterTankLevel + " -> " + percent + "%")
                                     if (typeof waterTankPercentText !== "undefined") {
                                         waterTankPercentText.text = percent + "%"
                                         waterTankPercentText.color = percent < 20 ? "#FF6B6B" : "#55BBFF"
@@ -2114,7 +2197,7 @@ Rectangle {
                                 }
                                 
                                 Component.onCompleted: {
-                                    console.log("[TRASH_BIN] [QML] 垃圾箱组件初始化: " + trashBinLevel + "%")
+                                    console.log("[Client][UI][TrashBin] 垃圾箱组件初始化: " + trashBinLevel + "%")
                                 }
                             }
                             
@@ -2125,7 +2208,7 @@ Rectangle {
                                 function onTrashBinLevelChanged() {
                                     var percent = Math.round(drivingInterface.trashBinLevel)
                                     var isHigh = percent > 80
-                                    console.log("[TRASH_BIN] [QML] 垃圾箱水位变化: " + drivingInterface.trashBinLevel + " -> " + percent + "% (高水位: " + (isHigh ? "是" : "否") + ")")
+                                    console.log("[Client][UI][TrashBin] 垃圾箱水位变化: " + drivingInterface.trashBinLevel + " -> " + percent + "% (高水位: " + (isHigh ? "是" : "否") + ")")
                                     if (typeof trashBinPercentText !== "undefined") {
                                         trashBinPercentText.text = percent + "%"
                                         trashBinPercentText.color = isHigh ? "#FF6B6B" : "#66DDAA"
@@ -2242,9 +2325,9 @@ Rectangle {
                                                 anchors.fill: parent
                                                 cursorShape: Qt.PointingHandCursor
                                                 onClicked: {
-                                                console.log("[EMERGENCY_STOP] ========== [QML] 急停按钮点击 ==========")
-                                                console.log("[EMERGENCY_STOP] 当前目标速度: " + targetSpeed)
-                                                console.log("[EMERGENCY_STOP] 急停按钮状态: " + (emergencyStopPressed ? "已按下" : "未按下"))
+                                                console.log("[Client][UI][EmergencyStop] ========== 急停按钮点击 ==========")
+                                                console.log("[Client][UI][EmergencyStop] 当前目标速度: " + targetSpeed)
+                                                console.log("[Client][UI][EmergencyStop] 急停按钮状态: " + (emergencyStopPressed ? "已按下" : "未按下"))
                                                 
                                                 // Plan 4.1: E-Stop is highest priority. Send regardless of remoteControlEnabled state check.
                                                 // However, we keep the logging.
@@ -2254,7 +2337,7 @@ Rectangle {
                                                 }
                                                 
                                                 emergencyStopPressed = true
-                                                console.log("[EMERGENCY_STOP] 急停按钮状态已更新为: 已按下（红色）")
+                                                console.log("[Client][UI][EmergencyStop] 急停按钮状态已更新为: 已按下（红色）")
                                                 
                                                 // Disable UI immediately to prevent double-click
                                                 emergencyStopButton.enabled = false;
@@ -2274,8 +2357,8 @@ Rectangle {
                                                         sendControlCommand("brake", { value: 1.0 })
                                                         sendControlCommand("speed", { value: 0.0 })
                                                     }
-                                                    console.log("[EMERGENCY_STOP] ✓ 已通过统一接口发送急停命令")
-                                                    console.log("[EMERGENCY_STOP] ========================================")
+                                                    console.log("[Client][UI][EmergencyStop] ✓ 已通过统一接口发送急停命令")
+                                                    console.log("[Client][UI][EmergencyStop] ========================================")
                                                 }
                                             }
                                         }
@@ -2328,12 +2411,12 @@ Rectangle {
                                             }
                                             
                                             onEditingFinished: {
-                                                console.log("[SPEED] ========== [QML] 目标速度输入完成 ==========")
-                                                console.log("[SPEED] 输入文本: " + text)
+                                                console.log("[Client][UI][Speed] ========== 目标速度输入完成 ==========")
+                                                console.log("[Client][UI][Speed] 输入文本: " + text)
                                                 
                                                 var newSpeed = parseFloat(text)
                                                 if (isNaN(newSpeed)) {
-                                                    console.log("[SPEED] ⚠ 输入无效，恢复为当前值: " + targetSpeed.toFixed(1))
+                                                    console.log("[Client][UI][Speed] ⚠ 输入无效，恢复为当前值: " + targetSpeed.toFixed(1))
                                                     text = targetSpeed.toFixed(1)
                                                     return
                                                 }
@@ -2341,11 +2424,11 @@ Rectangle {
                                                 targetSpeed = newSpeed
                                                 text = targetSpeed.toFixed(1)
                                                 
-                                                console.log("[SPEED] 新目标速度: " + targetSpeed.toFixed(1) + " km/h")
+                                                console.log("[Client][UI][Speed] 新目标速度: " + targetSpeed.toFixed(1) + " km/h")
                                                 
                                                 if (targetSpeed > 0.0) {
                                                     emergencyStopPressed = false
-                                                    console.log("[SPEED] 目标速度非0，急停按钮状态已重置为: 未按下（正常颜色）")
+                                                    console.log("[Client][UI][Speed] 目标速度非0，急停按钮状态已重置为: 未按下（正常颜色）")
                                                 }
                                                 
                                                 var remoteControlEnabled = false;
@@ -2353,15 +2436,15 @@ Rectangle {
                                                     remoteControlEnabled = (vehicleStatus.drivingMode === "远驾");
                                                 }
                                                 if (!remoteControlEnabled) {
-                                                    console.log("[SPEED] ⚠ 远驾接管未启用，无法发送速度命令")
-                                                    console.log("[SPEED] 当前驾驶模式: " + (typeof vehicleStatus !== "undefined" && vehicleStatus ? vehicleStatus.drivingMode : "未知"))
+                                                    console.log("[Client][UI][Speed] ⚠ 远驾接管未启用，无法发送速度命令")
+                                                    console.log("[Client][UI][Speed] 当前驾驶模式: " + (typeof vehicleStatus !== "undefined" && vehicleStatus ? vehicleStatus.drivingMode : "未知"))
                                                     return;
                                                 }
                                                 
                                                 // ★ 使用统一发送接口 (DataChannel 优先)
                                                 sendControlCommand("speed", { value: targetSpeed })
-                                                console.log("[SPEED] ✓ 已通过统一接口发送速度命令")
-                                                console.log("[SPEED] ========================================")
+                                                console.log("[Client][UI][Speed] ✓ 已通过统一接口发送速度命令")
+                                                console.log("[Client][UI][Speed] ========================================")
                                             }
                                             
                                             onTextChanged: {
@@ -2370,7 +2453,7 @@ Rectangle {
                                                     targetSpeed = Math.max(0.0, Math.min(100.0, num))
                                                     if (targetSpeed > 0.0 && emergencyStopPressed) {
                                                         emergencyStopPressed = false
-                                                        console.log("[SPEED] [实时更新] 目标速度非0，急停按钮状态已重置")
+                                                        console.log("[Client][UI][Speed] [实时更新] 目标速度非0，急停按钮状态已重置")
                                                     }
                                                 }
                                             }
@@ -2592,7 +2675,7 @@ Rectangle {
                                 
                                     Component.onCompleted: {
                                         var cleaningPercent = cleaningTotal > 0 ? Math.round(cleaningCurrent * 100 / cleaningTotal) : 0
-                                        console.log("[CLEANING_PROGRESS] [QML] 清扫进度组件初始化: " + cleaningCurrent + " / " + cleaningTotal + " m (" + cleaningPercent + "%)")
+                                        console.log("[Client][UI][CleaningProgress] 清扫进度组件初始化: " + cleaningCurrent + " / " + cleaningTotal + " m (" + cleaningPercent + "%)")
                                     }
                                 }
                             }
@@ -2603,7 +2686,7 @@ Rectangle {
                                 ignoreUnknownSignals: true
                                 function onCleaningCurrentChanged() {
                                     var percent = cleaningTotal > 0 ? Math.round(cleaningCurrent * 100 / cleaningTotal) : 0
-                                    console.log("[CLEANING_PROGRESS] [QML] 清扫进度变化: " + cleaningCurrent + " / " + cleaningTotal + " m -> " + percent + "%")
+                                    console.log("[Client][UI][CleaningProgress] 清扫进度变化: " + cleaningCurrent + " / " + cleaningTotal + " m -> " + percent + "%")
                                     if (typeof cleaningPercentText !== "undefined") {
                                         cleaningPercentText.text = percent + "%"
                                     }
@@ -2611,7 +2694,7 @@ Rectangle {
                                 }
                                 function onCleaningTotalChanged() {
                                     var percent = cleaningTotal > 0 ? Math.round(cleaningCurrent * 100 / cleaningTotal) : 0
-                                    console.log("[CLEANING_PROGRESS] [QML] 清扫总量变化: " + cleaningTotal + " m (当前: " + cleaningCurrent + " m, 进度: " + percent + "%)")
+                                    console.log("[Client][UI][CleaningProgress] 清扫总量变化: " + cleaningTotal + " m (当前: " + cleaningCurrent + " m, 进度: " + percent + "%)")
                                     if (typeof cleaningPercentText !== "undefined") {
                                         cleaningPercentText.text = percent + "%"
                                     }

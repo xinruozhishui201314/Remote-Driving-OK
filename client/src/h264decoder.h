@@ -17,14 +17,14 @@ class H264Decoder : public QObject
 {
     Q_OBJECT
 public:
-    explicit H264Decoder(QObject *parent = nullptr);
+    explicit H264Decoder(const QString &streamTag = QString(), QObject *parent = nullptr);
     ~H264Decoder();
 
     void feedRtp(const uint8_t *data, size_t len);
     void reset();
 
 signals:
-    void frameReady(const QImage &image);
+    void frameReady(const QImage &image, quint64 frameId);
 
 private:
     static constexpr size_t kRtpHeaderMinLen = 12;
@@ -35,6 +35,9 @@ private:
     QHash<quint16, QByteArray> m_rtpBuffer;
     quint16 m_rtpNextExpectedSeq = 0;
     bool m_rtpSeqInitialized = false;
+
+    /** 帧唯一编号：递增，每帧一个 ID，便于端到端追踪（feedRtp → emit frameReady → QML handler） */
+    quint64 m_frameIdCounter = 0;
 
     void processRtpPacket(const uint8_t *data, size_t len);
     void processRtpPayload(quint16 seq, quint32 ts, bool marker,
@@ -90,6 +93,9 @@ private:
     // QImage 隐式共享：若上一帧仍在事件队列中（refcount>1），detach() 会 COW
     // 一份；若已消费（refcount==1），detach() 是 no-op，零分配。
     QImage m_frameBuffer;
+
+    // ★ 诊断标签：用于区分四路解码器的日志（streamTag = cam_front/rear/left/right）
+    QString m_streamTag;
 
     // 统计
     int m_framesEmitted = 0;

@@ -34,7 +34,7 @@ static bool    rtpMarkerBit(const uint8_t *d) { return (d[1] & 0x80) != 0; }
 static constexpr uint8_t kFuAStart = 0x80;
 static constexpr uint8_t kFuAEnd   = 0x40;
 
-H264Decoder::H264Decoder(QObject *parent) : QObject(parent)
+H264Decoder::H264Decoder(const QString &streamTag, QObject *parent) : QObject(parent), m_streamTag(streamTag)
 {
     static bool s_cb_set = false;
     if (!s_cb_set) {
@@ -811,7 +811,7 @@ void H264Decoder::emitDecodedFrames()
 {
     AVFrame *frame = av_frame_alloc();
     if (!frame) {
-        qCritical() << "[H264][emitDecoded] av_frame_alloc 失败!";
+        qCritical() << "[H264][" << m_streamTag << "] av_frame_alloc 失败!";
         return;
     }
 
@@ -824,11 +824,11 @@ void H264Decoder::emitDecodedFrames()
         try {
             ret = avcodec_receive_frame(m_ctx, frame);
         } catch (const std::exception& e) {
-            qCritical() << "[H264][emitDecoded][ERROR] avcodec_receive_frame 异常:" << e.what()
+            qCritical() << "[H264][" << m_streamTag << "][ERROR] avcodec_receive_frame 异常:" << e.what()
                        << " m_ctx=" << (void*)m_ctx;
             break;
         } catch (...) {
-            qCritical() << "[H264][emitDecoded][ERROR] avcodec_receive_frame 未知异常"
+            qCritical() << "[H264][" << m_streamTag << "][ERROR] avcodec_receive_frame 未知异常"
                        << " m_ctx=" << (void*)m_ctx;
             break;
         }
@@ -841,7 +841,7 @@ void H264Decoder::emitDecodedFrames()
             // 解码错误
             consecutive_errors++;
             if (consecutive_errors >= max_consecutive_errors && !m_needKeyframe) {
-                qWarning() << "[H264][emitDecoded][ERROR] 连续" << consecutive_errors
+                qWarning() << "[H264][" << m_streamTag << "][ERROR] 连续" << consecutive_errors
                            << "次解码错误，强制 flush 并等待 IDR";
                 flushDecoder();
                 m_needKeyframe = true;
@@ -856,12 +856,12 @@ void H264Decoder::emitDecodedFrames()
             int w = frame->width;
             int h = frame->height;
             if (w <= 0 || h <= 0) {
-                qDebug() << "[H264][emitDecoded] 无效帧尺寸 w=" << w << " h=" << h << "，跳过";
+                qDebug() << "[H264][" << m_streamTag << "] 无效帧尺寸 w=" << w << " h=" << h << "，跳过";
                 continue;
             }
 
             if (m_width != w || m_height != h) {
-                qInfo() << "[H264][emitDecoded] 视频分辨率变化: " << m_width << "x" << m_height
+                qInfo() << "[H264][" << m_streamTag << "] 视频分辨率变化: " << m_width << "x" << m_height
                          << " -> " << w << "x" << h << "，重建 sws 上下文";
                 m_width = w;
                 m_height = h;
@@ -873,7 +873,7 @@ void H264Decoder::emitDecodedFrames()
                                        w, h, AV_PIX_FMT_RGB24,
                                        SWS_BILINEAR, nullptr, nullptr, nullptr);
                 if (!m_sws) {
-                    qWarning() << "[H264][emitDecoded][ERROR] sws_getContext 返回 nullptr:"
+                    qWarning() << "[H264][" << m_streamTag << "][ERROR] sws_getContext 返回 nullptr:"
                                << " w=" << w << " h=" << h << " fmt=" << frame->format
                                << "，跳过帧";
                     continue;
@@ -885,7 +885,7 @@ void H264Decoder::emitDecodedFrames()
                 m_frameBuffer.format() != QImage::Format_RGB888) {
                 m_frameBuffer = QImage(w, h, QImage::Format_RGB888);
                 if (m_frameBuffer.isNull()) {
-                    qCritical() << "[H264][emitDecoded][ERROR] QImage 分配失败 w=" << w << " h=" << h
+                    qCritical() << "[H264][" << m_streamTag << "][ERROR] QImage 分配失败 w=" << w << " h=" << h
                                << "，跳过帧";
                     continue;
                 }
@@ -895,35 +895,47 @@ void H264Decoder::emitDecodedFrames()
             uint8_t *dst[] = { m_frameBuffer.bits() };
             int dstStride[] = { static_cast<int>(m_frameBuffer.bytesPerLine()) };
             if (!dst[0]) {
-                qWarning() << "[H264][emitDecoded][ERROR] m_frameBuffer.bits() 返回 nullptr:"
+                qWarning() << "[H264][" << m_streamTag << "][ERROR] m_frameBuffer.bits() 返回 nullptr:"
                            << " w=" << w << " h=" << h << "，跳过帧";
                 continue;
             }
             int scaleRet = sws_scale(m_sws, frame->data, frame->linesize, 0, h, dst, dstStride);
             if (scaleRet != h) {
-                qWarning() << "[H264][emitDecoded][WARN] sws_scale 返回" << scaleRet << "期望" << h
+                qWarning() << "[H264][" << m_streamTag << "][WARN] sws_scale 返回" << scaleRet << "期望" << h
                            << " w=" << w << " h=" << h << "，帧可能损坏但继续使用";
             }
 
+            // ★★★ 关键诊断：H264Decoder 输出帧（emit frameReady → WebRtcClient::onVideoFrameFromDecoder）★★★
+            // ★★★ 如果此日志不出现 → RTP→H264 解码链路断，检查 RTP 统计和 SPS/PPS ★★★
             m_framesEmitted++;
             m_statsFramesInWindow++;
             framesOut++;
-            if (m_framesEmitted <= 3)
-                qDebug() << "[H264][emitDecoded] 输出帧 #" << m_framesEmitted
-                         << " w=" << w << " h=" << h;
+            m_frameIdCounter++;
+            // frameId 用于端到端追踪：feedRtp → frameReady → onVideoFrameFromDecoder → QML handler
+            if (m_framesEmitted <= 5) {
+                qInfo() << "[H264][" << m_streamTag << "] ★★★ emitDecoded 输出帧 ★★★ #" << m_framesEmitted
+                         << " frameId=" << m_frameIdCounter
+                         << " w=" << w << " h=" << h
+                         << " rtpSeq=" << m_lastRtpSeq
+                         << " codecOpen=" << m_codecOpen
+                         << " ★ 对比 onVideoFrameFromDecoder 日志 frameId 确认解码→emit 链路";
+            }
 
             try {
-                emit frameReady(m_frameBuffer);  // QueuedConnection 复制引用计数（O(1)）
+                emit frameReady(m_frameBuffer, m_frameIdCounter);  // QueuedConnection 复制引用计数（O(1)）
+                if (m_framesEmitted <= 5) {
+                    qInfo() << "[H264][" << m_streamTag << "] ★★★ emit frameReady 完成 ★★★ frameId=" << m_frameIdCounter;
+                }
             } catch (const std::exception& e) {
-                qCritical() << "[H264][emitDecoded][ERROR] emit frameReady 异常:" << e.what();
+                qCritical() << "[H264][" << m_streamTag << "][ERROR] emit frameReady 异常:" << e.what();
             } catch (...) {
-                qCritical() << "[H264][emitDecoded][ERROR] emit frameReady 未知异常";
+                qCritical() << "[H264][" << m_streamTag << "][ERROR] emit frameReady 未知异常";
             }
         } catch (const std::exception& e) {
-            qCritical() << "[H264][emitDecoded][ERROR] 帧处理循环异常:" << e.what();
+            qCritical() << "[H264][" << m_streamTag << "][ERROR] 帧处理循环异常:" << e.what();
             continue;
         } catch (...) {
-            qCritical() << "[H264][emitDecoded][ERROR] 帧处理循环未知异常";
+            qCritical() << "[H264][" << m_streamTag << "][ERROR] 帧处理循环未知异常";
             continue;
         }
     }
@@ -931,6 +943,6 @@ void H264Decoder::emitDecodedFrames()
     av_frame_free(&frame);
 
     if (framesOut > 0) {
-        qDebug() << "[H264][emitDecoded] 本次输出" << framesOut << "帧，total=" << m_framesEmitted;
+        qDebug() << "[H264][" << m_streamTag << "] emitDecoded: 本次输出" << framesOut << "帧，total=" << m_framesEmitted;
     }
 }

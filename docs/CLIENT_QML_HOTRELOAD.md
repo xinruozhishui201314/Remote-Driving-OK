@@ -15,7 +15,7 @@
 
 ## 3. C++ 修改
 
-C++ 源码（如 `videorenderer.cpp`）修改后需**重新编译**：
+C++ 源码（如 `src/presentation/renderers/VideoRenderer.cpp`）修改后需**重新编译**：
 
 ```bash
 docker compose exec client-dev bash -c 'cd /tmp/client-build && make -j4'

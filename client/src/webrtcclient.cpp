@@ -96,22 +96,22 @@ void WebRtcClient::doConnect()
         updateStatus("正在连接...", false);
         qInfo() << "[Client][WebRTC] doConnect stream=" << m_stream << " server=" << m_serverUrl << " app=" << m_app
                 << " retry(stream not found)=" << m_retryCount << " reconnect(after drop)=" << m_reconnectCount;
-        qDebug() << "[WebRTC] 环节: 发起拉流 stream=" << m_stream << "（若 stream not found 将最多重试 12 次，间隔 3s）";
+        qDebug() << "[Client][WebRTC] 环节: 发起拉流 stream=" << m_stream << "（若 stream not found 将最多重试 12 次，间隔 3s）";
 
         if (m_stream.isEmpty()) {
-            qWarning() << "[WebRTC][ERROR] doConnect: m_stream 为空，拒绝发起连接";
+            qWarning() << "[Client][WebRTC][ERROR] doConnect: m_stream 为空，拒绝发起连接";
             updateStatus("流名称为空，无法连接", false);
             emit errorOccurred("流名称为空");
             return;
         }
         if (m_serverUrl.isEmpty()) {
-            qWarning() << "[WebRTC][ERROR] doConnect: m_serverUrl 为空，拒绝发起连接";
+            qWarning() << "[Client][WebRTC][ERROR] doConnect: m_serverUrl 为空，拒绝发起连接";
             updateStatus("服务器地址为空，无法连接", false);
             emit errorOccurred("服务器地址为空");
             return;
         }
         if (!m_networkManager) {
-            qCritical() << "[WebRTC][ERROR] doConnect: m_networkManager 为 nullptr，无法发起 HTTP 请求 stream=" << m_stream;
+            qCritical() << "[Client][WebRTC][ERROR] doConnect: m_networkManager 为 nullptr，无法发起 HTTP 请求 stream=" << m_stream;
             updateStatus("网络管理器异常，无法连接", false);
             emit errorOccurred("网络管理器为空");
             return;
@@ -128,17 +128,17 @@ void WebRtcClient::doConnect()
 
         QString streamUrl = apiUrl.toString();
         setStreamUrl(streamUrl);
-        qDebug() << "[WebRTC] 环节: 拉流 URL stream=" << m_stream << " url=" << streamUrl;
+        qDebug() << "[Client][WebRTC] 环节: 拉流 URL stream=" << m_stream << " url=" << streamUrl;
 
         createOffer();
     } catch (const std::exception& e) {
-        qCritical() << "[WebRTC][ERROR] doConnect 异常: stream=" << m_stream
+        qCritical() << "[Client][WebRTC][ERROR] doConnect 异常: stream=" << m_stream
                     << " error=" << e.what();
         updateStatus("连接初始化异常: " + QString::fromLatin1(e.what()), false);
         emit errorOccurred("doConnect 异常: " + QString::fromLatin1(e.what()));
         m_connecting = false;
     } catch (...) {
-        qCritical() << "[WebRTC][ERROR] doConnect 未知异常: stream=" << m_stream;
+        qCritical() << "[Client][WebRTC][ERROR] doConnect 未知异常: stream=" << m_stream;
         updateStatus("连接初始化异常", false);
         emit errorOccurred("doConnect 未知异常");
         m_connecting = false;
@@ -244,19 +244,19 @@ void WebRtcClient::createOffer()
                 typeStr = parts[7];  // host / srflx / relay
                 protoStr = parts[4];  // UDP / TCP
             }
-            qDebug() << "[WebRTC][ICE] LocalCandidate stream=" << m_stream
+            qDebug() << "[Client][WebRTC][ICE] LocalCandidate stream=" << m_stream
                      << " type=" << typeStr << " proto=" << protoStr << " cand=" << cand;
         } catch (const std::exception& e) {
-            qWarning() << "[WebRTC][ICE][ERROR] onLocalCandidate 异常: stream=" << m_stream
+            qWarning() << "[Client][WebRTC][ICE][ERROR] onLocalCandidate 异常: stream=" << m_stream
                        << " error=" << e.what();
         } catch (...) {
-            qWarning() << "[WebRTC][ICE][ERROR] onLocalCandidate 未知异常: stream=" << m_stream;
+            qWarning() << "[Client][WebRTC][ICE][ERROR] onLocalCandidate 未知异常: stream=" << m_stream;
         }
     });
         m_peerConnection->onTrack([this](std::shared_ptr<rtc::Track> track) {
             try {
                 if (!track) {
-                    qWarning() << "[WebRTC][Track][WARN] onTrack 收到空 track: stream=" << m_stream;
+                    qWarning() << "[Client][WebRTC][Track][WARN] onTrack 收到空 track: stream=" << m_stream;
                     return;
                 }
                 std::string kind = track->description().type();
@@ -266,9 +266,9 @@ void WebRtcClient::createOffer()
                 const int64_t connDelay = (m_connectStartTime > 0) ? (trackTime - m_connectStartTime) : -1;
                 const int64_t offerDelay = (m_offerSentTime > 0) ? (trackTime - m_offerSentTime) : -1;
                 const int64_t answerDelay = (m_answerReceivedTime > 0) ? (trackTime - m_answerReceivedTime) : -1;
-                qInfo() << "[WebRTC][SDP] onTrack stream=" << m_stream << " kind=" << QString::fromStdString(kind)
+                qInfo() << "[Client][WebRTC][SDP] onTrack stream=" << m_stream << " kind=" << QString::fromStdString(kind)
                          << " 协商耗时: total=" << connDelay << "ms offer→Answer=" << offerDelay << "ms Answer→Track=" << answerDelay << "ms";
-                qDebug() << "[WebRTC] onTrack stream=" << m_stream << "kind=" << QString::fromStdString(kind);
+                qDebug() << "[Client][WebRTC] onTrack stream=" << m_stream << "kind=" << QString::fromStdString(kind);
                 if (kind == "video") {
                     m_videoTrack = track;
 #if defined(ENABLE_WEBRTC_LIBDATACHANNEL) && defined(ENABLE_FFMPEG)
@@ -278,10 +278,10 @@ void WebRtcClient::createOffer()
                     m_audioTrack = track;
                 }
             } catch (const std::exception& e) {
-                qCritical() << "[WebRTC][Track][ERROR] onTrack 异常: stream=" << m_stream
+                qCritical() << "[Client][WebRTC][Track][ERROR] onTrack 异常: stream=" << m_stream
                             << " error=" << e.what();
             } catch (...) {
-                qCritical() << "[WebRTC][Track][ERROR] onTrack 未知异常: stream=" << m_stream;
+                qCritical() << "[Client][WebRTC][Track][ERROR] onTrack 未知异常: stream=" << m_stream;
             }
         });
         m_peerConnection->onStateChange([this](rtc::PeerConnection::State state) {
@@ -318,7 +318,7 @@ void WebRtcClient::createOffer()
                             const int64_t now = QDateTime::currentMSecsSinceEpoch();
                             const int64_t lastFrameAge = (m_lastFrameTime > 0) ? (now - m_lastFrameTime) : -1;
                             const int64_t connDuration = (m_connectStartTime > 0) ? (now - m_connectStartTime) : -1;
-                            qWarning() << "[WebRTC][State][Diag] PeerConnection Disconnected stream=" << m_stream
+                            qWarning() << "[Client][WebRTC][State][Diag] PeerConnection Disconnected stream=" << m_stream
                                        << " 已连接时长=" << connDuration << "ms"
                                        << " 上帧距今=" << lastFrameAge << "ms"
                                        << " 本周期帧数=" << m_videoFrameLogCount
@@ -376,26 +376,26 @@ void WebRtcClient::createOffer()
         m_peerConnection->onLocalDescription([this](rtc::Description description) {
             try {
                 m_localSdp = QString::fromStdString(std::string(description));
-                qDebug() << "[WebRTC] play Offer 已生成 stream=" << m_stream << "，排队到主线程发送";
+                qDebug() << "[Client][WebRTC] play Offer 已生成 stream=" << m_stream << "，排队到主线程发送";
                 QTimer::singleShot(0, this, [this]() {
                     try {
                         sendOfferToServer(m_localSdp);
                     } catch (const std::exception& e) {
-                        qCritical() << "[WebRTC][ERROR] sendOfferToServer 异常: stream=" << m_stream
+                        qCritical() << "[Client][WebRTC][ERROR] sendOfferToServer 异常: stream=" << m_stream
                                     << " error=" << e.what();
                         updateStatus("Offer 发送失败: " + QString::fromLatin1(e.what()), false);
                         emit errorOccurred("Offer 发送异常: " + QString::fromLatin1(e.what()));
                     } catch (...) {
-                        qCritical() << "[WebRTC][ERROR] sendOfferToServer 未知异常: stream=" << m_stream;
+                        qCritical() << "[Client][WebRTC][ERROR] sendOfferToServer 未知异常: stream=" << m_stream;
                         updateStatus("Offer 发送异常", false);
                         emit errorOccurred("Offer 发送未知异常");
                     }
                 });
             } catch (const std::exception& e) {
-                qCritical() << "[WebRTC][ERROR] onLocalDescription 回调异常: stream=" << m_stream
+                qCritical() << "[Client][WebRTC][ERROR] onLocalDescription 回调异常: stream=" << m_stream
                             << " error=" << e.what();
             } catch (...) {
-                qCritical() << "[WebRTC][ERROR] onLocalDescription 回调未知异常: stream=" << m_stream;
+                qCritical() << "[Client][WebRTC][ERROR] onLocalDescription 回调未知异常: stream=" << m_stream;
             }
         });
         m_dataChannel = m_peerConnection->createDataChannel("control");
@@ -550,7 +550,7 @@ QString WebRtcClient::injectRecvonlyAudioVideoIfSingleMedia(const QString &sdp)
         out.insert(insertAt, QStringLiteral("a=group:BUNDLE 0 1 2"));
     }
     QString result = out.join(lineEnd) + extra;
-    qDebug() << "[WebRTC] injectRecvonlyAudioVideoIfSingleMedia: 已注入 m=audio( mid 1 ) + m=video( mid 2 )，BUNDLE 0 1 2";
+    qDebug() << "[Client][WebRTC] injectRecvonlyAudioVideoIfSingleMedia: 已注入 m=audio( mid 1 ) + m=video( mid 2 )，BUNDLE 0 1 2";
     return result;
 }
 
@@ -569,7 +569,7 @@ QString WebRtcClient::ensureSdpBundleGroup(const QString &sdp)
     for (int i = 0; i < bundleSize; ++i)
         bundleMids.append(QString::number(i));
     QString bundleLine = QStringLiteral("a=group:BUNDLE ") + bundleMids.join(QLatin1Char(' '));
-    qDebug() << "[WebRTC] ensureSdpBundleGroup: mediaCount=" << mediaCount << "bundleSize=" << bundleSize << "bundleLine=" << bundleLine;
+    qDebug() << "[Client][WebRTC] ensureSdpBundleGroup: mediaCount=" << mediaCount << "bundleSize=" << bundleSize << "bundleLine=" << bundleLine;
     QStringList out;
     bool bundleReplaced = false;
     for (int i = 0; i < lines.size(); ++i) {
@@ -599,7 +599,7 @@ QString WebRtcClient::ensureSdpBundleGroup(const QString &sdp)
 void WebRtcClient::sendOfferToServer(const QString &offer)
 {
     if (m_offerSent) {
-        qDebug() << "[WebRTC] 已发送过 Offer，跳过重复 POST stream=" << m_stream;
+        qDebug() << "[Client][WebRTC] 已发送过 Offer，跳过重复 POST stream=" << m_stream;
         return;
     }
     m_offerSent = true;
@@ -617,10 +617,10 @@ void WebRtcClient::sendOfferToServer(const QString &offer)
     apiUrl.setQuery(query);
 
     setStreamUrl(apiUrl.toString());
-    qDebug() << "[WebRTC] 环节: 发起拉流 stream=" << m_stream << "（若 stream not found 将最多重试 12 次，间隔 3s）";
+    qDebug() << "[Client][WebRTC] 环节: 发起拉流 stream=" << m_stream << "（若 stream not found 将最多重试 12 次，间隔 3s）";
 
     QString urlString = apiUrl.toString();
-    qDebug() << "[WebRTC] 主线程发送 POST stream=" << m_stream << "url=" << urlString;
+    qDebug() << "[Client][WebRTC] 主线程发送 POST stream=" << m_stream << "url=" << urlString;
 
     // 快速重连时 abort 上一轮 reply，防止多个 reply 并发回调 onSdpAnswerReceived
     if (m_currentReply) {
@@ -643,14 +643,14 @@ void WebRtcClient::sendOfferToServer(const QString &offer)
         try {
             Q_UNUSED(error)
             QString err = m_currentReply ? m_currentReply->errorString() : QStringLiteral("Unknown");
-            qWarning() << "[WebRTC][ERROR] 请求失败 stream=" << m_stream << "error=" << err;
+            qWarning() << "[Client][WebRTC][ERROR] 请求失败 stream=" << m_stream << "error=" << err;
             updateStatus("连接失败: " + err, false);
             emit errorOccurred(err);
         } catch (const std::exception& e) {
-            qCritical() << "[WebRTC][ERROR] errorOccurred 回调内异常: stream=" << m_stream
+            qCritical() << "[Client][WebRTC][ERROR] errorOccurred 回调内异常: stream=" << m_stream
                         << " error=" << e.what();
         } catch (...) {
-            qCritical() << "[WebRTC][ERROR] errorOccurred 回调内未知异常: stream=" << m_stream;
+            qCritical() << "[Client][WebRTC][ERROR] errorOccurred 回调内未知异常: stream=" << m_stream;
         }
     });
 }
@@ -662,11 +662,11 @@ void WebRtcClient::onSdpAnswerReceived(QNetworkReply *reply)
     const int64_t t0 = m_connectStartTime > 0 ? m_connectStartTime : m_answerReceivedTime;
     const int64_t totalDelay = m_answerReceivedTime - t0;
     const int64_t offerDelay = (m_offerSentTime > 0) ? (m_answerReceivedTime - m_offerSentTime) : -1;
-    qDebug() << "[WebRTC] onSdpAnswerReceived() 开始 stream=" << m_stream << " reply=" << (void*)reply << " m_currentReply=" << (void*)m_currentReply;
+    qDebug() << "[Client][WebRTC] onSdpAnswerReceived() 开始 stream=" << m_stream << " reply=" << (void*)reply << " m_currentReply=" << (void*)m_currentReply;
     
     // 检查 reply 是否仍然有效
     if (!reply || reply != m_currentReply) {
-        qWarning() << "[WebRTC] onSdpAnswerReceived() reply 无效或已改变，忽略 stream=" << m_stream;
+        qWarning() << "[Client][WebRTC] onSdpAnswerReceived() reply 无效或已改变，忽略 stream=" << m_stream;
         if (reply) {
             reply->deleteLater();
         }
@@ -677,7 +677,7 @@ void WebRtcClient::onSdpAnswerReceived(QNetworkReply *reply)
     int httpStatus = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
 
     if (reply->error() != QNetworkReply::NoError) {
-        qWarning() << "[WebRTC] 接收失败 stream=" << m_stream << "httpStatus=" << httpStatus
+        qWarning() << "[Client][WebRTC] 接收失败 stream=" << m_stream << "httpStatus=" << httpStatus
                    << "error=" << reply->errorString() << "body=" << data;
         updateStatus("接收 SDP Answer 失败", false);
         emit errorOccurred(reply->errorString());
@@ -687,10 +687,10 @@ void WebRtcClient::onSdpAnswerReceived(QNetworkReply *reply)
         return;
     }
 
-    qDebug() << "[WebRTC] 环节: 收到 ZLM 响应 stream=" << m_stream << " httpStatus=" << httpStatus << " bodySize=" << data.size();
+    qDebug() << "[Client][WebRTC] 环节: 收到 ZLM 响应 stream=" << m_stream << " httpStatus=" << httpStatus << " bodySize=" << data.size();
 
     // ── 诊断：SDP Answer 协商完整时间链 ─────────────────────────────────────────
-    qInfo() << "[WebRTC][SDP] Answer 收到 stream=" << m_stream
+    qInfo() << "[Client][WebRTC][SDP] Answer 收到 stream=" << m_stream
              << " httpStatus=" << httpStatus << " bodySize=" << data.size()
              << " totalDelay=" << totalDelay << "ms offer→Answer=" << offerDelay << "ms"
              << " ZLM协商到Track延迟将在 onTrack 时打印";
@@ -699,7 +699,7 @@ void WebRtcClient::onSdpAnswerReceived(QNetworkReply *reply)
     QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
     if (parseError.error != QJsonParseError::NoError) {
-        qWarning() << "[WebRTC] JSON 解析失败 stream=" << m_stream << "raw=" << data;
+        qWarning() << "[Client][WebRTC] JSON 解析失败 stream=" << m_stream << "raw=" << data;
         updateStatus("解析服务器响应失败", false);
         emit errorOccurred("JSON 解析错误: " + parseError.errorString());
         // ★ 清理 m_currentReply 引用
@@ -712,17 +712,17 @@ void WebRtcClient::onSdpAnswerReceived(QNetworkReply *reply)
     if (json.contains("sdp")) {
         m_retryCount = 0;
         m_remoteSdp = json["sdp"].toString();
-        qDebug() << "[WebRTC] 环节: ✓ 拉流成功 stream=" << m_stream << " sdpLen=" << m_remoteSdp.size();
+        qDebug() << "[Client][WebRTC] 环节: ✓ 拉流成功 stream=" << m_stream << " sdpLen=" << m_remoteSdp.size();
         processAnswer(m_remoteSdp);
     } else if (json.contains("code") && json["code"].toInt() != 0) {
         int code = json["code"].toInt();
         QString errorMsg = json.contains("msg") ? json["msg"].toString() : "未知错误";
-        qWarning() << "[WebRTC] 环节: ZLM 返回错误 stream=" << m_stream << " code=" << code
+        qWarning() << "[Client][WebRTC] 环节: ZLM 返回错误 stream=" << m_stream << " code=" << code
                    << " msg=" << errorMsg << "（-400=stream not found，请确认车端已推流）";
         if (code == -400 && m_retryCount < 12) {
             m_retryCount++;
             int remaining = 12 - m_retryCount;
-            qDebug() << "[WebRTC] stream not found，第" << m_retryCount << "次尝试拉流（最多 12 次重试），还剩" << remaining << "次，3s 后重试 stream=" << m_stream;
+            qDebug() << "[Client][WebRTC] stream not found，第" << m_retryCount << "次尝试拉流（最多 12 次重试），还剩" << remaining << "次，3s 后重试 stream=" << m_stream;
             updateStatus(QString("流尚未就绪，%1s 后第 %2 次重试…").arg(3).arg(m_retryCount + 1), false);
             QTimer::singleShot(3000, this, [this]() { doConnect(); });
         } else {
@@ -732,7 +732,7 @@ void WebRtcClient::onSdpAnswerReceived(QNetworkReply *reply)
             emit errorOccurred(errorMsg);
         }
     } else {
-        qWarning() << "[WebRTC] 响应无 sdp 且无 code stream=" << m_stream << "fullBody=" << QString::fromUtf8(data);
+        qWarning() << "[Client][WebRTC] 响应无 sdp 且无 code stream=" << m_stream << "fullBody=" << QString::fromUtf8(data);
         updateStatus("流不存在或等待车端推流", false);
         emit errorOccurred("响应格式异常");
     }
@@ -740,13 +740,13 @@ void WebRtcClient::onSdpAnswerReceived(QNetworkReply *reply)
     // ★ 清理 m_currentReply 引用，避免 disconnect() 时访问已删除的对象
     m_currentReply = nullptr;
     reply->deleteLater();
-    qDebug() << "[WebRTC] onSdpAnswerReceived() 完成，已清理 m_currentReply stream=" << m_stream;
+    qDebug() << "[Client][WebRTC] onSdpAnswerReceived() 完成，已清理 m_currentReply stream=" << m_stream;
 }
 
 void WebRtcClient::processAnswer(const QString &answer)
 {
     m_remoteSdp = answer;
-    qDebug() << "[WebRTC] processAnswer stream=" << m_stream << "开始 setRemoteDescription";
+    qDebug() << "[Client][WebRTC] processAnswer stream=" << m_stream << "开始 setRemoteDescription";
     
 #ifdef ENABLE_WEBRTC_LIBDATACHANNEL
     try {
@@ -756,13 +756,13 @@ void WebRtcClient::processAnswer(const QString &answer)
         if (m_peerConnection) {
             rtc::Description description(processedAnswer.toStdString(), rtc::Description::Type::Answer);
             m_peerConnection->setRemoteDescription(description);
-            qDebug() << "[WebRTC] setRemoteDescription 完成 stream=" << m_stream << "，等待 ICE 连接与 onTrack";
+            qDebug() << "[Client][WebRTC] setRemoteDescription 完成 stream=" << m_stream << "，等待 ICE 连接与 onTrack";
         } else {
-            qWarning() << "[WebRTC] processAnswer stream=" << m_stream << "m_peerConnection 为空，跳过";
+            qWarning() << "[Client][WebRTC] processAnswer stream=" << m_stream << "m_peerConnection 为空，跳过";
         }
     } catch (const std::exception& e) {
         QString error = QString("Failed to process SDP Answer: %1").arg(e.what());
-        qWarning() << "[WebRTC] processAnswer 异常 stream=" << m_stream << "error=" << error;
+        qWarning() << "[Client][WebRTC] processAnswer 异常 stream=" << m_stream << "error=" << error;
         emit errorOccurred(error);
         m_connecting = false;  // 异常时重置，避免残留标志屏蔽后续被动断连
         m_offerSent = false;   // 重置 Offer 发送标志，使 1s 后的 doConnect 能重发 Offer
@@ -778,11 +778,11 @@ void WebRtcClient::processAnswer(const QString &answer)
 
 void WebRtcClient::disconnect()
 {
-    qDebug() << "[WebRTC] disconnect() 开始 stream=" << m_stream;
+    qDebug() << "[Client][WebRTC] disconnect() 开始 stream=" << m_stream;
     
     // ★ 首先停止所有定时器，防止竞态条件
     if (m_reconnectTimer && m_reconnectTimer->isActive()) {
-        qDebug() << "[WebRTC] disconnect() 停止重连定时器 stream=" << m_stream;
+        qDebug() << "[Client][WebRTC] disconnect() 停止重连定时器 stream=" << m_stream;
         m_reconnectTimer->stop();
     }
     
@@ -794,11 +794,11 @@ void WebRtcClient::disconnect()
     
     // ★ 安全地断开网络回复连接
     QNetworkReply *reply = m_currentReply;
-    qDebug() << "[WebRTC] disconnect() m_currentReply=" << (void*)reply << " stream=" << m_stream;
+    qDebug() << "[Client][WebRTC] disconnect() m_currentReply=" << (void*)reply << " stream=" << m_stream;
     m_currentReply = nullptr;
     
     if (reply) {
-        qDebug() << "[WebRTC] disconnect() 准备断开 reply 连接 stream=" << m_stream;
+        qDebug() << "[Client][WebRTC] disconnect() 准备断开 reply 连接 stream=" << m_stream;
         
         // ★ 检查对象是否仍然有效（避免访问已删除的对象）
         // QObject::disconnect() 在对象已删除时会崩溃，需要先检查
@@ -807,10 +807,10 @@ void WebRtcClient::disconnect()
             // 尝试访问对象的父对象或线程来验证对象是否仍然有效
             if (reply->parent() || reply->thread()) {
                 isValid = true;
-                qDebug() << "[WebRTC] disconnect() reply 对象有效，准备断开连接 stream=" << m_stream;
+                qDebug() << "[Client][WebRTC] disconnect() reply 对象有效，准备断开连接 stream=" << m_stream;
             }
         } catch (...) {
-            qWarning() << "[WebRTC] disconnect() reply 对象已无效（异常）stream=" << m_stream;
+            qWarning() << "[Client][WebRTC] disconnect() reply 对象已无效（异常）stream=" << m_stream;
             isValid = false;
         }
         
@@ -818,29 +818,29 @@ void WebRtcClient::disconnect()
             // 使用 QPointer 包装以确保安全访问
             QPointer<QNetworkReply> safeReply(reply);
             if (safeReply) {
-                qDebug() << "[WebRTC] disconnect() 断开 reply 信号连接 stream=" << m_stream;
+                qDebug() << "[Client][WebRTC] disconnect() 断开 reply 信号连接 stream=" << m_stream;
                 // 断开所有连接到 this 的信号
                 safeReply->disconnect(this);
-                qDebug() << "[WebRTC] disconnect() 中止 reply 请求 stream=" << m_stream;
+                qDebug() << "[Client][WebRTC] disconnect() 中止 reply 请求 stream=" << m_stream;
                 safeReply->abort();
-                qDebug() << "[WebRTC] disconnect() 安排 reply 延迟删除 stream=" << m_stream;
+                qDebug() << "[Client][WebRTC] disconnect() 安排 reply 延迟删除 stream=" << m_stream;
                 safeReply->deleteLater();
             } else {
-                qWarning() << "[WebRTC] disconnect() QPointer 检查失败，reply 已删除 stream=" << m_stream;
+                qWarning() << "[Client][WebRTC] disconnect() QPointer 检查失败，reply 已删除 stream=" << m_stream;
             }
         } else {
-            qWarning() << "[WebRTC] disconnect() reply 对象无效，跳过断开操作 stream=" << m_stream;
+            qWarning() << "[Client][WebRTC] disconnect() reply 对象无效，跳过断开操作 stream=" << m_stream;
             // 即使对象无效，也尝试 deleteLater（Qt 会安全处理）
             reply->deleteLater();
         }
     } else {
-        qDebug() << "[WebRTC] disconnect() 无活动的 reply 连接 stream=" << m_stream;
+        qDebug() << "[Client][WebRTC] disconnect() 无活动的 reply 连接 stream=" << m_stream;
     }
 
     teardownMediaPipeline();
 
     m_isConnected = false;
-    qDebug() << "[WebRTC] disconnect() 更新状态为已断开 stream=" << m_stream;
+    qDebug() << "[Client][WebRTC] disconnect() 更新状态为已断开 stream=" << m_stream;
     updateStatus("已断开", false);
     emit connectionStatusChanged(false);
     qInfo() << "[Client][WebRTC] disconnect() 完成 stream=" << m_stream;
@@ -938,7 +938,7 @@ void WebRtcClient::scheduleAutoReconnectIfNeeded(const char *reason)
     const int64_t now = QDateTime::currentMSecsSinceEpoch();
     const int64_t connDuration = (m_connectStartTime > 0) ? (now - m_connectStartTime) : -1;
     const int64_t lastFrameAge = (m_lastFrameTime > 0) ? (now - m_lastFrameTime) : -1;
-    qWarning() << "[WebRTC][State][Diag] PeerConnection Closed/Failed stream=" << m_stream
+    qWarning() << "[Client][WebRTC][State][Diag] PeerConnection Closed/Failed stream=" << m_stream
                << " reason=" << reason
                << " 已连接时长=" << connDuration << "ms"
                << " 上帧距今=" << lastFrameAge << "ms"
@@ -975,21 +975,22 @@ void WebRtcClient::setupVideoDecoder()
     const int64_t now = QDateTime::currentMSecsSinceEpoch();
     const int64_t trackDelay = (m_trackReceivedTime > 0) ? (now - m_trackReceivedTime) : -1;
     const int64_t connDelay = (m_connectStartTime > 0) ? (now - m_connectStartTime) : -1;
-    qInfo() << "[WebRTC][SDP] setupVideoDecoder stream=" << m_stream
+    qInfo() << "[Client][WebRTC][SDP] setupVideoDecoder stream=" << m_stream
              << " onTrack→setupDelay=" << trackDelay << "ms"
              << " connectStart→setupDelay=" << connDelay << "ms"
              << " framesSinceLast=" << m_framesSinceLastStats
              << " lastFrameAge=" << (m_lastFrameTime > 0 ? (now - m_lastFrameTime) : -1) << "ms";
 
     try {
-        m_h264Decoder = new H264Decoder(this);
+        m_h264Decoder = new H264Decoder(m_stream, this);
+        qInfo() << "[Client][WebRTC][setupVideoDecoder] 创建 H264Decoder stream=" << m_stream;
         connect(m_h264Decoder, &H264Decoder::frameReady, this, &WebRtcClient::onVideoFrameFromDecoder, Qt::QueuedConnection);
     } catch (const std::exception& e) {
-        qCritical() << "[WebRTC][ERROR] setupVideoDecoder: 创建/连接 H264Decoder 异常:"
+        qCritical() << "[Client][WebRTC][ERROR] setupVideoDecoder: 创建/连接 H264Decoder 异常:"
                     << " stream=" << m_stream << " error=" << e.what();
         return;
     } catch (...) {
-        qCritical() << "[WebRTC][ERROR] setupVideoDecoder: 创建/连接 H264Decoder 未知异常 stream=" << m_stream;
+        qCritical() << "[Client][WebRTC][ERROR] setupVideoDecoder: 创建/连接 H264Decoder 未知异常 stream=" << m_stream;
         return;
     }
 
@@ -1008,74 +1009,133 @@ void WebRtcClient::setupVideoDecoder()
                         dec->feedRtp(reinterpret_cast<const uint8_t *>(pkt.constData()),
                                      static_cast<size_t>(pkt.size()));
                     } catch (const std::exception& e) {
-                        qCritical() << "[WebRTC][ERROR] feedRtp 异常 stream=" << m_stream
+                        qCritical() << "[Client][WebRTC][ERROR] feedRtp 异常 stream=" << m_stream
                                     << " pktSize=" << pkt.size() << " error=" << e.what();
                     } catch (...) {
-                        qCritical() << "[WebRTC][ERROR] feedRtp 未知异常 stream=" << m_stream
+                        qCritical() << "[Client][WebRTC][ERROR] feedRtp 未知异常 stream=" << m_stream
                                     << " pktSize=" << pkt.size();
                     }
                 }, Qt::QueuedConnection);
             }
         } catch (const std::exception& e) {
-            qCritical() << "[WebRTC][onMessage][ERROR] 异常 stream=" << m_stream << " error=" << e.what();
+            qCritical() << "[Client][WebRTC][onMessage][ERROR] 异常 stream=" << m_stream << " error=" << e.what();
         } catch (...) {
-            qCritical() << "[WebRTC][onMessage][ERROR] 未知异常 stream=" << m_stream;
+            qCritical() << "[Client][WebRTC][onMessage][ERROR] 未知异常 stream=" << m_stream;
         }
     });
-    qDebug() << "[WebRTC] video track RTP -> H264 decoder -> videoFrameReady 已连接 stream=" << m_stream;
+    qDebug() << "[Client][WebRTC] video track RTP -> H264 decoder -> videoFrameReady 已连接 stream=" << m_stream;
 }
 
-void WebRtcClient::onVideoFrameFromDecoder(const QImage &image)
+void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
 {
+    // ★★★ 关键诊断：确认 onVideoFrameFromDecoder 被调用（信号从 H264Decoder 到达）★★★
+    // ★★★ 如果此日志不出现 → H264Decoder::emit frameReady 信号断链，或 QueuedConnection 失败 ★★★
+    static QSet<QString> s_loggedStreams;
+    if (!s_loggedStreams.contains(m_stream)) {
+        s_loggedStreams.insert(m_stream);
+        qInfo() << "[Client][WebRTC][onVideoFrameFromDecoder] ★★★ 函数被调用（信号从 H264Decoder 到达）★★★"
+                   " stream=" << m_stream << " frameId=" << frameId;
+    }
+
     try {
+        // ── 队列积压诊断：进入时计数，用于判断主线程是否被阻塞 ───────────────────
+        ++m_framesPendingInQueue;
+        const int64_t handlerEnterTime = QDateTime::currentMSecsSinceEpoch();
+
         if (image.isNull()) {
-            qWarning() << "[WebRTC][WARN] 收到空视频帧 stream=" << m_stream;
+            qWarning() << "[Client][WebRTC][WARN] 收到空视频帧 stream=" << m_stream;
+            --m_framesPendingInQueue;
             return;
         }
 
         m_videoFrameLogCount++;
+
         // ── 诊断：帧时间戳追踪（用于断开时判断"根本没收到帧"还是"收到了但卡在解码"） ──
-        const int64_t now = QDateTime::currentMSecsSinceEpoch();
         if (m_lastFrameTime > 0) {
-            const int64_t frameInterval = now - m_lastFrameTime;
-            if (frameInterval > 2000 && m_lastFrameTime > 0) {
-                // 距离上一帧超过 2 秒，说明中间断了但没触发 PeerConnection Disconnected
-                qWarning() << "[WebRTC][FrameGap] stream=" << m_stream
+            const int64_t frameInterval = handlerEnterTime - m_lastFrameTime;
+            if (frameInterval > 2000) {
+                qWarning() << "[Client][WebRTC][FrameGap] stream=" << m_stream
                              << " 帧间隔异常 gap=" << frameInterval << "ms"
                              << " (正常应 ~33ms @30fps)，可能在 ZLM 侧或 UDP 传输层断了"
                              << " framesSinceLast=" << m_framesSinceLastStats;
             }
         }
-        m_lastFrameTime = now;
+        m_lastFrameTime = handlerEnterTime;
         m_framesSinceLastStats = 0;
 
         // 每路每连接周期：前 10 帧必打 INFO，便于确认「解码→emit→QML」不断链（无需额外开关）
         if (m_videoFrameLogCount <= 10) {
             qInfo() << "[Client][VideoFrame] stream=" << m_stream << " frame#" << m_videoFrameLogCount
                     << " size=" << image.size() << " format=" << static_cast<int>(image.format())
+                    << " queuePending=" << m_framesPendingInQueue
                     << "（前10帧；之后设 ENABLE_VIDEO_FRAME_LOG=1 可看节流日志）";
         }
 
+        // 节流日志：每 120 帧打一次（默认关闭）
         if (qEnvironmentVariableIntValue("ENABLE_VIDEO_FRAME_LOG") > 0 && m_videoFrameLogCount > 10
             && (m_videoFrameLogCount % 120 == 0)) {
             qDebug() << "[Client][VideoFrame] stream=" << m_stream << " frame#" << m_videoFrameLogCount
-                     << " size=" << image.size() << " format=" << image.format();
+                     << " size=" << image.size() << " format=" << image.format()
+                     << " queuePending=" << m_framesPendingInQueue;
+        }
+
+        // 队列积压警告：积压 >2 说明主线程被阻塞
+        if (m_framesPendingInQueue > 2 && m_videoFrameLogCount <= 20) {
+            qWarning() << "[Client][WebRTC][Queue] stream=" << m_stream
+                        << " 帧队列积压=" << m_framesPendingInQueue
+                        << "（>2 说明主线程被阻塞，导致视频卡顿）"
+                        << " frame#=" << m_videoFrameLogCount;
         }
 
         try {
-            emit videoFrameReady(image);
+            // 前 3 帧无条件 INFO，跨所有 stream，打在 emit 之前，
+            // 用于在默认日志中即可确认「C++ emit → QML handler」不断链。
+            if (m_videoFrameLogCount <= 3) {
+                qInfo() << "[Client][WebRTC][emitReady] stream=" << m_stream
+                         << " frame#=" << m_videoFrameLogCount
+                         << " frameId=" << frameId
+                         << " image=" << image.size() << " valid=" << !image.isNull()
+                         << " w=" << image.width() << " h=" << image.height()
+                         << " ★ 对比 QML onVideoFrameReady 日志 frameId 确认 emit→QML 链路";
+            }
+            // 带显式尺寸+frameId的信号：
+            // - 尺寸参数解决 QImage 跨线程 QueuedConnection 到 QML 时 QVariant 包装导致
+            //   image.width/height 方法调用返回 0 的 Qt 元对象边界问题。
+            // - frameId 用于 C++ emit → QML handler 端到端追踪（必须与 emitDecoded 中的
+            //   frameId 一致，日志中显示为 frameId=emitId/qmlId）。
+            emit videoFrameReady(image, image.width(), image.height(), frameId);
+            // ★★★ 关键诊断：emit 后直接检查是否有 QML 接收者 ★★★
+            // 如果 receivers==0，说明 QML Connections.target 未绑定或 target 为 null
+            // ★ 对比 QML console.log 输出确认 signal → QML handler 链路
+            QObject* obj = this;
+            int receivers = obj->receivers(SIGNAL(videoFrameReady(const QImage&, int, int, quint64)));
+            if (m_videoFrameLogCount <= 5) {
+                qInfo() << "[Client][WebRTC][emitDone] stream=" << m_stream << " frame#=" << m_videoFrameLogCount
+                         << " frameId=" << frameId
+                         << " emitCost=" << (QDateTime::currentMSecsSinceEpoch() - handlerEnterTime) << "ms"
+                         << " signalReceivers=" << receivers
+                         << " ★ signalReceivers>0=有接收者 | =0=QML Connections.target 可能为 null"
+                         << " ★ 对比 QML console.log 输出确认 emit→QML 链路";
+            }
         } catch (const std::exception& e) {
-            qCritical() << "[WebRTC][ERROR] emit videoFrameReady 异常 stream=" << m_stream
+            qCritical() << "[Client][WebRTC][ERROR] emit videoFrameReady 异常 stream=" << m_stream
                         << " error=" << e.what() << " image.size=" << image.size();
         } catch (...) {
-            qCritical() << "[WebRTC][ERROR] emit videoFrameReady 未知异常 stream=" << m_stream
+            qCritical() << "[Client][WebRTC][ERROR] emit videoFrameReady 未知异常 stream=" << m_stream
                         << " image.size=" << image.size();
         }
+
+        // emit 后立即退出（QML handler 在 emit 返回后异步执行）。
+        // 注意：QueuedConnection 的 handler 执行时刻无法在 C++ 侧直接感知。
+        --m_framesPendingInQueue;
+        m_lastHandlerDoneTime = QDateTime::currentMSecsSinceEpoch();
     } catch (const std::exception& e) {
-        qCritical() << "[WebRTC][ERROR] onVideoFrameFromDecoder 总异常: stream=" << m_stream
+        qCritical() << "[Client][WebRTC][ERROR] onVideoFrameFromDecoder 总异常: stream=" << m_stream
                     << " error=" << e.what();
+        --m_framesPendingInQueue;
     } catch (...) {
-        qCritical() << "[WebRTC][ERROR] onVideoFrameFromDecoder 未知异常: stream=" << m_stream;
+        qCritical() << "[Client][WebRTC][ERROR] onVideoFrameFromDecoder 未知异常: stream=" << m_stream;
+        --m_framesPendingInQueue;
     }
 }
 #endif

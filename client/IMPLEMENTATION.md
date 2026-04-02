@@ -64,9 +64,9 @@ client/
 
 **视频管线（已实现）**:
 1. `client/Dockerfile.client-dev`：镜像内安装 libdatachannel（源码构建）+ FFmpeg 开发库。
-2. CMake：`pkg_check_modules(FFMPEG)`，条件加入 `h264decoder.cpp/h`、`videorenderer.cpp/h`，链接 avcodec/avutil/swscale。
-3. `H264Decoder`：`feedRtp()` 剥 12 字节 RTP 头，处理单 NAL 与 FU-A，`decodeAndEmit()` 用 avcodec 解码，sws_scale 转 RGB32 后 `emit frameReady(QImage)`。
-4. `VideoRenderer`（QQuickPaintedItem）：`setFrame(QImage)` 线程安全，`paint()` 中绘制当前帧；已注册为 QML 类型 `RemoteDriving 1.0 VideoRenderer`。
+2. CMake：FFmpeg 链接 avcodec/avutil/swscale，视频渲染使用 `src/presentation/renderers/VideoRenderer.cpp`（GPU 加速 QQuickItem + QSG）。
+3. `H264Decoder`：`feedRtp()` 剥 12 字节 RTP 头，处理单 NAL 与 FU-A，`decodeAndEmit()` 用 avcodec 解码，sws_scale 转 RGB 后 `emit frameReady(QImage)`。
+4. `VideoRenderer`（QQuickItem + QSG）：GPU 加速渲染，三缓冲原子交换，`updatePaintNode()` 中零拷贝合成；已注册为 QML 类型 `RemoteDriving 1.0 VideoRenderer`。
 5. `WebRtcClient::setupVideoDecoder()`：主线程中创建 H264Decoder，连接 `frameReady` → `videoFrameReady`（QueuedConnection），`m_videoTrack->onMessage` 将收到的 binary 送入 `feedRtp()`。
 6. QML：`VideoPanel` 与中央「前方摄像头」内嵌 VideoRenderer，`Connections { target: streamClient; onVideoFrameReady: videoRenderer.setFrame(frame) }`，四路分别绑定 frontClient/leftClient/rearClient/rightClient。
 

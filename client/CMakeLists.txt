@@ -223,7 +223,6 @@ set(SOURCES
     src/webrtcclient.cpp
     src/webrtcstreammanager.cpp
     src/mqttcontroller.cpp
-    # src/videorenderer.cpp 已由 src/presentation/renderers/VideoRenderer.cpp 替代，不可重复编译
 
     # Domain models
     src/vehiclestatus.cpp

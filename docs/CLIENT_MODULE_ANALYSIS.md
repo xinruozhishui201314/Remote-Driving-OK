@@ -25,9 +25,9 @@ client/
 │   ├── webrtcclient.*      # 单路 WebRTC 拉流
 │   ├── webrtcstreammanager.* # 四路流管理（前/后/左/右）
 │   ├── mqttcontroller.*    # 控制通道（DataChannel 优先 + MQTT 降级）
-│   ├── videorenderer.*     # 视频帧渲染
+│   ├── presentation/renderers/VideoRenderer.* # GPU 加速视频渲染（QQuickItem + QSG）
 │   ├── nodehealthchecker.* # 节点健康检查
-│   └── h264decoder.*       # H.264 解码（可选）
+│   └── h264decoder.*       # H.264 解码（RTP → FFmpeg → QImage）
 ├── qml/                    # UI 层
 │   ├── main.qml            # 根窗口、登录/选车/驾驶主界面切换
 │   ├── LoginPage.qml       # 登录页

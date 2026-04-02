@@ -52,11 +52,16 @@ signals:
     void statusTextChanged(const QString &text);
     /** 解码后的视频帧（RTP→H.264 解码→QImage），供 VideoRenderer 显示 */
     void videoFrameReady(const QImage &image);
+    /** 带显式尺寸的版本：解决 QImage 跨线程 QueuedConnection 到 QML 时，
+     *  QVariant 包装导致 image.width/height 方法调用返回 0/undefined 的 Qt 元对象边界问题。
+     *  QML 应优先使用此信号，image 参数仅作 setFrame 数据源。
+     *  第四参数 frameId 用于 C++ emit → QML handler 端到端追踪。 */
+    void videoFrameReady(const QImage &image, int frameWidth, int frameHeight, quint64 frameId);
     void errorOccurred(const QString &error);
 
 private slots:
     void onSdpAnswerReceived(QNetworkReply *reply);
-    void onVideoFrameFromDecoder(const QImage &image);
+    void onVideoFrameFromDecoder(const QImage &image, quint64 frameId);
 
 private:
     void createOffer();
@@ -84,6 +89,11 @@ private:
     int m_reconnectCount = 0;  // 连接断开后自动重连计数，最多重试 5 次
     /** 每路连接周期内已转发到 QML 的帧数（用于 [Client][VideoFrame] 前 N 帧与节流日志） */
     int m_videoFrameLogCount = 0;
+    /** 在事件队列中等待处理的帧数（进入 onVideoFrameFromDecoder 时 +1，退出时 -1）。
+     *  >1 说明主线程被阻塞，事件积压，导致视频卡顿。 */
+    int m_framesPendingInQueue = 0;
+    /** 上一帧处理完成的墙上时间（毫秒），用于计算 emit→handler 端到端延迟。 */
+    int64_t m_lastHandlerDoneTime = 0;
     bool m_manualDisconnect = false;  // 是否手动断开连接（手动断开时不自动重连）
     /**
      * 避免主动连接进行中（disconnectAll + connectToStream 同帧执行）时，

@@ -43,10 +43,13 @@ public:
     void setMirrorHorizontal(bool m) { m_mirrorH = m; emit mirrorChanged(); update(); }
 
     // MediaPipeline 信号连接（可在任意线程调用）
-    Q_INVOKABLE void deliverFrame(std::shared_ptr<VideoFrame> frame);
+    /** @param frameId  端到端帧序列号（emit→QML→setFrame→deliverFrame→updatePaintNode 追踪） */
+    Q_INVOKABLE void deliverFrame(std::shared_ptr<VideoFrame> frame, quint64 frameId = 0);
 
-    /** QML / WebRtcClient::videoFrameReady(QImage)：RGB→YUV420P 后走 deliverFrame（与现有 YUV 着色器一致）。 */
-    Q_INVOKABLE void setFrame(const QImage& image);
+    /** QML / WebRtcClient::videoFrameReady(QImage)：RGB→YUV420P 后走 deliverFrame（与现有 YUV 着色器一致）。
+     *  @param frameId  从 C++ WebRtcClient::emit 传入的帧序列号，用于端到端追踪。
+     *                  QML 端已打印 frameId，可与 C++ 日志对比确认 emit→setFrame→updatePaintNode 不断链。 */
+    Q_INVOKABLE void setFrame(const QImage& image, quint64 frameId = 0);
 
 signals:
     void cameraIdChanged();
@@ -86,6 +89,7 @@ private:
     // ── 诊断日志增强 ─────────────────────────────────────────────────────────
     int64_t m_lastRenderTime = 0;      // 上次 updatePaintNode 执行时刻
     int m_renderCallCount = 0;         // 渲染调用计数
+    quint64 m_lastFrameId = 0;         // 上次交付帧的 frameId（端到端追踪）
     // ── 诊断日志增强结束 ─────────────────────────────────────────────────────
 
     VideoSGNode*                   m_sgNode    = nullptr;

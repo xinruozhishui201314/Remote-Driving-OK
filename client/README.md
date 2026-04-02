@@ -35,12 +35,11 @@ client/
 │   ├── core/               # EventBus、FSM、配置、日志、线程池、防重放、指令签名等
 │   ├── infrastructure/     # ITransportManager、MQTT 适配、WebRTC/UDP、媒体管线、GPU 互操作、输入硬件
 │   ├── services/           # Session、VehicleControl、Safety、Degradation、Latency、ErrorRecovery、Diagnostics
-│   ├── presentation/       # VideoRenderer / VideoMaterial / VideoSGNode；Telemetry/Network/Safety QML 模型
+│   ├── presentation/       # VideoRenderer(GPU) / VideoMaterial / VideoSGNode；Telemetry/Network/Safety QML 模型
 │   ├── utils/              # LockFreeQueue、TripleBuffer、CircularBuffer、PercentileStats、TimeUtils
 │   ├── authmanager.* …     # 与 QML 直接交互的遗留/门面类（仍由 main 注册到 QML）
 │   ├── webrtc*.cpp …       # WebRTC 拉流与管理（内部可由 WebRTCChannel 等使用）
 │   ├── mqttcontroller.*    # MQTT 连接与消息
-│   ├── videorenderer.cpp   # 与 QML 衔接的视频视图实现（与 presentation 管线配合）
 │   └── vehiclestatus.* …   # 遥测与状态模型
 ├── qml/
 │   ├── main.qml

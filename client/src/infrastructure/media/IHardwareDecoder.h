@@ -59,6 +59,7 @@ struct VideoFrame {
     int64_t  pts            = 0;
     int64_t  captureTimestamp = 0; // 原始采集时间戳（用于 E2E 延迟计算）
     uint32_t cameraId       = 0;
+    quint64  frameId        = 0;   // 端到端帧序列号（C++ emit → QML → setFrame → deliverFrame → updatePaintNode）
 
     PlaneInfo   planes[3]; // Y, U, V 或 RGB（CPU_MEMORY 路径）
     DmaBufInfo  dmaBuf;    // DMA_BUF 路径的描述符

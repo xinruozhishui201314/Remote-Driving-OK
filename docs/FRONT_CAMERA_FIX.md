@@ -81,14 +81,9 @@ Text {
 
 ### 4. 优化 VideoRenderer 渲染
 
-**videorenderer.cpp**:
-- 添加边界检查，防止空矩形渲染
-- 优化日志输出频率（每100帧记录一次）
-- 添加渲染计数调试信息
-
-**videorenderer.cpp (构造函数)**:
-- 显式设置 `setVisible(true)` 和 `setEnabled(true)`
-- 确保 VideoRenderer 可渲染
+**src/presentation/renderers/VideoRenderer.cpp**:
+- GPU 加速渲染：QQuickItem + QSG + 三缓冲
+- 详见 `client/src/presentation/renderers/VideoRenderer.cpp`
 
 ### 5. 修复 QML 中 QImage 属性访问
 
@@ -111,10 +106,10 @@ image.size ? (image.size.width + "x" + image.size.height) : "unknown"
    - 修改 Canvas 和 Text 的 `visible` 条件，只在无视频时显示
    - 优化状态文字显示（添加半透明背景，提高 z 值）
 
-2. **client/src/videorenderer.cpp**
-   - 优化 `setFrame()`：添加尺寸验证，减少日志频率
-   - 优化 `paint()`：添加边界检查，添加渲染计数
-   - 优化构造函数：显式设置可见性和启用状态
+2. **client/src/presentation/renderers/VideoRenderer.cpp**（GPU 加速版）
+   - `setFrame()`：qImageToYuv420Frame + 三缓冲 + deliverFrame
+   - `paint()`：被 `updatePaintNode()`（QSG 渲染线程）替代
+   - 构造函数：`setFlag(ItemHasContents, true)` 启用 QSG
 
 ## 验证步骤
 
