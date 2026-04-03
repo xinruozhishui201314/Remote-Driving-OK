@@ -60,6 +60,19 @@ private:
     /** 解析并规范化 base URL；空时返回空字符串（由调用方决定 fallback） */
     QString resolveBaseUrl(const QString &whepUrl) const;
 
+    Q_INVOKABLE QString getStreamDebugInfo() const;
+    Q_INVOKABLE int getQmlSignalReceiverCount() const;
+    /** 诊断：各路独立信号接收者计数（对比前端/QML 诊断 rc=0 问题）*/
+    Q_INVOKABLE int getFrontSignalReceiverCount() const;
+    Q_INVOKABLE int getRearSignalReceiverCount() const;
+    Q_INVOKABLE int getLeftSignalReceiverCount() const;
+    Q_INVOKABLE int getRightSignalReceiverCount() const;
+    /** 诊断：返回每个 WebRtcClient 的 videoFrameReady 信号元数据（索引、参数数量、签名），
+     *  用于确认 QML 看到的信号签名是否与 C++ 声明一致。
+     *  返回格式："front: index=N params=N sig=xxx | rear: ..." */
+    Q_INVOKABLE QString getStreamSignalMetaInfo() const;
+    Q_INVOKABLE void dumpStreamInfo() const;
+    Q_INVOKABLE void forceRefreshAllRenderers();
     WebRtcClient *m_front = nullptr;
     WebRtcClient *m_rear = nullptr;
     WebRtcClient *m_left = nullptr;

@@ -154,6 +154,25 @@ ApplicationWindow {
         
         onClosed: {
             console.log("VehicleSelectionDialog closed")
+            // ── 方案1：强制刷新机制 ────────────────────────────────────────────
+            // 根因：Qt Scene Graph 在 VehicleSelectionDialog 显示期间可能阻塞渲染线程，
+            // 导致 deliverFrame 收到帧但 updatePaintNode 不被调用。
+            // 修复：在对话框关闭时强制刷新所有 VideoRenderer。
+            Qt.callLater(function() {
+                var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
+                if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
+                    console.log("[Client][UI] ★★★ VehicleSelectionDialog closed → 调用 forceRefreshAllRenderers ★★★")
+                    wsm.forceRefreshAllRenderers()
+                } else {
+                    console.warn("[Client][UI] forceRefreshAllRenderers 不可用，渲染可能仍有问题")
+                    if (wsm) {
+                        console.warn("[Client][UI]   wsm=" + (wsm ? "ok" : "NULL"))
+                        console.warn("[Client][UI]   forceRefreshAllRenderers=" + (typeof wsm.forceRefreshAllRenderers))
+                    } else {
+                        console.warn("[Client][UI]   webrtcStreamManager 不可用")
+                    }
+                }
+            })
         }
     }
 
@@ -272,6 +291,19 @@ ApplicationWindow {
             if (typeof vehicleManager !== "undefined" && vehicleManager && vehicleManager.currentVin.length > 0) {
                 componentsReady = true
                 updateTitle()
+                // ── 方案1：强制刷新机制（增强版）─────────────────────────────────
+                // 根因：Qt Scene Graph 在 VehicleSelectionDialog 显示期间可能阻塞渲染线程，
+                // 导致 deliverFrame 收到帧但 updatePaintNode 不被调用。
+                // 修复：在对话框关闭且组件就绪时强制刷新所有 VideoRenderer。
+                Qt.callLater(function() {
+                    var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
+                    if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
+                        console.log("[Client][UI] ★★★ onClosed → componentsReady=true → 调用 forceRefreshAllRenderers ★★★")
+                        wsm.forceRefreshAllRenderers()
+                    } else {
+                        console.warn("[Client][UI] forceRefreshAllRenderers 不可用")
+                    }
+                })
             }
         }
     }

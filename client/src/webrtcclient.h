@@ -10,6 +10,9 @@
 #include <QJsonObject>
 #include <QJsonDocument>
 #include <QTimer>
+#include <QPointer>
+#include <QMetaMethod>
+#include <QQuickItem>
 #include <memory>
 
 #if defined(ENABLE_WEBRTC_LIBDATACHANNEL) && defined(ENABLE_FFMPEG)
@@ -30,6 +33,8 @@ class WebRtcClient : public QObject
     Q_PROPERTY(QString streamUrl READ streamUrl WRITE setStreamUrl NOTIFY streamUrlChanged)
     Q_PROPERTY(bool isConnected READ isConnected NOTIFY connectionStatusChanged)
     Q_PROPERTY(QString statusText READ statusText NOTIFY statusTextChanged)
+    /** 直接渲染路径：Q_PROPERTY 绑定使 QML 可直接赋值（不依赖 Q_INVOKABLE 方法可见性） */
+    Q_PROPERTY(QObject* videoRenderer READ videoRenderer WRITE setVideoRendererQt NOTIFY videoRendererChanged)
 
 public:
     explicit WebRtcClient(QObject *parent = nullptr);
@@ -46,16 +51,45 @@ public slots:
     void disconnect();
     void sendDataChannelMessage(const QByteArray &data);
 
+    /**
+     * 注册 VideoRenderer 以启用直接渲染路径。
+     * 推荐通过 Q_PROPERTY videoRenderer 绑定替代（QML 可直接赋值）。
+     * @deprecated 推荐在 QML 中直接写：streamClient.videoRenderer = videoRenderer
+     */
+    Q_INVOKABLE void setVideoRenderer(QObject* renderer, const QString& streamName = QString());
+
+    /** videoRenderer Q_PROPERTY READ accessor（供 QML Q_PROPERTY 绑定使用） */
+    QObject* videoRenderer() const { return m_videoRenderer.data(); }
+    /** videoRenderer Q_PROPERTY WRITE accessor（QML 可直接赋值，无需方法调用可见性） */
+    void setVideoRendererQt(QObject* renderer) { setVideoRenderer(renderer, m_rendererStreamName); }
+
+    /** 诊断：返回 videoFrameReady(const QImage&, int, int, quint64) 信号的接收者数量（信号已消除 overload，4 参数版本为唯一版本） */
+    int receiverCountVideoFrameReady() const;
+    /** 诊断：返回 videoFrameReady 信号的元数据（方法索引、参数数量、参数类型名），
+     *  用于比对 QML Connections 是否按正确签名建立了连接。
+     *  返回格式："index=<idx> params=<N> sig=<完整信号签名>" */
+    QString videoFrameReadySignalMeta() const;
+
+    // ── 强制刷新机制（方案1）─────────────────────────────────────────────
+    // 根因：Qt Scene Graph 在 VehicleSelectionDialog 显示期间可能阻塞渲染线程，
+    // 导致 deliverFrame 收到帧但 updatePaintNode 不被调用。
+    // 修复：在对话框关闭时强制刷新所有 VideoRenderer。
+    /** Q_INVOKABLE：供 WebRtcStreamManager::forceRefreshAllRenderers 调用，触发关联的 VideoRenderer 强制刷新 */
+    Q_INVOKABLE void forceRefresh();
+
 signals:
     void streamUrlChanged(const QString &url);
     void connectionStatusChanged(bool connected);
     void statusTextChanged(const QString &text);
-    /** 解码后的视频帧（RTP→H.264 解码→QImage），供 VideoRenderer 显示 */
-    void videoFrameReady(const QImage &image);
-    /** 带显式尺寸的版本：解决 QImage 跨线程 QueuedConnection 到 QML 时，
-     *  QVariant 包装导致 image.width/height 方法调用返回 0/undefined 的 Qt 元对象边界问题。
-     *  QML 应优先使用此信号，image 参数仅作 setFrame 数据源。
-     *  第四参数 frameId 用于 C++ emit → QML handler 端到端追踪。 */
+    /** videoRenderer Q_PROPERTY 变更通知（QML 绑定响应式更新） */
+    void videoRendererChanged(QObject* renderer);
+    /** 解码后的视频帧（RTP→H.264 解码→QImage），供 VideoRenderer 显示。
+     *  4 参数版本（唯一版本）：显式宽高 + frameId。
+     *  显式宽高解决 QImage 跨线程 QueuedConnection 到 QML 时，QVariant 包装导致
+     *  image.width/height 方法调用返回 0/undefined 的 Qt 元对象边界问题。
+     *  frameId 用于 C++ emit → QML handler 端到端追踪。
+     *  【消除 overload】：原 1 参数版本 videoFrameReady(const QImage&) 已移除，
+     *  避免 QML Connections 信号匹配歧义。 */
     void videoFrameReady(const QImage &image, int frameWidth, int frameHeight, quint64 frameId);
     void errorOccurred(const QString &error);
 
@@ -110,6 +144,7 @@ private:
     int64_t m_answerReceivedTime = 0;   // SDP Answer 收到时刻
     int64_t m_trackReceivedTime = 0;     // onTrack(video) 收到时刻
     int64_t m_lastFrameTime = 0;         // 上次收到帧的墙上时间（毫秒）
+    int64_t m_lastRtpPacketTime = 0;     // 上次 RTP 包到达 libdatachannel 工作线程的墙上时间（毫秒）
     int32_t m_lastFrameRtpTs = 0;        // 上次收到帧的 RTP timestamp
     int m_framesSinceLastStats = 0;      // 上次统计后的帧数（用于断开时诊断）
     // ── 诊断日志增强结束 ───────────────────────────────────────────────────────
@@ -138,6 +173,10 @@ private:
 #if defined(ENABLE_WEBRTC_LIBDATACHANNEL) && defined(ENABLE_FFMPEG)
     H264Decoder *m_h264Decoder = nullptr;
 #endif
+    /** ★★★ 核心修复：直接渲染器引用（绕过 QML Connections 信号层）★★★ */
+    QPointer<QQuickItem> m_videoRenderer;
+    /** m_videoRenderer 的流名称（cam_front/rear/left/right），用于日志追踪 */
+    QString m_rendererStreamName;
 };
 
 #endif // WEBRTCCLIENT_H

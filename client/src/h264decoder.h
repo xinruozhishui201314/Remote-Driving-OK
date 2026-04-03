@@ -23,6 +23,9 @@ public:
     void feedRtp(const uint8_t *data, size_t len);
     void reset();
 
+    /** 诊断：返回 frameReady(const QImage&, quint64) 信号的接收者数量 */
+    int receiverCountFrameReady() const { return receivers(SIGNAL(frameReady(const QImage&, quint64))); }
+
 signals:
     void frameReady(const QImage &image, quint64 frameId);
 
@@ -111,6 +114,8 @@ private:
     int m_lastStatSeqNum = 0;           // 上次统计时的 RTP seq（用于算丢包率）
     static const int kStatsIntervalMs = 1000; // 1s 统计一次
     // ── 诊断日志增强结束 ───────────────────────────────────────────────────
+    /** feedRtp 进入时刻（毫秒），用于与 RTP arrival 时间对比测量 libdatachannel→主线程延迟 */
+    int64_t m_lastFeedRtpTime = 0;
 };
 
 #endif

@@ -21,16 +21,62 @@ VideoSGNode::~VideoSGNode() = default;
 
 void VideoSGNode::updateGeometry(const QRectF& rect, bool mirrorH)
 {
+    // ── ★★★ 增强诊断：updateGeometry 入口追踪 ★★★ ──────────────────────
+    static int s_callSeq = 0;
+    static int64_t s_lastCallTime = 0;
+    const int callId = ++s_callSeq;
+    const int64_t nowMs = QDateTime::currentMSecsSinceEpoch();
+    const int64_t elapsed = s_lastCallTime > 0 ? (nowMs - s_lastCallTime) : -1;
+    s_lastCallTime = nowMs;
+    
     const float x0 = static_cast<float>(rect.left());
     const float y0 = static_cast<float>(rect.top());
     const float x1 = static_cast<float>(rect.right());
     const float y1 = static_cast<float>(rect.bottom());
+    const float w = x1 - x0;
+    const float h = y1 - y0;
 
     float u0 = 0.0f, u1 = 1.0f;
     if (mirrorH) std::swap(u0, u1);
 
-    // 与 defaultAttributes_TexturedPoint2D 一致：每顶点 4 个 float（x, y, tx, ty）
+    // ── ★★★ 诊断：检查 vertexData() 返回值 ★★★ ──────────────────────────
+    // 这是崩溃的关键检查点！vertexData() 可能返回 nullptr
     float* v = static_cast<float*>(m_geometry.vertexData());
+    if (callId <= 10 || !v) {
+        qInfo() << "[VideoSGNode] ★★★ updateGeometry ENTER ★★★"
+                << " callId=" << callId
+                << " rect=" << x0 << "," << y0 << " → " << x1 << "," << y1
+                << " size=" << w << "x" << h
+                << " mirrorH=" << mirrorH
+                << " u0=" << u0 << " u1=" << u1
+                << " vertexData=" << (void*)v
+                << " m_ready=" << m_ready
+                << " elapsedSinceLast=" << elapsed << "ms"
+                << " ★ vertexData=nullptr 将导致崩溃！";
+    }
+    
+    if (!v) {
+        qCritical() << "[VideoSGNode][FATAL] ★★★ vertexData() 返回 nullptr！★★★"
+                    << " callId=" << callId
+                    << " m_geometry.vertexCount=" << m_geometry.vertexCount()
+                    << " m_geometry.attributeCount=" << m_geometry.attributeCount()
+                    << " m_geometry.drawingMode=" << m_geometry.drawingMode()
+                    << " ★ 这可能导致崩溃！检查构造函数是否正确初始化 m_geometry";
+        // 安全返回，不访问空指针
+        return;
+    }
+    
+    // ── 诊断：纹理平面内存状态 ──────────────────────────────────────────────
+    if (callId <= 10) {
+        qInfo() << "[VideoSGNode] ★★★ updateGeometry 纹理状态 ★★★"
+                << " callId=" << callId
+                << " m_interop=" << (void*)m_interop
+                << " m_material=" << (void*)m_material
+                << " m_materialType=" << (m_material ? m_material->type() : nullptr)
+                << " ★ 对比 VideoMaterial 创建日志确认材质已正确初始化";
+    }
+
+    // 与 defaultAttributes_TexturedPoint2D 一致：每顶点 4 个 float（x, y, tx, ty）
     const float verts[] = {
         x0, y0, u0, 0.0f,
         x1, y0, u1, 0.0f,
@@ -41,11 +87,32 @@ void VideoSGNode::updateGeometry(const QRectF& rect, bool mirrorH)
 
     // 2 triangles: (0,1,2) and (1,3,2)
     quint16* idx = m_geometry.indexDataAsUShort();
-    idx[0] = 0; idx[1] = 1; idx[2] = 2;
-    idx[3] = 1; idx[4] = 3; idx[5] = 2;
+    
+    // ── ★★★ 诊断：indexData() 返回值检查 ★★★ ────────────────────────────
+    if (callId <= 10 || !idx) {
+        qInfo() << "[VideoSGNode] ★★★ updateGeometry index 检查 ★★★"
+                << " callId=" << callId
+                << " indexData=" << (void*)idx
+                << " ★ indexData=nullptr 可能导致渲染失败";
+    }
+    
+    if (idx) {
+        idx[0] = 0; idx[1] = 1; idx[2] = 2;
+        idx[3] = 1; idx[4] = 3; idx[5] = 2;
+    }
 
     markDirty(QSGNode::DirtyGeometry);
     m_ready = true;
+    
+    // ── ★★★ 诊断：updateGeometry 完成确认 ★★★ ───────────────────────────
+    if (callId <= 10) {
+        qInfo() << "[VideoSGNode] ★★★ updateGeometry EXIT ★★★"
+                << " callId=" << callId
+                << " verticesWritten=" << sizeof(verts)/sizeof(float)
+                << " indicesWritten=6"
+                << " m_ready=" << m_ready
+                << " ★ 顶点数据已写入，若渲染仍失败 → 检查材质或着色器";
+    }
 }
 
 void VideoSGNode::updateFrame(const VideoFrame& frame)

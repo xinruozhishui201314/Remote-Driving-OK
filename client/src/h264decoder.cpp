@@ -253,16 +253,22 @@ bool H264Decoder::handleParameterSet(const uint8_t *nal, size_t nalLen)
 // ============================================================================
 void H264Decoder::feedRtp(const uint8_t *data, size_t len)
 {
+    // ── ★★★ 端到端追踪：feedRtp 进入（主线程） ★★★ ────────────────────────
+    const int64_t feedRtpEnterTime = QDateTime::currentMSecsSinceEpoch();
+    m_lastFeedRtpTime = feedRtpEnterTime;
+
     if (len <= kRtpHeaderMinLen) {
         qWarning() << "[H264][feedRtp] RTP 包太短，忽略 len=" << len;
         return;
     }
 
     quint16 seq = rtpSeqNum(data);
+    quint32 ts  = rtpTimestamp(data);
+    bool    marker = rtpMarkerBit(data);
 
     try {
         // ── 诊断：每秒帧统计（feedRtp 是最高频入口，每包都检查一次）────────────
-        const int64_t now = QDateTime::currentMSecsSinceEpoch();
+        const int64_t now = feedRtpEnterTime;
         if (m_statsWindowStart == 0) m_statsWindowStart = now;
         ++m_statsPacketsInWindow;
         if (now - m_statsWindowStart >= kStatsIntervalMs) {
@@ -272,7 +278,9 @@ void H264Decoder::feedRtp(const uint8_t *data, size_t len)
             double lossRate = (totalPackets > 0) ? (100.0 * lostPackets / totalPackets) : 0.0;
             int droppedInWindow = m_droppedPFrameCount - m_statsDroppedInWindow;
             double fps = static_cast<double>(m_statsFramesInWindow) * 1000.0 / (now - m_statsWindowStart);
-            qInfo() << "[H264][Stats] fps=" << fps
+            // ── ★★★ 端到端追踪：每秒 Stats 统计 ★★★ ─────────────────────────
+            qInfo() << "[H264][Stats] ★★★ 帧统计(每秒) stream=" << m_streamTag << " ★★★"
+                     << " fps=" << fps
                      << " emitted=" << m_statsFramesInWindow
                      << " droppedBeforeIdr=" << droppedInWindow
                      << " rtpPackets=" << m_statsPacketsInWindow
@@ -281,7 +289,8 @@ void H264Decoder::feedRtp(const uint8_t *data, size_t len)
                      << " duration=" << (now - m_statsWindowStart) << "ms"
                      << " bufSize=" << m_rtpBuffer.size()
                      << " needKeyframe=" << m_needKeyframe
-                     << " codecOpen=" << m_codecOpen;
+                     << " codecOpen=" << m_codecOpen
+                     << " totalProcessed=" << m_rtpPacketsProcessed;
             // 重置窗口
             m_statsWindowStart = now;
             m_statsFramesInWindow = 0;
@@ -293,13 +302,26 @@ void H264Decoder::feedRtp(const uint8_t *data, size_t len)
         if (!m_rtpSeqInitialized) {
             m_rtpNextExpectedSeq = seq;
             m_rtpSeqInitialized = true;
-            qDebug() << "[H264][feedRtp] RTP 序列初始化: firstSeq=" << seq;
+            qInfo() << "[H264][feedRtp] ★★★ RTP 序列初始化 ★★★ stream=" << m_streamTag << " firstSeq=" << seq
+                     << " ts=" << ts << " marker=" << marker;
         }
 
         if (seq == m_rtpNextExpectedSeq) {
             // ★ 关键修复：先处理当前包，再排空缓冲
             // 旧逻辑错误：先 drainRtpBuffer()，导致缓冲包比当前包晚一帧处理
             m_rtpNextExpectedSeq = static_cast<quint16>(seq + 1);
+            // ── ★★★ 端到端追踪：RTP 包 seq 进入解码器 ★★★ ───────────────────────
+            static QHash<QString, int> s_pktCountPerStream;
+            const QString tag = m_streamTag.isEmpty() ? "unknown" : m_streamTag;
+            ++s_pktCountPerStream[tag];
+            if (s_pktCountPerStream[tag] <= 20) {
+                qInfo() << "[H264][feedRtp] ★ RTP包seq=" << seq
+                         << " → 解码器 stream=" << tag
+                         << " pktCount=" << s_pktCountPerStream[tag]
+                         << " ts=" << ts
+                         << " marker=" << marker
+                         << " payloadLen=" << (len - kRtpHeaderMinLen);
+            }
             processRtpPacket(data, len);
             drainRtpBuffer();  // 排空已收到的连续包
             return;
@@ -320,8 +342,14 @@ void H264Decoder::feedRtp(const uint8_t *data, size_t len)
             }
             m_rtpBuffer[seq] = QByteArray(reinterpret_cast<const char*>(data),
                                               static_cast<int>(len));
-            if (m_rtpBuffer.size() <= 3) {
-                // 仅前几个记录日志，避免刷屏
+            // ── 诊断：乱序包进入缓冲 ─────────────────────────────────────────────
+            static QHash<QString, int> s_outOfOrderCount;
+            const QString tag2 = m_streamTag.isEmpty() ? "unknown" : m_streamTag;
+            int ooCount = ++s_outOfOrderCount[tag2];
+            if (ooCount <= 10) {
+                qInfo() << "[H264][feedRtp] 乱序包缓冲 stream=" << tag2
+                         << " seq=" << seq << " expected=" << m_rtpNextExpectedSeq << " diff=" << diff
+                         << " bufSize=" << m_rtpBuffer.size() << " ooCount=" << ooCount;
             }
             return;
         }
@@ -489,10 +517,28 @@ void H264Decoder::processRtpPayload(quint16 rtpSeq, quint32 rtpTs, bool marker,
             if (end && m_fuStarted) {
                 const uint8_t *nal = reinterpret_cast<const uint8_t*>(m_fuBuffer.constData());
                 size_t nalLen = m_fuBuffer.size();
+                // ── ★★★ 端到端追踪：FU-A 组装完成，准备送入帧缓冲 ★★★ ──────────────
+                static QSet<QString> s_loggedFuStreams;
+                if (!s_loggedFuStreams.contains(m_streamTag)) {
+                    s_loggedFuStreams.insert(m_streamTag);
+                    qInfo() << "[H264][" << m_streamTag << "] FU-A 组装完成"
+                             << " fuNalType=" << fuNalType << " nalLen=" << nalLen
+                             << " ts=" << rtpTs << " marker=" << marker
+                             << " ★ 对比 emitDecoded frameId 确认 FU-A→帧缓冲链路";
+                }
                 try {
                     bool handled = handleParameterSet(nal, nalLen);
                     if (!handled) {
+                        // ── ★★★ 端到端追踪：NAL 送入帧缓冲 ★★★ ──────────────────────
                         appendNalToFrame(rtpTs, nal, nalLen, marker);
+                    } else {
+                        // ── SPS/PPS 参数集，跳过帧缓冲 ────────────────────────────────────
+                        static QSet<QString> s_loggedSpsPps;
+                        if (!s_loggedSpsPps.contains(m_streamTag)) {
+                            s_loggedSpsPps.insert(m_streamTag);
+                            qInfo() << "[H264][" << m_streamTag << "] SPS/PPS 已处理，FU-A type=" << fuNalType
+                                     << " ★ 对比 emitDecoded 确认解码器参数就绪";
+                        }
                     }
                 } catch (const std::exception& e) {
                     qCritical() << "[H264][payload][ERROR] handleParameterSet 异常 rtpSeq=" << rtpSeq
@@ -719,6 +765,32 @@ void H264Decoder::flushPendingFrame()
 
 void H264Decoder::decodeCompleteFrame(const std::vector<QByteArray> &nalUnits)
 {
+    // ── ★★★ 端到端追踪：decodeCompleteFrame 进入 ★★★ ───────────────────────
+    const int64_t funcEnterTime = QDateTime::currentMSecsSinceEpoch();
+    const int64_t feedRtpToDecodeMs = (m_lastFeedRtpTime > 0) ? (funcEnterTime - m_lastFeedRtpTime) : -1;
+    m_logSendCount++;
+    if (m_logSendCount <= 10) {
+        // 先计算 slice 信息
+        int sliceCount = 0, idrCount = 0;
+        for (const auto &nal : nalUnits) {
+            if (nal.isEmpty()) continue;
+            int t = static_cast<uint8_t>(nal[0]) & 0x1f;
+            if (t == 1) sliceCount++;
+            if (t == 5) { sliceCount++; idrCount++; }
+        }
+        size_t totalBytes = 0;
+        for (const auto &nal : nalUnits) { if (!nal.isEmpty()) totalBytes += 4 + nal.size(); }
+        qInfo() << "[H264][decode] ★★★ decodeCompleteFrame ENTER ★★★ stream=" << m_streamTag
+                 << " frame#=" << m_logSendCount
+                 << " slices=" << sliceCount << "(IDR=" << idrCount << ")"
+                 << " totalBytes=" << totalBytes
+                 << " rtpSeq=" << m_lastRtpSeq
+                 << " feedRtpToDecodeMs=" << feedRtpToDecodeMs
+                 << " needKeyframe=" << m_needKeyframe
+                 << " codecOpen=" << m_codecOpen
+                 << "（>100ms=主线程阻塞，<50ms=正常）";
+    }
+
     try {
         if (!ensureDecoder()) {
             qWarning() << "[H264][decode] ensureDecoder 失败，丢弃帧";
@@ -747,14 +819,7 @@ void H264Decoder::decodeCompleteFrame(const std::vector<QByteArray> &nalUnits)
             annexB.append(nal);
         }
 
-        m_logSendCount++;
-        if (m_logSendCount <= 10)
-            qDebug() << "[H264] 送完整帧 #" << m_logSendCount
-                     << " slices=" << sliceCount << "(IDR=" << idrCount << ")"
-                     << " totalBytes=" << annexB.size()
-                     << " rtpSeq=" << m_lastRtpSeq
-                     << " needKeyframe=" << m_needKeyframe
-                     << " codecOpen=" << m_codecOpen;
+        // m_logSendCount 已在函数入口递增，NAL/slice 信息已打印
 
         // ★ 创建并发送 AVPacket
         AVPacket *pkt = av_packet_alloc();
@@ -809,6 +874,13 @@ void H264Decoder::decodeCompleteFrame(const std::vector<QByteArray> &nalUnits)
 
 void H264Decoder::emitDecodedFrames()
 {
+    // ── ★★★ 端到端追踪：emitDecodedFrames 进入 ★★★ ───────────────────────
+    const int64_t funcEnterTime = QDateTime::currentMSecsSinceEpoch();
+    const int64_t feedRtpToEmitMs = (m_lastFeedRtpTime > 0) ? (funcEnterTime - m_lastFeedRtpTime) : -1;
+    qInfo() << "[H264][emit] ★★★ emitDecodedFrames ENTER ★★★ stream=" << m_streamTag
+             << " feedRtpToEmitMs=" << feedRtpToEmitMs
+             << "（从 RTP 包到解码输出的端到端耗时，>200ms 说明主线程阻塞或解码卡顿）";
+
     AVFrame *frame = av_frame_alloc();
     if (!frame) {
         qCritical() << "[H264][" << m_streamTag << "] av_frame_alloc 失败!";
@@ -905,8 +977,10 @@ void H264Decoder::emitDecodedFrames()
                            << " w=" << w << " h=" << h << "，帧可能损坏但继续使用";
             }
 
-            // ★★★ 关键诊断：H264Decoder 输出帧（emit frameReady → WebRtcClient::onVideoFrameFromDecoder）★★★
-            // ★★★ 如果此日志不出现 → RTP→H264 解码链路断，检查 RTP 统计和 SPS/PPS ★★★
+            // ── ★★★ 端到端追踪：色彩转换完成，QImage 帧数据就绪 ★★★ ─────────────
+            // 此处 m_frameBuffer 已是完整 RGB888 QImage，可送入 Qt 信号系统
+            // 记录这一刻的时间戳，用于计算 解码→QML 的端到端延迟
+            const int64_t colorConvertDoneTime = QDateTime::currentMSecsSinceEpoch();
             m_framesEmitted++;
             m_statsFramesInWindow++;
             framesOut++;
@@ -918,13 +992,23 @@ void H264Decoder::emitDecodedFrames()
                          << " w=" << w << " h=" << h
                          << " rtpSeq=" << m_lastRtpSeq
                          << " codecOpen=" << m_codecOpen
-                         << " ★ 对比 onVideoFrameFromDecoder 日志 frameId 确认解码→emit 链路";
+                         << " colorConvertDoneMs=" << colorConvertDoneTime
+                         << " ★ 对比 onVideoFrameFromDecoder frameId=" << m_frameIdCounter << " 确认解码→emit 链路";
             }
 
             try {
-                emit frameReady(m_frameBuffer, m_frameIdCounter);  // QueuedConnection 复制引用计数（O(1)）
+                // ── ★★★ 端到端追踪：发出 frameReady 信号（进入 Qt 事件队列）★★★ ─────────
+                // 注意：QueuedConnection 下，emit 立即返回，实际 handler 在主线程事件循环中执行
+                // frameId 必须与 onVideoFrameFromDecoder 中的 frameId 一致
+                emit frameReady(m_frameBuffer, m_frameIdCounter);
+                // ★★★ 如果此日志不出现但 emitDecoded 日志出现 → QueuedConnection 失效 ★★★
                 if (m_framesEmitted <= 5) {
-                    qInfo() << "[H264][" << m_streamTag << "] ★★★ emit frameReady 完成 ★★★ frameId=" << m_frameIdCounter;
+                    int queuedConnCount = this->receivers(SIGNAL(frameReady(const QImage&, quint64)));
+                    qInfo() << "[H264][" << m_streamTag << "] ★★★ emit frameReady 完成 ★★★"
+                             << " frameId=" << m_frameIdCounter
+                             << " queuedConnections=" << queuedConnCount
+                             << " ★ queuedConnections=0 → WebRtcClient::onVideoFrameFromDecoder 未连接到 frameReady 信号！"
+                             << " queuedConnections>0 → 链路完整，对比 onVideoFrameFromDecoder frameId 确认";
                 }
             } catch (const std::exception& e) {
                 qCritical() << "[H264][" << m_streamTag << "][ERROR] emit frameReady 异常:" << e.what();
