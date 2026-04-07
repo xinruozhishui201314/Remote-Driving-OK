@@ -140,6 +140,53 @@ ApplicationWindow {
         Behavior on opacity { NumberAnimation { duration: 300 } }
     }
 
+    // ── 方案 C：渲染线程直接刷新 ──────────────────────────────────────────
+    // VehicleSelectionDialog 打开期间主线程被阻塞，window()->update() 的 UpdateRequest
+    // 堆积在主线程队列中无法处理，导致 Scene Graph 停止调用 updatePaintNode。
+    // 解决方案：
+    // 1. 对话框打开时立即调用 forceRefreshAllRenderers()，触发方案 C 的渲染线程直接刷新
+    //    （QMetaMethod::invoke + Qt::QueuedConnection → 投递到渲染线程事件队列 → 绕过主线程阻塞）
+    // 2. 对话框打开期间每 16ms 持续调用（轮询），确保渲染线程持续被驱动
+    // 3. 对话框关闭后再调用一次 forceRefreshAllRenderers()，作为最后兜底
+
+    // 跟踪对话框打开状态（必须在 VehicleSelectionDialog 之前定义，避免 forward-reference）
+    QtObject {
+        id: dialogState
+        property bool isOpen: false
+    }
+
+    // 对话框打开时，立即触发渲染线程直接刷新
+    Timer {
+        id: dialogOpenRefreshTimer
+        interval: 50  // 50ms 后触发（确保对话框已开始显示）
+        repeat: false
+        onTriggered: {
+            var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
+            if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
+                console.log("[Client][UI] ★★★ VehicleSelectionDialog opened（50ms后）→ 调用 forceRefreshAllRenderers ★★★")
+                wsm.forceRefreshAllRenderers()
+            }
+        }
+    }
+
+    // 对话框打开期间，每 16ms 持续调用 forceRefreshAllRenderers()
+    // 这是方案 C 的核心：在主线程被阻塞的情况下，持续向渲染线程投递刷新请求
+    // running = dialogState.isOpen（跟踪对话框状态，不直接引用 vehicleSelectionDialog.visible）
+    Timer {
+        id: dialogOpenPollingTimer
+        interval: 16  // ~60fps，持续驱动渲染线程
+        repeat: true
+        running: dialogState.isOpen
+        onTriggered: {
+            // 双重检查：对话框必须真的打开才刷新
+            if (!dialogState.isOpen) return
+            var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
+            if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
+                wsm.forceRefreshAllRenderers()
+            }
+        }
+    }
+
     // 车辆选择对话框（保持弹窗形式）
     VehicleSelectionDialog {
         id: vehicleSelectionDialog
@@ -149,19 +196,30 @@ ApplicationWindow {
         }
         
         onOpened: {
-            console.log("VehicleSelectionDialog opened")
+            dialogState.isOpen = true
+            console.log("[Client][UI] ★★★ VehicleSelectionDialog opened ★★★ modal=" + modal + " isOpen=" + dialogState.isOpen)
+            // 立即触发一次渲染线程直接刷新
+            var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
+            if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
+                console.log("[Client][UI] ★★★ VehicleSelectionDialog opened（立即）→ 调用 forceRefreshAllRenderers ★★★")
+                wsm.forceRefreshAllRenderers()
+            }
+            // 50ms 后再触发一次（确保对话框已完成初始化动画）
+            dialogOpenRefreshTimer.restart()
         }
         
         onClosed: {
-            console.log("VehicleSelectionDialog closed")
-            // ── 方案1：强制刷新机制 ────────────────────────────────────────────
-            // 根因：Qt Scene Graph 在 VehicleSelectionDialog 显示期间可能阻塞渲染线程，
-            // 导致 deliverFrame 收到帧但 updatePaintNode 不被调用。
-            // 修复：在对话框关闭时强制刷新所有 VideoRenderer。
+            dialogState.isOpen = false
+            console.log("[Client][UI] ★★★ VehicleSelectionDialog closed ★★★")
+            // ── 方案 C：对话框关闭后，立即调用 forceRefreshAllRenderers ────────
+            // 对话框关闭后，主线程恢复，UpdateRequest 开始被处理。
+            // 此时立即触发渲染线程直接刷新，确保 updatePaintNode 尽快被调用。
+            // 注意：dialogOpenPollingTimer.running 会在 isOpen=false 时自动变为 false，
+            // 所以不需要手动停止它。
             Qt.callLater(function() {
                 var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
                 if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
-                    console.log("[Client][UI] ★★★ VehicleSelectionDialog closed → 调用 forceRefreshAllRenderers ★★★")
+                    console.log("[Client][UI] ★★★ VehicleSelectionDialog closed → componentsReady=true → 调用 forceRefreshAllRenderers ★★★")
                     wsm.forceRefreshAllRenderers()
                 } else {
                     console.warn("[Client][UI] forceRefreshAllRenderers 不可用，渲染可能仍有问题")

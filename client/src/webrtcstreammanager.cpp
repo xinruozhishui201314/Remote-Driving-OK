@@ -227,17 +227,24 @@ void WebRtcStreamManager::dumpStreamInfo() const
 
 void WebRtcStreamManager::forceRefreshAllRenderers()
 {
-    // ── 强制刷新机制（方案1）─────────────────────────────────────────────
-    // 根因：Qt Scene Graph 在 VehicleSelectionDialog 显示期间可能阻塞渲染线程，
-    // 导致 deliverFrame 收到帧但 updatePaintNode 不被调用。
-    // 修复：在对话框关闭时强制刷新所有 VideoRenderer。
-    // 实现：通过 WebRtcClient::forceRefresh() 方法访问其关联的 VideoRenderer，
-    // 然后调用 VideoRenderer::forceRefresh()。
+    // ── 方案 C：渲染线程直接刷新 ──────────────────────────────────────
+    // 根因：Qt Scene Graph 在 VehicleSelectionDialog modal=true 显示期间
+    // 完全阻塞主事件循环，导致 window()->update() 投递的 QEvent::UpdateRequest
+    // 堆积在主线程队列中无法处理，Scene Graph 停止调用 updatePaintNode。
+    //
+    // 修复：VideoRenderer::forceRefresh() 使用 QMetaMethod::invoke + Qt::QueuedConnection
+    // 向渲染线程事件队列直接投递刷新请求，绕过主线程阻塞。
+    // 对话框打开期间每 16ms 持续调用（dialogOpenPollingTimer），持续驱动渲染线程。
     const int64_t now = QDateTime::currentMSecsSinceEpoch();
+    static QAtomicInt s_callCount{0};
+    const int callSeq = ++s_callCount;
     qInfo() << "[StreamManager] ★★★ forceRefreshAllRenderers 被调用 ★★★"
+            << " callSeq=" << callSeq
             << " now=" << now
             << " front=" << (void*)m_front << " rear=" << (void*)m_rear
-            << " left=" << (void*)m_left << " right=" << (void*)m_right;
+            << " left=" << (void*)m_left << " right=" << (void*)m_right
+            << " callingThread=" << (void*)QThread::currentThreadId()
+            << " ★ 方案C：向渲染线程直接投递刷新请求 ★";
 
     // 遍历四路 WebRtcClient，调用其 forceRefresh 方法
     auto refreshClient = [&](const char* name, WebRtcClient* client) {
@@ -261,7 +268,9 @@ void WebRtcStreamManager::forceRefreshAllRenderers()
     refreshClient("right", m_right);
 
     const int64_t doneTime = QDateTime::currentMSecsSinceEpoch();
-    qInfo() << "[StreamManager] forceRefreshAllRenderers 完成，耗时=" << (doneTime - now) << "ms";
+    qInfo() << "[StreamManager] forceRefreshAllRenderers 完成，耗时=" << (doneTime - now) << "ms"
+            << " callSeq=" << callSeq
+            << " ★★★ 对比 updatePaintNode 日志确认渲染线程是否被唤醒 ★★★";
 }
 
 bool WebRtcStreamManager::anyConnected() const

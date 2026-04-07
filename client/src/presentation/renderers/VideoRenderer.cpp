@@ -2,16 +2,22 @@
 #include "VideoSGNode.h"
 #include "../../infrastructure/media/gpu/GpuInteropFactory.h"
 #include <QQuickWindow>
+#include <QQuickRenderControl>
 #include <QDebug>
 #include <QDateTime>
 #include <QOpenGLContext>
 #include <QThread>
 #include <QSGGeometry>
 #include <QSGFlatColorMaterial>
+#include <QMetaMethod>
+#include <QCoreApplication>
 #include <algorithm>
 #include <cstring>
 #include <memory>
 #include <vector>
+
+// ── 静态诊断计数器（全局，用于识别哪个 VideoRenderer 首次创建）─────────────
+static QAtomicInt s_videoRendererInstanceCount{0};
 
 namespace {
 
@@ -29,7 +35,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
     static QAtomicInt s_failExceptionCount{0};
     const int callSeq = ++s_totalCount;
 
-    // ── 1. 输入有效性检查 ────────────────────────────────────────────────────
     if (srcIn.isNull()) {
         const int cnt = ++s_failNullCount;
         if (cnt <= 3) {
@@ -43,7 +48,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
     const int srcH = srcIn.height();
     const int srcFmt = static_cast<int>(srcIn.format());
 
-    // ── 2. 尺寸有效性检查 ────────────────────────────────────────────────────
     if (srcW <= 0 || srcH <= 0) {
         const int cnt = ++s_failSizeCount;
         if (cnt <= 3) {
@@ -54,7 +58,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
         return nullptr;
     }
 
-    // ── 3. 超大分辨率检查（防止内存爆炸）─────────────────────────────────────
     if (srcW > 7680 || srcH > 4320) {
         const int cnt = ++s_failOverflowCount;
         if (cnt <= 3) {
@@ -65,14 +68,11 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
         return nullptr;
     }
 
-    // ── 4. 格式转换（关键：处理各种 QImage 格式）─────────────────────────────
     QImage src;
     try {
-        // 如果已经是 RGB888，直接使用；否则转换
         if (srcIn.format() == QImage::Format_RGB888) {
             src = srcIn;
         } else if (srcIn.format() == QImage::Format_Grayscale8) {
-            // Grayscale8 转换为 RGB888
             src = srcIn.convertToFormat(QImage::Format_RGB888);
             if (src.isNull()) {
                 const int cnt = ++s_failConvertCount;
@@ -88,7 +88,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
                          << " call#=" << callSeq << " srcFmt=" << srcFmt << " newFmt=" << static_cast<int>(src.format());
             }
         } else {
-            // 其他格式统一转换为 RGB888
             src = srcIn.convertToFormat(QImage::Format_RGB888);
             if (src.isNull()) {
                 const int cnt = ++s_failConvertCount;
@@ -125,7 +124,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
     const int w = src.width();
     const int h = src.height();
 
-    // ── 5. 转换后尺寸有效性检查 ──────────────────────────────────────────────
     if (w <= 0 || h <= 0) {
         const int cnt = ++s_failSizeCount;
         if (cnt <= 3) {
@@ -139,7 +137,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
     const int cw = (w + 1) / 2;
     const int ch = (h + 1) / 2;
 
-    // ── 6. YUV 缓冲区分配 ────────────────────────────────────────────────────
     std::shared_ptr<std::vector<uint8_t>> yData, uData, vData;
     try {
         yData = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(w * h));
@@ -165,7 +162,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
         return nullptr;
     }
 
-    // ── 7. 图像数据指针检查 ─────────────────────────────────────────────────
     const int bpl = src.bytesPerLine();
     const uchar* bits = src.constBits();
     if (!bits) {
@@ -187,9 +183,7 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
         return nullptr;
     }
 
-    // ── 8. RGB → YUV420 转换 ────────────────────────────────────────────────
     try {
-        // Y 平面转换（逐像素）
         for (int y = 0; y < h; ++y) {
             const uchar* row = bits + y * bpl;
             for (int x = 0; x < w; ++x) {
@@ -201,7 +195,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
             }
         }
 
-        // U/V 平面转换（2x2 块平均）
         for (int by = 0; by < ch; ++by) {
             for (int bx = 0; bx < cw; ++bx) {
                 int rSum = 0, gSum = 0, bSum = 0, cnt = 0;
@@ -245,7 +238,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
         return nullptr;
     }
 
-    // ── 9. 构建 VideoFrame ──────────────────────────────────────────────────
     std::shared_ptr<VideoFrame> frame;
     try {
         frame = std::make_shared<VideoFrame>();
@@ -268,7 +260,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
         frame->planes[2].stride = static_cast<uint32_t>(cw);
         frame->planes[2].size   = static_cast<uint32_t>(vData->size());
 
-        // 保持 YUV 数据引用，避免提前释放
         struct YuvHold {
             std::shared_ptr<std::vector<uint8_t>> y;
             std::shared_ptr<std::vector<uint8_t>> u;
@@ -280,7 +271,6 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
         hold->v = std::move(vData);
         frame->poolRef = std::shared_ptr<void>(hold.get(), [hold](void*) { (void)hold; });
 
-        // ── 10. 成功日志 ─────────────────────────────────────────────────────
         ++s_successCount;
         if (callSeq <= 5) {
             qInfo() << "[Client][VideoRenderer][qImageToYuv420] ★ 转换成功"
@@ -306,17 +296,87 @@ std::shared_ptr<VideoFrame> qImageToYuv420Frame(const QImage& srcIn)
 
 } // namespace
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 辅助函数：创建黑色占位符 Placeholder Node
+// ═══════════════════════════════════════════════════════════════════════════════
+static QSGGeometryNode* createPlaceholderNode() {
+    QSGGeometryNode* node = new QSGGeometryNode();
+    QSGGeometry* geo = new QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 4, 6);
+    geo->setDrawingMode(QSGGeometry::DrawTriangles);
+
+    auto* vertices = geo->vertexDataAsPoint2D();
+    vertices[0].x = 0.0f; vertices[0].y = 0.0f;
+    vertices[1].x = 1.0f; vertices[1].y = 0.0f;
+    vertices[2].x = 0.0f; vertices[2].y = 1.0f;
+    vertices[3].x = 1.0f; vertices[3].y = 1.0f;
+
+    quint16 indices[] = { 0, 1, 2, 1, 3, 2 };
+    memcpy(geo->indexData(), indices, sizeof(indices));
+
+    node->setGeometry(geo);
+
+    QSGFlatColorMaterial* mat = new QSGFlatColorMaterial();
+    mat->setColor(Qt::black);
+    node->setMaterial(mat);
+
+    node->setFlag(QSGNode::OwnedByParent, false);
+    return node;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// 辅助函数：更新 Placeholder Node 几何信息
+// ═══════════════════════════════════════════════════════════════════════════════
+static void updatePlaceholderGeometry(QSGGeometryNode* node, const QRectF& rect) {
+    if (!node) return;
+
+    QSGGeometry* geo = node->geometry();
+    if (!geo) return;
+
+    auto* vertices = geo->vertexDataAsPoint2D();
+    vertices[0].x = rect.left();   vertices[0].y = rect.top();
+    vertices[1].x = rect.right();  vertices[1].y = rect.top();
+    vertices[2].x = rect.left();   vertices[2].y = rect.bottom();
+    vertices[3].x = rect.right();  vertices[3].y = rect.bottom();
+
+    node->markDirty(QSGNode::DirtyGeometry);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VideoRenderer 构造函数
+// ═══════════════════════════════════════════════════════════════════════════════
 VideoRenderer::VideoRenderer(QQuickItem* parent)
     : QQuickItem(parent)
+    , m_pollingTimer(nullptr)
+    , m_pendingFrameDetected(false)
+    , m_lastPollTime(0)
 {
     setFlag(ItemHasContents, true);
     m_fpsWindowStart = TimeUtils::wallClockMs();
-    m_lastPaintNodeTime.store(m_fpsWindowStart);  // 初始化渲染线程心跳时间
-    qInfo() << "[Client][VideoRenderer] created at timestamp=" << m_fpsWindowStart;
+    m_lastPaintNodeTime.store(m_fpsWindowStart);
+
+    const int instanceId = ++s_videoRendererInstanceCount;
+    setProperty("instanceId", instanceId);
+
+    qInfo() << "[Client][VideoRenderer] created"
+            << " instanceId=" << instanceId
+            << " title=" << property("title").toString()
+            << " timestamp=" << m_fpsWindowStart
+            << " thread=" << (void*)QThread::currentThreadId();
 }
 
-VideoRenderer::~VideoRenderer() = default;
+VideoRenderer::~VideoRenderer()
+{
+    stopPollingTimer();
+    qInfo() << "[Client][VideoRenderer] destroyed"
+            << " instanceId=" << property("instanceId").toInt()
+            << " title=" << property("title").toString()
+            << " ★★★ updatePaintNode 总调用次数 ★★★ instanceId=" << property("instanceId").toInt()
+            << " m_updatePaintNodeSeq=" << m_updatePaintNodeSeq;
+}
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// setFrame：QML → C++ 跨语言调用入口
+// ═══════════════════════════════════════════════════════════════════════════════
 void VideoRenderer::setFrame(const QImage& image, quint64 frameId)
 {
     static QAtomicInt s_callCount{0};
@@ -324,10 +384,6 @@ void VideoRenderer::setFrame(const QImage& image, quint64 frameId)
     static QAtomicInt s_droppedCount{0};
     const int callSeq = ++s_callCount;
 
-    // ★★★ 关键诊断：确认 QML → C++ setFrame 跨语言调用是否成功 ★★★
-    // 如果此日志不出现 → QML VideoRenderer.setFrame() 未被调用，检查：
-    //   1. Connections { target: streamClient } 绑定是否生效（见 DrivingInterface.qml）
-    //   2. WebRtcClient::videoFrameReady 信号是否被 QML 接收（检查 QML console.warn）
     if (callSeq <= 10 || callSeq % 30 == 0) {
         qInfo() << "[Client][VideoRenderer] ★★★ setFrame(QML→C++) 被调用"
                 << " call#=" << callSeq
@@ -336,7 +392,8 @@ void VideoRenderer::setFrame(const QImage& image, quint64 frameId)
                 << " size=" << image.width() << "x" << image.height()
                 << " format=" << static_cast<int>(image.format())
                 << " window=" << (void*)window()
-                << " componentComplete=" << isComponentComplete();
+                << " componentComplete=" << isComponentComplete()
+                << " callingThread=" << (void*)QThread::currentThreadId();
     }
 
     try {
@@ -362,37 +419,44 @@ void VideoRenderer::setFrame(const QImage& image, quint64 frameId)
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// deliverFrame：三缓冲写入 + 触发渲染（可在任意线程调用）
+// ═══════════════════════════════════════════════════════════════════════════════
 void VideoRenderer::deliverFrame(std::shared_ptr<VideoFrame> frame, quint64 frameId)
 {
     if (!frame) return;
 
-    frame->frameId = frameId;  // 写入端到端追踪 ID
+    frame->frameId = frameId;
     m_lastFrameId = frameId;
 
-    // ★★★ 关键诊断：确认 deliverFrame 被调用 + window 有效性 + frameId 端到端追踪 ★★★
-    // 注意：deliverFrame 由 setFrame（主线程）或 MediaPipeline（解码线程）调用
-    // window()->update() 在主线程安全，因为 QQuickWindow::update() 可从任意线程调用
     static QAtomicInt s_deliverLogCount{0};
     const int logSeq = ++s_deliverLogCount;
     const int totalDeliver = ++m_totalDeliverCount;
     const int64_t now = TimeUtils::wallClockMs();
 
-    // ── 渲染线程心跳检测（增强日志）────────────────────────────────────────
-    // 检测渲染线程是否被阻塞（对话框显示期间常见）
+    // ── 渲染线程心跳检测 ─────────────────────────────────────────────────
     const int64_t msSinceLastPN = now - m_lastPaintNodeTime.load();
     const int prevPending = m_pendingFramesCount.fetch_add(1);
     const int pendingNow = prevPending + 1;
 
-    // 当 pending frames 超过阈值或距上次渲染超过阈值时，打印警告
     if (pendingNow > MAX_PENDING_FRAMES || msSinceLastPN > RENDER_STALL_TIMEOUT_MS) {
         qWarning() << "[Client][VideoRenderer][HEARTBEAT] ★★★ 渲染线程心跳异常 ★★★"
                     << " logSeq=" << logSeq << " frameId=" << frameId
                     << " pendingFrames=" << pendingNow << " (max=" << MAX_PENDING_FRAMES << ")"
                     << " msSinceLastPaint=" << msSinceLastPN << "ms (threshold=" << RENDER_STALL_TIMEOUT_MS << "ms)"
                     << " totalDeliver=" << totalDeliver
-                    << " ★ 渲染线程可能阻塞（对话框显示期间），考虑调用 forceRefresh() ★";
+                    << " m_updatePaintNodeSeq=" << m_updatePaintNodeSeq
+                    << " instanceId=" << property("instanceId").toInt()
+                    << " title=" << property("title").toString()
+                    << " callingThread=" << (void*)QThread::currentThreadId()
+                    << " ★ 渲染线程疑似被阻塞，方案C将尝试渲染线程直接刷新 ★";
         m_renderStalled.store(true);
         emit renderThreadStalled(pendingNow, msSinceLastPN);
+
+        // ── ★★★ 方案 C 核心：渲染线程直接刷新 ★★★ ───────────────────────────
+        // 当检测到渲染线程阻塞时，立即触发渲染线程直接刷新
+        // 绕过主线程事件循环（modal 对话框阻塞时 window()->update() 完全失效）
+        renderThreadRefreshImpl();
     }
 
     if (logSeq <= 10 || logSeq % 30 == 0 || msSinceLastPN > RENDER_STALL_TIMEOUT_MS) {
@@ -412,21 +476,19 @@ void VideoRenderer::deliverFrame(std::shared_ptr<VideoFrame> frame, quint64 fram
         m_slots[writeIdx].frame = std::move(frame);
         m_slots[writeIdx].dirty = true;
 
-        // 原子交换 write 和 middle
         int old = m_middleIdx.exchange(writeIdx, std::memory_order_acq_rel);
         m_writeIdx.store(old, std::memory_order_relaxed);
         m_newFrame.store(true, std::memory_order_release);
 
         // 统计 FPS
         ++m_frameCount;
-        const int64_t now = TimeUtils::wallClockMs();
-        if (now - m_fpsWindowStart >= 1000) {
-            const double fps = static_cast<double>(m_frameCount) / ((now - m_fpsWindowStart) / 1000.0);
+        const int64_t fpsNow = TimeUtils::wallClockMs();
+        if (fpsNow - m_fpsWindowStart >= 1000) {
+            const double fps = static_cast<double>(m_frameCount) / ((fpsNow - m_fpsWindowStart) / 1000.0);
             m_fps.store(fps);
             m_frameCount = 0;
-            m_fpsWindowStart = now;
+            m_fpsWindowStart = fpsNow;
             emit fpsChanged(fps);
-            // ★★★ FPS 计算成功 + window 有效性（首10帧打印） ★★★
             if (logSeq <= 10) {
                 qInfo() << "[Client][VideoRenderer] ★★★ FPS emit fps=" << fps
                            << " window=" << (void*)window() << " frameId=" << m_lastFrameId;
@@ -435,33 +497,98 @@ void VideoRenderer::deliverFrame(std::shared_ptr<VideoFrame> frame, quint64 fram
 
         // 触发渲染（线程安全）
         QQuickWindow* win = window();
-        // ── ★★★ 增强诊断：跨线程调用检测 ★★★ ────────────────────────────
-        // 检测 deliverFrame 是否从错误的线程调用
-        static Qt::HANDLE s_expectedThreadId = nullptr;
-        Qt::HANDLE currentThreadId = QThread::currentThreadId();
-        if (!s_expectedThreadId) {
-            s_expectedThreadId = currentThreadId;
-        }
-        const bool isCrossThreadCall = (currentThreadId != s_expectedThreadId);
-        if (isCrossThreadCall && logSeq <= 10) {
-            qWarning() << "[Client][VideoRenderer][THREAD] ★★★ 跨线程调用检测！★★★"
-                       << " logSeq=" << logSeq << " frameId=" << frameId
-                       << " expectedThread=" << (void*)s_expectedThreadId
-                       << " currentThread=" << (void*)currentThreadId
-                       << " ★ 跨线程调用 deliverFrame 可能导致数据竞争！";
-        }
+
+        // ── ★★★ 方案 C：优先使用渲染线程直接刷新，降级到 window()->update() ★★★
         if (win) {
-            // ── ★★★ 核心修复：polish() 强制 Scene Graph 在下次渲染周期处理此项 ★★★
-            polish();
-            win->update();
-            // ★★★ 关键诊断：window()->update() 被调用（触发 Qt 渲染线程下次调用 updatePaintNode）★★★
-            if (logSeq <= 10) {
+            // ★★★ 策略 1：渲染线程直接刷新（最优）★★★
+            // 通过 QMetaMethod::invoke + Qt::QueuedConnection 向渲染线程投递刷新
+            // 绕过主线程事件循环，modal 对话框阻塞时仍然有效
+            bool refreshed = false;
+
+            // 获取 QQuickWindow 的 polishAndUpdate 方法（Qt 内部方法）
+            // QMetaMethod::invoke 跨线程调用，自动路由到渲染线程事件队列
+            const QMetaMethod polishAndUpdateMethod = win->metaObject()->method(
+                win->metaObject()->indexOfMethod("polishAndUpdate()"));
+            if (polishAndUpdateMethod.isValid()) {
+                // Qt::QueuedConnection 确保在渲染线程的事件循环中执行
+                refreshed = polishAndUpdateMethod.invoke(win, Qt::QueuedConnection);
+                if (refreshed) {
+                    m_polishAndUpdateSucceeded.fetch_add(1);
+                    if (logSeq <= 5) {
+                        qInfo() << "[Client][VideoRenderer][方案C] ★ polishAndUpdate() 跨线程调用成功 ★"
+                                << " seq=" << logSeq << " frameId=" << frameId
+                                << " window=" << (void*)win
+                                << " callingThread=" << (void*)QThread::currentThreadId()
+                                << " winThread=" << (void*)win->thread();
+                    }
+                } else {
+                    if (logSeq <= 5) {
+                        qWarning() << "[Client][VideoRenderer][方案C] polishAndUpdate() 跨线程调用失败（返回值=false）"
+                                   << " seq=" << logSeq << " frameId=" << frameId;
+                    }
+                }
+            } else {
+                if (logSeq <= 5) {
+                    qWarning() << "[Client][VideoRenderer][方案C] polishAndUpdate() 方法未找到"
+                               << " seq=" << logSeq << " frameId=" << frameId;
+                }
+            }
+
+            // ★★★ 策略 2：QMetaMethod 直接调用窗口 update（次优）★★★
+            if (!refreshed) {
+                const QMetaMethod updateMethod = win->metaObject()->method(
+                    win->metaObject()->indexOfMethod("update()"));
+                if (updateMethod.isValid()) {
+                    refreshed = updateMethod.invoke(win, Qt::QueuedConnection);
+                    if (refreshed) {
+                        m_windowMetaMethodSucceeded.fetch_add(1);
+                        if (logSeq <= 5) {
+                            qInfo() << "[Client][VideoRenderer][方案C] ★ update() QMetaMethod 跨线程调用成功 ★"
+                                    << " seq=" << logSeq;
+                        }
+                    }
+                }
+            }
+
+            // ★★★ 策略 3：fallback polish() + update()（对话框打开时可能无效）★★★
+            if (!refreshed) {
+                polish();
+                win->update();
+                m_fallbackUpdateSucceeded.fetch_add(1);
+                if (logSeq <= 5) {
+                    qWarning() << "[Client][VideoRenderer][方案C] 使用 fallback polish()+update()"
+                               << " seq=" << logSeq << " ★ 对话框打开时可能无效 ★";
+                }
+            }
+
+            // ★★★ 额外检测：pendingFrames 持续累积时，多次触发刷新 ★★★
+            if (pendingNow > MAX_PENDING_FRAMES) {
+                m_pendingFrameDetected = true;
+                // 立即再次调用（1次额外刷新）
+                polish();
+                win->update();
+
+                static QAtomicInt s_extraRefreshCount{0};
+                const int extraCount = ++s_extraRefreshCount;
+                if (extraCount <= 20 || extraCount % 60 == 0) {
+                    qWarning() << "[Client][VideoRenderer][FORCE-REFRESH] ★★★ pendingFrames 累积过多，额外刷新 ★★★"
+                               << " seq=" << logSeq << " frameId=" << frameId
+                               << " pendingFrames=" << pendingNow
+                               << " msSinceLastPN=" << msSinceLastPN << "ms"
+                               << " isVisible=" << isVisible()
+                               << " window=" << (void*)win
+                               << " extraRefreshCount=" << extraCount
+                               << " instanceId=" << property("instanceId").toInt()
+                               << " title=" << property("title").toString()
+                               << " ★ Scene Graph 疑似跳过 updatePaintNode，额外刷新 ★";
+                }
+            }
+
+            if (logSeq <= 5) {
                 qInfo() << "[Client][VideoRenderer] ★★★ window()->update() 被调用"
                            "（触发渲染线程下次 paint），window=" << (void*)window();
             }
         } else {
-            // ★★★ 致命警告：window() 返回 nullptr！视频将完全不显示！★★★
-            // 原因：VideoRenderer QQuickItem 未加入 QML 场景图，或 Item 初始化失败
             qCritical() << "[Client][VideoRenderer][FATAL] window() 返回 nullptr！"
                           " VideoRenderer 未加入 QML 场景图，window()->update() 不会被调用，"
                           " 视频将完全不显示！window=" << (void*)window()
@@ -476,147 +603,184 @@ void VideoRenderer::deliverFrame(std::shared_ptr<VideoFrame> frame, quint64 fram
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 辅助函数：创建黑色占位符 Placeholder Node
+// renderThreadRefreshImpl：方案 C 核心，在渲染线程上下文中执行节点更新
 // ═══════════════════════════════════════════════════════════════════════════════
-// 作用：当无帧时返回黑色背景节点，防止 Qt Scene Graph 将 VideoRenderer 降级为
-// "static" 项。根因详见 VideoRenderer.h §渲染线程饥饿检测。
-// Qt 官方行为：updatePaintNode 返回 nullptr 时，Scene Graph 调度器将该 item
-// 标记为 static，后续 window()->update() 不再触发 updatePaintNode。
-static QSGGeometryNode* createPlaceholderNode() {
-    QSGGeometryNode* node = new QSGGeometryNode();
-    // 四边形：2个三角形组成矩形，使用简单2D顶点（FlatColorMaterial不需要纹理坐标）
-    QSGGeometry* geo = new QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 4, 6);
-    geo->setDrawingMode(QSGGeometry::DrawTriangles);
-    
-    auto* vertices = geo->vertexDataAsPoint2D();
-    vertices[0].x = 0.0f; vertices[0].y = 0.0f;
-    vertices[1].x = 1.0f; vertices[1].y = 0.0f;
-    vertices[2].x = 0.0f; vertices[2].y = 1.0f;
-    vertices[3].x = 1.0f; vertices[3].y = 1.0f;
-    
-    quint16 indices[] = { 0, 1, 2, 1, 3, 2 };
-    memcpy(geo->indexData(), indices, sizeof(indices));
-    
-    node->setGeometry(geo);
-    
-    // 纯色材质（黑色）
-    QSGFlatColorMaterial* mat = new QSGFlatColorMaterial();
-    mat->setColor(Qt::black);
-    node->setMaterial(mat);
-    
-    node->setFlag(QSGNode::OwnedByParent, false);
-    return node;
+void VideoRenderer::renderThreadRefreshImpl()
+{
+    // 记录渲染线程直接刷新请求
+    const int reqCount = m_renderThreadRefreshRequested.fetch_add(1);
+    const int64_t now = TimeUtils::wallClockMs();
+    const int pendingFrames = m_pendingFramesCount.load();
+    const int64_t msSinceLastPN = now - m_lastPaintNodeTime.load();
+
+    qInfo() << "[Client][VideoRenderer][方案C] ★★★ renderThreadRefreshImpl 被调用 ★★★"
+            << " reqCount=" << reqCount
+            << " pendingFrames=" << pendingFrames
+            << " msSinceLastPN=" << msSinceLastPN << "ms"
+            << " isVisible=" << isVisible()
+            << " instanceId=" << property("instanceId").toInt()
+            << " title=" << property("title").toString()
+            << " callingThread=" << (void*)QThread::currentThreadId()
+            << " window=" << (void*)window();
+
+    QQuickWindow* win = window();
+    if (!win) {
+        qWarning() << "[Client][VideoRenderer][方案C] window() == nullptr，跳过";
+        return;
+    }
+
+    // ── 尝试 QMetaMethod 跨线程调用 polishAndUpdate() ───────────────────────────
+    const QMetaMethod polishAndUpdateMethod = win->metaObject()->method(
+        win->metaObject()->indexOfMethod("polishAndUpdate()"));
+
+    bool success = false;
+    if (polishAndUpdateMethod.isValid()) {
+        success = polishAndUpdateMethod.invoke(win, Qt::QueuedConnection);
+        if (success) {
+            const int succCount = m_renderThreadRefreshSucceeded.fetch_add(1);
+            qInfo() << "[Client][VideoRenderer][方案C] ★ polishAndUpdate() 跨线程刷新成功 ★"
+                    << " reqCount=" << reqCount << " succCount=" << succCount
+                    << " pendingFrames=" << pendingFrames
+                    << " msSinceLastPN=" << msSinceLastPN << "ms"
+                    << " callingThread=" << (void*)QThread::currentThreadId()
+                    << " winThread=" << (void*)win->thread();
+        } else {
+            qWarning() << "[Client][VideoRenderer][方案C] polishAndUpdate() 跨线程调用返回 false"
+                       << " reqCount=" << reqCount;
+        }
+    } else {
+        qWarning() << "[Client][VideoRenderer][方案C] polishAndUpdate() 方法未找到"
+                   << " reqCount=" << reqCount << " ★ 使用 fallback update() ★";
+        // Fallback: 直接调用窗口 update
+        polish();
+        win->update();
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 辅助函数：更新 Placeholder Node 几何信息
+// tryMetaMethodRefresh：诊断辅助，通过 QMetaMethod 跨线程调用窗口刷新
 // ═══════════════════════════════════════════════════════════════════════════════
-static void updatePlaceholderGeometry(QSGGeometryNode* node, const QRectF& rect) {
-    if (!node) return;
-    
-    QSGGeometry* geo = node->geometry();
-    if (!geo) return;
-    
-    // 设置归一化坐标（全屏）
-    auto* vertices = geo->vertexDataAsPoint2D();
-    vertices[0].x = rect.left();   vertices[0].y = rect.top();
-    vertices[1].x = rect.right();  vertices[1].y = rect.top();
-    vertices[2].x = rect.left();   vertices[2].y = rect.bottom();
-    vertices[3].x = rect.right();  vertices[3].y = rect.bottom();
-    
-    node->markDirty(QSGNode::DirtyGeometry);
+void VideoRenderer::tryMetaMethodRefresh(const char* methodName)
+{
+    QQuickWindow* win = window();
+    if (!win) return;
+
+    const QMetaMethod method = win->metaObject()->method(
+        win->metaObject()->indexOfMethod(methodName));
+
+    if (method.isValid()) {
+        const bool ok = method.invoke(win, Qt::QueuedConnection);
+        qInfo() << "[Client][VideoRenderer][方案C] QMetaMethod::invoke(" << methodName << ")"
+                << " ok=" << ok
+                << " callingThread=" << (void*)QThread::currentThreadId()
+                << " winThread=" << (void*)win->thread();
+    } else {
+        qWarning() << "[Client][VideoRenderer][方案C] 方法" << methodName << " 未找到";
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 主渲染函数：updatePaintNode
+// updatePaintNode：主渲染函数（仅在渲染线程调用）
 // ═══════════════════════════════════════════════════════════════════════════════
-// 核心原则：永不返回 nullptr
-// - 有帧 → 返回 VideoSGNode（渲染视频）
-// - 无帧但有旧 VideoSGNode → 返回旧 VideoSGNode（显示最后一帧）
-// - 无帧且无旧 VideoSGNode → 返回 Placeholder Node（黑色背景，保持调度）
 QSGNode* VideoRenderer::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
 {
-    // ── 全局渲染序列号（用于诊断 Scene Graph 调度是否正常）───────────────────
-    static QAtomicInt s_updatePaintNodeCount{0};
-    const int seq = ++s_updatePaintNodeCount;
+    // ── per-instance 序列号（修复静态变量问题：每个实例独立计数）──────────────
+    const int seq = ++m_updatePaintNodeSeq;
     const int totalDeliver = m_totalDeliverCount.load();
     const int64_t now = TimeUtils::wallClockMs();
 
-    // ── 渲染线程心跳：记录本次 updatePaintNode 执行时间 ────────────────────
-    // 用于 deliverFrame 检测渲染线程是否被阻塞
+    // ── 渲染线程心跳：计算距上次的时间差（在覆盖前读取）──────────────────
+    const int64_t msSinceLastPN = now - m_lastPaintNodeTime.load();
+
+    // ── 渲染线程心跳：记录本次 updatePaintNode 执行时间 ───────────────────
     m_lastPaintNodeTime.store(now);
+
+    // ── per-instance 渲染饥饿检测 ─────────────────────────────────────────
+    if (seq != m_lastPaintNodeSeqForHungry && m_lastPaintNodeSeqForHungry > 0) {
+        m_skipCount++;
+        if (m_skipCount <= 5 || m_skipCount % 30 == 0) {
+            qWarning() << "[Client][VideoRenderer][HUNGRY] ★★★ per-instance Scene Graph 跳过检测 ★★★"
+                       << " instanceId=" << property("instanceId").toInt()
+                       << " title=" << property("title").toString()
+                       << " seq=" << seq << " lastRecordedPN=" << m_lastPaintNodeSeqForHungry
+                       << " skipCount=" << m_skipCount
+                       << " totalDeliver=" << totalDeliver
+                       << " ★ 持续增长说明 Scene Graph 已跳过此实例！";
+        }
+    }
+    m_lastPaintNodeSeqForHungry = seq;
 
     // 渲染成功时减少 pending frames 计数
     static int s_lastReportedPending = 0;
     const int currentPending = m_pendingFramesCount.exchange(0);
     if (currentPending > 0 && (seq <= 10 || currentPending > s_lastReportedPending)) {
-        qInfo() << "[Client][VideoRenderer][HEARTBEAT] ★ 渲染线程恢复 ★"
+        qInfo() << "[Client][VideoRenderer][HEARTBEAT] ★★★ 渲染线程恢复 ★★★"
+                << " instanceId=" << property("instanceId").toInt()
+                << " title=" << property("title").toString()
                 << " seq=" << seq << " consumedPending=" << currentPending
-                << " msSinceLastPN=" << (now - m_lastPaintNodeTime.load() + (now - m_lastPaintNodeTime.load())) << "ms"
-                << " ★ deliverFrame 期间帧已被渲染，消费 pending=" << currentPending;
+                << " msSinceLastPN=" << msSinceLastPN << "ms"
+                << " ★ deliverFrame 期间帧已被渲染，消费 pending=" << currentPending
+                << " renderThreadRefreshSucceeded=" << m_renderThreadRefreshSucceeded.load()
+                << " polishAndUpdateSucceeded=" << m_polishAndUpdateSucceeded.load()
+                << " fallbackUpdateSucceeded=" << m_fallbackUpdateSucceeded.load();
         s_lastReportedPending = currentPending;
+        m_renderStalled.store(false);
     }
-    
+
     // ── 首次调用诊断 ─────────────────────────────────────────────────────────
-    const bool isFirstCall = (seq == 1);
-    if (isFirstCall) {
+    if (seq == 1) {
         qInfo() << "[Client][VideoRenderer] ═══════════════════════════════════════"
+                << " instanceId=" << property("instanceId").toInt()
                 << " title=" << property("title").toString()
                 << " firstPaint=true width=" << width() << " height=" << height()
                 << " isComponentComplete=" << isComponentComplete()
                 << " isVisible=" << isVisible()
+                << " window=" << (void*)window()
+                << " renderThread=" << (void*)QThread::currentThreadId()
                 << " ═══════════════════════════════════════";
     }
-    
-    // ── 诊断：渲染线程调用频率（每秒约60次，超过说明 Scene Graph 正常调度）─────
+
+    // ── 诊断：渲染线程调用频率 ─────────────────────────────────────────────
     if (seq <= 20 || seq % 60 == 0) {
         qInfo() << "[Client][VideoRenderer] ★ updatePaintNode"
+                << " instanceId=" << property("instanceId").toInt()
+                << " title=" << property("title").toString()
                 << " seq=" << seq << " totalDeliver=" << totalDeliver
                 << " old=" << (void*)old
                 << " width=" << width() << " height=" << height()
                 << " isVisible=" << isVisible()
-                << " glCtx=" << (void*)QOpenGLContext::currentContext();
+                << " glCtx=" << (void*)QOpenGLContext::currentContext()
+                << " callingThread=" << (void*)QThread::currentThreadId();
     }
-    
-    // ── 渲染饥饿检测：deliverFrame 被调用次数 vs updatePaintNode 调用次数 ──────
-    // 如果 deliverFrame 计数增长但 updatePaintNode seq 不增长 → Scene Graph 跳过调度
-    const int lastPN = m_lastPaintNodeSeqForHungry;
-    if (seq != lastPN && lastPN > 0) {
-        m_skipCount++;
-        if (m_skipCount <= 5 || m_skipCount % 30 == 0) {
-            qWarning() << "[Client][VideoRenderer][HUNGRY] ★★★ Scene Graph 跳过检测 ★★★"
-                       << " seq=" << seq << " lastRecordedPN=" << lastPN
-                       << " skipCount=" << m_skipCount
-                       << " totalDeliver=" << totalDeliver
-                       << " ★ 持续增长说明 Scene Graph 已跳过此 item！";
-        }
-    }
-    m_lastPaintNodeSeqForHungry = seq;
-    
+
     try {
         // ── 初始化 GPU Interop（首次渲染线程调用时）─────────────────────────────
         if (!m_interopInit) {
             m_gpuInterop = GpuInteropFactory::create();
             m_interopInit = true;
             qInfo() << "[Client][VideoRenderer] GPU interop backend:"
-                    << (m_gpuInterop ? m_gpuInterop->name() : "none");
+                    << (m_gpuInterop ? m_gpuInterop->name() : "none")
+                    << " instanceId=" << property("instanceId").toInt();
         }
-        
+
         // ── 从三缓冲读取最新帧 ─────────────────────────────────────────────────
         if (m_newFrame.exchange(false, std::memory_order_acq_rel)) {
             int old2 = m_middleIdx.exchange(m_readIdx.load(std::memory_order_relaxed),
                                              std::memory_order_acq_rel);
             m_readIdx.store(old2, std::memory_order_relaxed);
-            qInfo() << "[Client][VideoRenderer] ★ 三缓冲交换★ seq=" << seq
+            qInfo() << "[Client][VideoRenderer] ★★★ 三缓冲交换 ★★★"
+                    << " instanceId=" << property("instanceId").toInt()
+                    << " seq=" << seq
                     << " old2=" << old2 << " readIdx=" << m_readIdx.load()
-                    << " ★ 有新帧写入 render slot";
+                    << " ★ 有新帧写入 render slot，渲染即将开始！";
         }
-        
+
         auto& slot = m_slots[m_readIdx.load(std::memory_order_relaxed)];
-        
+
         // ── 诊断：三缓冲状态（每60帧）───────────────────────────────────────────
         if (seq % 60 == 0) {
             qInfo() << "[Client][VideoRenderer] ★ 三缓冲状态"
+                    << " instanceId=" << property("instanceId").toInt()
                     << " seq=" << seq
                     << " slot.dirty=" << slot.dirty
                     << " slot.frame=" << (bool)slot.frame
@@ -625,46 +789,56 @@ QSGNode* VideoRenderer::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
                     << " middleIdx=" << m_middleIdx.load()
                     << " readIdx=" << m_readIdx.load();
         }
-        
+
         // ════════════════════════════════════════════════════════════════════
-        // 核心分支：有有效帧
+        // 核心分支：有有效帧 → 渲染视频
         // ════════════════════════════════════════════════════════════════════
         if (slot.dirty && slot.frame) {
-            qInfo() << "[Client][VideoRenderer] ★★★ 渲染帧 ★★★ seq=" << seq
+            qInfo() << "[Client][VideoRenderer] ★★★ 渲染帧 ★★★"
+                    << " instanceId=" << property("instanceId").toInt()
+                    << " title=" << property("title").toString()
+                    << " seq=" << seq
                     << " frameId=" << slot.frame->frameId
                     << " frame=" << slot.frame->width << "x" << slot.frame->height
                     << " pixelFormat=" << (int)slot.frame->pixelFormat
-                    << " memoryType=" << (int)slot.frame->memoryType;
-            
+                    << " memoryType=" << (int)slot.frame->memoryType
+                    << " ★★★ 视频即将显示！★★★";
+
             // 复用或创建 VideoSGNode
             VideoSGNode* node = static_cast<VideoSGNode*>(old);
             const bool nodeJustCreated = (node == nullptr);
-            
+
             if (!node) {
                 node = new VideoSGNode();
                 node->setGpuInterop(m_gpuInterop.get());
+                m_hasRealNode.store(true);
                 qInfo() << "[Client][VideoRenderer] ★★★ VideoSGNode 新建 ★★★"
+                        << " instanceId=" << property("instanceId").toInt()
                         << " node=" << (void*)node
                         << " gpuInterop=" << (m_gpuInterop ? m_gpuInterop->name() : "NONE")
-                        << " glCtx=" << (void*)QOpenGLContext::currentContext();
+                        << " glCtx=" << (void*)QOpenGLContext::currentContext()
+                        << " ★★★ GPU 纹理即将创建，视频渲染开始！★★★";
             }
-            
+
             // 渲染帧
             try {
                 node->updateGeometry(QRectF(0, 0, width(), height()), m_mirrorH);
                 node->updateFrame(*slot.frame);
-                
+
                 qInfo() << "[Client][VideoRenderer] ★★★ node->updateFrame 完成 ★★★"
+                        << " instanceId=" << property("instanceId").toInt()
+                        << " title=" << property("title").toString()
                         << " seq=" << seq << " frameId=" << slot.frame->frameId
                         << " node=" << (void*)node
-                        << " justCreated=" << nodeJustCreated;
+                        << " justCreated=" << nodeJustCreated
+                        << " ★★★ 视频帧已上传到 GPU，理论上应该显示！★★★";
             } catch (const std::exception& e) {
                 qCritical() << "[Client][VideoRenderer][ERROR] updateFrame 异常:"
                            << e.what() << " w=" << width() << " h=" << height();
             }
-            
+
             slot.dirty = false;
-            
+
             // 延迟统计
             if (slot.frame->captureTimestamp > 0) {
                 const double latency = static_cast<double>(
@@ -672,69 +846,72 @@ QSGNode* VideoRenderer::updatePaintNode(QSGNode* old, UpdatePaintNodeData*)
                 m_latencyMs.store(latency);
                 try { emit latencyChanged(latency); } catch (...) {}
             }
-            
+
             // FPS 统计
             ++m_frameCount;
-            const int64_t now = TimeUtils::wallClockMs();
-            if (now - m_fpsWindowStart >= 1000) {
-                const double fps = static_cast<double>(m_frameCount) / ((now - m_fpsWindowStart) / 1000.0);
+            const int64_t fpsNow = TimeUtils::wallClockMs();
+            if (fpsNow - m_fpsWindowStart >= 1000) {
+                const double fps = static_cast<double>(m_frameCount) / ((fpsNow - m_fpsWindowStart) / 1000.0);
                 m_fps.store(fps);
                 m_frameCount = 0;
-                m_fpsWindowStart = now;
+                m_fpsWindowStart = fpsNow;
                 emit fpsChanged(fps);
                 qInfo() << "[Client][VideoRenderer] ★★★ FPS emit ★★★ fps=" << fps
-                        << " window=" << (void*)window() << " frameId=" << slot.frame->frameId;
+                        << " instanceId=" << property("instanceId").toInt()
+                        << " window=" << (void*)window() << " frameId=" << slot.frame->frameId
+                        << " ★★★ 渲染帧率正常，视频应持续显示！★★★";
             }
-            
+
             // ★★★ 关键：永不返回 nullptr！★★★
             return node;
         }
-        
+
         // ════════════════════════════════════════════════════════════════════
-        // 核心分支：无有效帧
-        // 目标：永不返回 nullptr，防止 Scene Graph 降级
+        // 核心分支：无有效帧 → 返回 Placeholder（永不返回 nullptr）
         // ════════════════════════════════════════════════════════════════════
-        qInfo() << "[Client][VideoRenderer] ★ 无有效帧 seq=" << seq
-                << " slot.dirty=" << slot.dirty << " slot.frame=" << (bool)slot.frame
-                << " old=" << (void*)old << " m_hasRealNode=" << m_hasRealNode.load();
-        
+        if (seq <= 10 || seq % 30 == 0) {
+            qInfo() << "[Client][VideoRenderer] ★ 无有效帧 seq=" << seq
+                    << " instanceId=" << property("instanceId").toInt()
+                    << " slot.dirty=" << slot.dirty << " slot.frame=" << (bool)slot.frame
+                    << " old=" << (void*)old << " m_hasRealNode=" << m_hasRealNode.load();
+        }
+
         // 分支1：有旧 VideoSGNode（显示最后一帧）
         if (old && dynamic_cast<VideoSGNode*>(old)) {
             VideoSGNode* node = static_cast<VideoSGNode*>(old);
             if (seq <= 10 || seq % 30 == 0) {
                 qInfo() << "[Client][VideoRenderer] ★ 返回旧 VideoSGNode（显示最后一帧）"
+                        << " instanceId=" << property("instanceId").toInt()
                         << " seq=" << seq << " node=" << (void*)node;
             }
-            // 更新几何信息（尺寸可能变化）
             node->updateGeometry(QRectF(0, 0, width(), height()), m_mirrorH);
-            // ★★★ 关键：永不返回 nullptr！返回旧 node 显示最后一帧
             return node;
         }
-        
+
         // 分支2：无 VideoSGNode，使用 Placeholder
         if (!m_placeholderNode) {
             m_placeholderNode = createPlaceholderNode();
             qInfo() << "[Client][VideoRenderer] ★★★ Placeholder Node 创建 ★★★"
+                    << " instanceId=" << property("instanceId").toInt()
                     << " seq=" << seq
                     << " node=" << (void*)m_placeholderNode
                     << " 防止 Scene Graph 降级为 static";
         }
-        
-        // 更新 Placeholder 几何
+
         updatePlaceholderGeometry(m_placeholderNode, QRectF(0, 0, width(), height()));
-        
+
         if (seq <= 10 || seq % 30 == 0) {
             qInfo() << "[Client][VideoRenderer] ★ 返回 Placeholder Node（黑色背景）"
+                    << " instanceId=" << property("instanceId").toInt()
                     << " seq=" << seq << " node=" << (void*)m_placeholderNode
                     << " size=" << width() << "x" << height();
         }
-        
+
         // ★★★ 关键：永不返回 nullptr！★★★
         return m_placeholderNode;
-        
+
     } catch (const std::exception& e) {
         qCritical() << "[VideoRenderer][ERROR] updatePaintNode 总异常:" << e.what();
-        // 即使异常也返回 placeholder
         if (!m_placeholderNode) {
             m_placeholderNode = createPlaceholderNode();
         }
@@ -760,6 +937,18 @@ void VideoRenderer::componentComplete()
 {
     QQuickItem::componentComplete();
     setFlag(ItemHasContents, true);
+
+    startPollingTimer();
+
+    qInfo() << "[Client][VideoRenderer] componentComplete"
+            << " instanceId=" << property("instanceId").toInt()
+            << " title=" << property("title").toString()
+            << " visible=" << isVisible()
+            << " size=" << width() << "x" << height()
+            << " window=" << (void*)window()
+            << " windowThread=" << (void*)(window() ? window()->thread() : nullptr)
+            << " currentThread=" << (void*)QThread::currentThreadId()
+            << " ★★★ 组件完成，polling timer 已启动 ★★★";
 }
 
 void VideoRenderer::updateFpsAndLatency()
@@ -768,45 +957,123 @@ void VideoRenderer::updateFpsAndLatency()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 强制刷新机制（方案1）
-// 根因：Qt Scene Graph 在 VehicleSelectionDialog 显示期间可能阻塞渲染线程，
-// 导致 deliverFrame 收到帧但 updatePaintNode 不被调用。
-// 修复：在对话框关闭时强制刷新所有 VideoRenderer。
+// forceRefresh：方案 C 核心实现
+// 对话框打开/关闭时由 QML 调用，强制触发渲染线程直接刷新
 // ═══════════════════════════════════════════════════════════════════════════════
 void VideoRenderer::forceRefresh()
 {
     const int64_t now = TimeUtils::wallClockMs();
     const int64_t msSinceLastPN = now - m_lastPaintNodeTime.load();
     const int pendingFrames = m_pendingFramesCount.load();
+    const int fc = m_forceRefreshCount.fetch_add(1);
 
     qInfo() << "[Client][VideoRenderer] ★★★ forceRefresh 被调用 ★★★"
+            << " instanceId=" << property("instanceId").toInt()
             << " title=" << property("title").toString()
+            << " callSeq=" << fc
             << " msSinceLastPaint=" << msSinceLastPN
             << " pendingFrames=" << pendingFrames
             << " totalDeliver=" << m_totalDeliverCount.load()
             << " isVisible=" << isVisible()
             << " window=" << (void*)window()
-            << " componentComplete=" << isComponentComplete();
+            << " componentComplete=" << isComponentComplete()
+            << " callingThread=" << (void*)QThread::currentThreadId()
+            << " windowThread=" << (void*)(window() ? window()->thread() : nullptr)
+            << " m_updatePaintNodeSeq=" << m_updatePaintNodeSeq
+            << " m_renderThreadRefreshSucceeded=" << m_renderThreadRefreshSucceeded.load()
+            << " m_polishAndUpdateSucceeded=" << m_polishAndUpdateSucceeded.load()
+            << " m_fallbackUpdateSucceeded=" << m_fallbackUpdateSucceeded.load()
+            << " ★ 方案C：优先使用渲染线程直接刷新，绕过主线程事件循环 ★";
 
-    // 诊断：如果距离上次渲染超过阈值，发射阻塞信号
+    // 诊断：如果距上次渲染超过阈值，发射阻塞信号
     if (msSinceLastPN > RENDER_STALL_TIMEOUT_MS) {
         qWarning() << "[Client][VideoRenderer][STALL] ★★★ 渲染线程疑似阻塞 ★★★"
+                    << " instanceId=" << property("instanceId").toInt()
                     << " msSinceLastPaint=" << msSinceLastPN
                     << " pendingFrames=" << pendingFrames
                     << " threshold=" << RENDER_STALL_TIMEOUT_MS << "ms"
-                    << " ★ 对话框关闭后立即调用 forceRefresh，检测渲染线程是否恢复 ★";
+                    << " m_updatePaintNodeSeq=" << m_updatePaintNodeSeq
+                    << " ★ 对话框关闭后调用 forceRefresh，检测渲染线程是否恢复 ★";
         emit renderThreadStalled(pendingFrames, msSinceLastPN);
     }
 
-    // 强制触发 Scene Graph 调度
+    // ── 方案 C：向渲染线程直接发送刷新请求 ───────────────────────────────────
+    // 这是与旧方案的本质区别：
+    // 旧方案：polish() + window()->update() → postEvent 到主线程 → 主线程被阻塞时完全无效
+    // 方案 C：QMetaMethod::invoke + Qt::QueuedConnection → 投递到渲染线程事件队列
+    //         → 渲染线程有独立事件循环 → modal 对话框阻塞主线程时仍能响应
     QQuickWindow* win = window();
     if (win) {
-        polish();
-        win->update();
-        qInfo() << "[Client][VideoRenderer] forceRefresh: 已调用 polish() + window()->update()"
-                << " window=" << (void*)win;
+        // ★★★ 策略 1：polishAndUpdate()（Qt 内部方法，直接驱动渲染循环）★★★
+        // 这是 Qt 内部用于驱动 Scene Graph 的核心方法
+        const QMetaMethod polishAndUpdateMethod = win->metaObject()->method(
+            win->metaObject()->indexOfMethod("polishAndUpdate()"));
+
+        bool refreshed = false;
+        if (polishAndUpdateMethod.isValid()) {
+            // Qt::QueuedConnection：跨线程调用，自动投递到目标线程（渲染线程）的事件队列
+            refreshed = polishAndUpdateMethod.invoke(win, Qt::QueuedConnection);
+            if (refreshed) {
+                m_polishAndUpdateSucceeded.fetch_add(1);
+                qInfo() << "[Client][VideoRenderer][方案C] ★★★ polishAndUpdate() 跨线程刷新成功 ★★★"
+                        << " instanceId=" << property("instanceId").toInt()
+                        << " callSeq=" << fc
+                        << " callingThread=" << (void*)QThread::currentThreadId()
+                        << " winThread=" << (void*)win->thread()
+                        << " pendingFrames=" << pendingFrames;
+            } else {
+                qWarning() << "[Client][VideoRenderer][方案C] polishAndUpdate() 返回 false"
+                           << " instanceId=" << property("instanceId").toInt()
+                           << " callSeq=" << fc;
+            }
+        } else {
+            qWarning() << "[Client][VideoRenderer][方案C] polishAndUpdate() 方法未找到"
+                       << " instanceId=" << property("instanceId").toInt()
+                       << " callSeq=" << fc;
+        }
+
+        // ★★★ 策略 2：QMetaMethod 直接调用 update()（次优）★★★
+        if (!refreshed) {
+            const QMetaMethod updateMethod = win->metaObject()->method(
+                win->metaObject()->indexOfMethod("update()"));
+            if (updateMethod.isValid()) {
+                refreshed = updateMethod.invoke(win, Qt::QueuedConnection);
+                if (refreshed) {
+                    m_windowMetaMethodSucceeded.fetch_add(1);
+                    qInfo() << "[Client][VideoRenderer][方案C] ★ update() QMetaMethod 跨线程刷新成功 ★"
+                            << " instanceId=" << property("instanceId").toInt()
+                            << " callSeq=" << fc;
+                }
+            }
+        }
+
+        // ★★★ 策略 3：fallback（对话框打开时可能无效）★★★
+        if (!refreshed) {
+            polish();
+            win->update();
+            m_fallbackUpdateSucceeded.fetch_add(1);
+            qWarning() << "[Client][VideoRenderer][方案C] 使用 fallback polish()+update()"
+                       << " instanceId=" << property("instanceId").toInt()
+                       << " callSeq=" << fc
+                       << " ★ 对话框打开时可能无效，参考 msSinceLastPN 确认 ★";
+        }
+
+        // ★★★ 立即触发渲染线程直接刷新（最激进策略）★★★
+        // 这会在 deliverFrame 检测到阻塞时额外调用
+        // 在 forceRefresh 中也调用，确保对话框打开/关闭时都能触发
+        if (pendingFrames > 0 || msSinceLastPN > RENDER_STALL_TIMEOUT_MS) {
+            renderThreadRefreshImpl();
+        }
+
+        qInfo() << "[Client][VideoRenderer] forceRefresh: 刷新策略已执行"
+                << " instanceId=" << property("instanceId").toInt()
+                << " callSeq=" << fc
+                << " refreshed=" << refreshed
+                << " totalPolished=" << m_polishAndUpdateSucceeded.load()
+                << " totalFallback=" << m_fallbackUpdateSucceeded.load();
     } else {
         qWarning() << "[Client][VideoRenderer] forceRefresh: window() 返回 nullptr，无法触发更新"
+                    << " instanceId=" << property("instanceId").toInt()
                     << " isComponentComplete=" << isComponentComplete()
                     << " parent=" << (void*)parentItem();
     }
@@ -818,15 +1085,102 @@ int64_t VideoRenderer::msSinceLastPaint() const
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// 增强 deliverFrame：渲染线程心跳检测
+// 主动轮询定时器实现（防止 Scene Graph 调度器跳过）
 // ═══════════════════════════════════════════════════════════════════════════════
-// Qt Scene Graph 在正常情况下会以 ~60fps 调用 updatePaintNode。
-// 当对话框（QDialog/Popup）显示时，Qt 可能阻塞或暂停渲染线程。
-// 检测：当 deliverFrame 被调用但渲染线程超过阈值未响应时，
-// 说明渲染线程可能被阻塞，此时发射 renderThreadStalled 信号。
-// 注意：这个检测在 deliverFrame 中进行（可能在解码线程或主线程），
-// 而 updatePaintNodeTime 在渲染线程更新，两者的时间差即为渲染线程延迟。
-// ═══════════════════════════════════════════════════════════════════════════════
+void VideoRenderer::startPollingTimer()
+{
+    if (m_pollingTimer) {
+        return;
+    }
 
-// 修改 deliverFrame 开头部分，添加心跳检测逻辑
-// 在 deliverFrame 函数内，统计 pending frames 并检测阻塞
+    m_pollingTimer = new QTimer(this);
+    m_pollingTimer->setInterval(16);  // ~60fps，与渲染帧率同步
+
+    QObject::connect(m_pollingTimer, &QTimer::timeout, this, [this]() {
+        const int64_t now = TimeUtils::wallClockMs();
+        const int64_t msSinceLastPN = now - m_lastPaintNodeTime.load();
+        const int pendingFrames = m_pendingFramesCount.load();
+
+        const bool hasUnrenderedFrame = m_newFrame.load(std::memory_order_acquire);
+        const bool renderStalled = (msSinceLastPN > 33 && hasUnrenderedFrame);
+
+        if (renderStalled) {
+            QQuickWindow* win = window();
+            if (win) {
+                // ★★★ 轮询检测到渲染被跳过 → 触发方案 C 渲染线程直接刷新 ★★★
+                polish();
+                win->update();
+
+                // 同时触发渲染线程直接刷新（绕过主线程阻塞）
+                renderThreadRefreshImpl();
+
+                static QAtomicInt s_pollForceCount{0};
+                const int pfCount = ++s_pollForceCount;
+                if (pfCount <= 20 || pfCount % 60 == 0) {
+                    qInfo() << "[Client][VideoRenderer][POLL] ★ 轮询强制刷新 ★"
+                            << " instanceId=" << property("instanceId").toInt()
+                            << " title=" << property("title").toString()
+                            << " msSinceLastPN=" << msSinceLastPN << "ms"
+                            << " pendingFrames=" << pendingFrames
+                            << " hasUnrenderedFrame=" << hasUnrenderedFrame
+                            << " isVisible=" << isVisible()
+                            << " pollCount=" << pfCount
+                            << " m_updatePaintNodeSeq=" << m_updatePaintNodeSeq
+                            << " ★ 方案C：渲染线程直接刷新已触发 ★";
+                }
+            }
+        }
+
+        m_lastPollTime = now;
+    });
+
+    m_pollingTimer->start();
+    qInfo() << "[Client][VideoRenderer] ★ 轮询定时器启动 ★"
+            << " instanceId=" << property("instanceId").toInt()
+            << " title=" << property("title").toString()
+            << " interval=" << m_pollingTimer->interval() << "ms"
+            << " callingThread=" << (void*)QThread::currentThreadId()
+            << " ★★★ 轮询将在主线程执行，modal 对话框期间可能无效 → 使用方案C补充 ★★★";
+}
+
+void VideoRenderer::stopPollingTimer()
+{
+    if (m_pollingTimer) {
+        m_pollingTimer->stop();
+        delete m_pollingTimer;
+        m_pollingTimer = nullptr;
+        qInfo() << "[Client][VideoRenderer] ★ 轮询定时器停止 ★"
+                << " instanceId=" << property("instanceId").toInt();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// itemChange 事件处理
+// ═══════════════════════════════════════════════════════════════════════════════
+void VideoRenderer::itemChange(ItemChange change, const ItemChangeData & value)
+{
+    QQuickItem::itemChange(change, value);
+
+    if (change == ItemVisibleHasChanged) {
+        qInfo() << "[Client][VideoRenderer][VISIBLE] ★★★ visible 变化 ★★★"
+                << " instanceId=" << property("instanceId").toInt()
+                << " title=" << property("title").toString()
+                << " visible=" << value.boolValue
+                << " isVisible=" << isVisible()
+                << " window=" << (void*)window()
+                << " callingThread=" << (void*)QThread::currentThreadId();
+
+        // visible 变为 true 时，触发方案 C 强制刷新
+        if (value.boolValue) {
+            QQuickWindow* win = window();
+            if (win) {
+                polish();
+                win->update();
+                renderThreadRefreshImpl();
+                qInfo() << "[Client][VideoRenderer][VISIBLE] visible=true，方案C强制刷新"
+                        << " instanceId=" << property("instanceId").toInt()
+                        << " m_updatePaintNodeSeq=" << m_updatePaintNodeSeq;
+            }
+        }
+    }
+}
