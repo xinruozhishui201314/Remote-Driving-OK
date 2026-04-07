@@ -5,17 +5,17 @@ layout(location = 0) out vec4 fragColor;
 
 // ── 纹理绑定 ─────────────────────────────────────────────────────────────────
 // YUV420P 模式（isNv12=0）：
-//   binding 1 = Y  平面（GL_R8，全分辨率）
-//   binding 2 = U  平面（GL_R8，1/2 分辨率）
-//   binding 3 = V  平面（GL_R8，1/2 分辨率）
+//   binding 0 = Y  平面（GL_R8，全分辨率）
+//   binding 1 = U  平面（GL_R8，1/2 分辨率）
+//   binding 2 = V  平面（GL_R8，1/2 分辨率）
 //
 // NV12 模式（isNv12=1）：
-//   binding 1 = Y  平面（GL_R8，全分辨率）
-//   binding 2 = UV 平面（GL_RG8，1/2 分辨率；.r=U，.g=V）
-//   binding 3 = 未使用
-layout(binding = 1) uniform sampler2D yTex;
-layout(binding = 2) uniform sampler2D uvTex; // U 或 UV 交织
-layout(binding = 3) uniform sampler2D vTex;  // V（YUV420P only）
+//   binding 0 = Y  平面（GL_R8，全分辨率）
+//   binding 1 = UV 平面（GL_RG8，1/2 分辨率；.r=U，.g=V）
+//   binding 2 = 未使用
+layout(binding = 0) uniform sampler2D yTex;
+layout(binding = 1) uniform sampler2D uvTex; // U 或 UV 交织
+layout(binding = 2) uniform sampler2D vTex;  // V（YUV420P only）
 
 // ── Uniform Block ─────────────────────────────────────────────────────────────
 layout(std140, binding = 0) uniform buf {

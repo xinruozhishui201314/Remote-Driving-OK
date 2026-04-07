@@ -20,11 +20,14 @@ public:
     explicit H264Decoder(const QString &streamTag = QString(), QObject *parent = nullptr);
     ~H264Decoder();
 
-    void feedRtp(const uint8_t *data, size_t len);
+    void feedRtp(const uint8_t *data, size_t len, quint64 lifecycleId = 0);
     void reset();
 
     /** 诊断：返回 frameReady(const QImage&, quint64) 信号的接收者数量 */
     int receiverCountFrameReady() const { return receivers(SIGNAL(frameReady(const QImage&, quint64))); }
+
+    /** v3 新增：获取当前帧的生命周期追踪 ID（由 RTP 包到达时分配） */
+    quint64 currentLifecycleId() const { return m_currentLifecycleId; }
 
 signals:
     void frameReady(const QImage &image, quint64 frameId);
@@ -116,6 +119,8 @@ private:
     // ── 诊断日志增强结束 ───────────────────────────────────────────────────
     /** feedRtp 进入时刻（毫秒），用于与 RTP arrival 时间对比测量 libdatachannel→主线程延迟 */
     int64_t m_lastFeedRtpTime = 0;
+    /** v3 新增：当前帧的端到端生命周期追踪 ID（由 RTP 包到达时分配） */
+    quint64 m_currentLifecycleId = 0;
 };
 
 #endif

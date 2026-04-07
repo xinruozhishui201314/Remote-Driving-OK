@@ -36,6 +36,26 @@ else()
     set(WrapOpenGL_FOUND TRUE)
 endif()
 
+# ── XKB（Qt6Gui 依赖，Windows/macOS 跳过）───────────────────────────────────
+# libxkbcommon-dev 提供 CMake 目标 XKB::XKB；若不存在则用 pkg-config 回退创建
+find_package(XKB QUIET)
+if(NOT XKB_FOUND)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(XKB_PC QUIET libxkbcommon)
+        if(XKB_PC_FOUND)
+            add_library(XKB::XKB INTERFACE IMPORTED)
+            set_target_properties(XKB::XKB PROPERTIES INTERFACE_INCLUDE_DIRECTORIES "${XKB_PC_INCLUDE_DIRS}")
+            set_target_properties(XKB::XKB PROPERTIES INTERFACE_LINK_LIBRARIES "${XKB_PC_LIBRARIES}")
+            set(XKB_FOUND TRUE)
+            message(STATUS "XKB: created XKB::XKB via pkg-config (libxkbcommon-dev recommended)")
+        endif()
+    endif()
+endif()
+if(NOT XKB_FOUND)
+    message(WARNING "XKB not found — install libxkbcommon-dev for full Qt6 GUI support")
+endif()
+
 # ── Qt6 必需模块 ─────────────────────────────────────────────────────────────
 find_package(Qt6 REQUIRED COMPONENTS Core Network Gui Quick Qml)
 
@@ -429,7 +449,7 @@ if(ENABLE_QT6_OpenGL)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_QT6_OPENGL)
 endif()
 if(ENABLE_QT6_ShaderTools)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::ShaderTools)
+    target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::ShaderToolsPrivate Qt6::ShaderTools)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_QT6_SHADERTOOLS)
 endif()
 

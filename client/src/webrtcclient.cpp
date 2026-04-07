@@ -18,6 +18,54 @@
 #include <rtc/rtc.hpp>
 #endif
 
+/**
+ * ═══════════════════════════════════════════════════════════════════════════════════
+ * WebRTC 客户端 — 四路视频流完整链路（第4步详解）
+ * ═══════════════════════════════════════════════════════════════════════════════════
+ *
+ * 【Step 4: WebRtcClient 接收解码帧】
+ *
+ *  调用链：
+ *    H264Decoder::emitDecodedFrames()
+ *      → emit frameReady(QImage, frameId)  [QueuedConnection]
+ *      → WebRtcClient::onVideoFrameFromDecoder(QImage, frameId)
+ *
+ *  onVideoFrameFromDecoder 内部的双路调用：
+ *
+ *  路径A（C++ 直接调用，推荐）：
+ *    → QMetaMethod::invoke(VideoRenderer, Qt::QueuedConnection)
+ *      → VideoRenderer::setFrame(QImage, frameId)  [主线程]
+ *      → deliverFrame(VideoFrame) → triggerRenderRefresh()
+ *      → scheduleRenderJob → RenderThread update() → updatePaintNode()
+ *
+ *  路径B（QML Signal Fallback）：
+ *    → emit videoFrameReady(QImage, w, h, frameId)  [信号]
+ *      → QML Connections { target: streamClient }
+ *      → onVideoFrameReady(frame, w, h, frameId)
+ *      → videoRenderer.setFrame(frame, frameId)  [QML → C++]
+ *
+ *  关键设计：
+ *  - 路径A 使用 QMetaMethod::invoke + QueuedConnection，将 setFrame 调用排队到主线程
+ *  - 路径B 作为 fallback，若 VideoRenderer 未注册则走信号层
+ *  - 两个路径都调用时，VideoRenderer 会过滤重复帧（m_lastFrameId 检查）
+ *
+ *  日志链路：
+ *  [Client][WebRTC][emitDone] ★★★ 直接调用成功 ★★★ frameId=xxx signalReceivers=0（正常）
+ *  [Client][VideoRenderer] ★★★ setFrame(QML→C++) 被调用 ★★★ frameId=xxx image.isNull=xxx
+ *  [Client][VideoRenderer] deliverFrame 被调用 seq=xxx frameId=xxx window=0x...
+ *  [Client][VideoRenderer][Refresh] ★★★ scheduleRenderJob 已投递 ★★★
+ *
+ *  诊断关键点：
+ *  - 若 [emitDone] directInvokeSuccess=true → 路径A成功
+ *  - 若 signalReceivers=0 但 directInvokeSuccess=true → 正常（C++ 直接调用绕过信号层）
+ *  - 若 signalReceivers=0 且 directInvokeSuccess=false → FATAL，帧被丢弃
+ *  - 若 onVideoFrameFromDecoder 从未出现日志 → H264Decoder → frameReady 链路断
+ *  - 若 [RTP-Arrival] 有日志但 [emitDecodedFrames] 没有 → RTP → 解码 链路断
+ *  - 若 [RTP-Arrival] 都没有 → WebRTC DataChannel → RTP 链路断
+ *
+ * ═══════════════════════════════════════════════════════════════════════════════════
+ */
+
 WebRtcClient::WebRtcClient(QObject *parent)
     : QObject(parent)
     , m_networkManager(new QNetworkAccessManager(this))
@@ -1062,6 +1110,9 @@ void WebRtcClient::setupVideoDecoder()
     static QAtomicInt s_camFrontLogCount{0};
     m_videoTrack->onMessage([this](rtc::message_variant msg) {
         try {
+            // ── v3 新增：分配 lifecycleId（端到端帧追踪）────────────────────
+            const quint64 lifecycleId = VideoFrame::nextLifecycleId();
+
             // ── 诊断：cam_front RTP 包到达计数（前 50 个都打印）────────────────────
             // 用于确认 cam_front 的 onMessage 是否被调用（若从未出现日志 → track.onMessage 未建立）
             const int64_t onMsgTime = QDateTime::currentMSecsSinceEpoch();
@@ -1071,6 +1122,7 @@ void WebRtcClient::setupVideoDecoder()
                         << " camFrontSeq=" << camFrontSeq
                         << " stream=" << m_stream
                         << " hasVariant=" << msg.index()
+                        << " lifecycleId=" << lifecycleId
                         << " time=" << onMsgTime
                         << "（若 cam_front 从未出现此日志 → track.onMessage 回调未建立或未触发）";
             }
@@ -1088,6 +1140,7 @@ void WebRtcClient::setupVideoDecoder()
                     qInfo() << "[Client][WebRTC][RTP-Arrival] ★★★ RTP包到达(libdatachannel工作线程) ★★★"
                             << " seq=" << seq
                             << " stream=" << m_stream
+                            << " lifecycleId=" << lifecycleId
                             << " pktSize=" << bin.size()
                             << " rtpArrival=" << rtpArrivalTime
                             << " frameGapFromLast=" << frameGap << "ms"
@@ -1095,7 +1148,7 @@ void WebRtcClient::setupVideoDecoder()
                             << " ★ 对比 feedRtp ENTER 日志中的 rtpArrival，确认 cam_front 是否从工作线程到达 feedRtp";
                 }
                 QByteArray pkt(reinterpret_cast<const char *>(bin.data()), static_cast<qsizetype>(bin.size()));
-                QMetaObject::invokeMethod(m_h264Decoder, [dec = m_h264Decoder, pkt = std::move(pkt), rtpArrivalTime, this]() {
+                QMetaObject::invokeMethod(m_h264Decoder, [dec = m_h264Decoder, pkt = std::move(pkt), rtpArrivalTime, lifecycleId, this]() {
                     // ── 诊断：RTP 包到达主线程时的队列延迟（工作线程→主线程）────────────────
                     const int64_t mainThreadTime = QDateTime::currentMSecsSinceEpoch();
                     const int64_t queueDelay = mainThreadTime - rtpArrivalTime;
@@ -1106,6 +1159,7 @@ void WebRtcClient::setupVideoDecoder()
                         qInfo() << "[Client][WebRTC][RTP-Queue] ★ feedRtp ENTER(主线程) ★"
                                 << " seq=" << logSeq
                                 << " stream=" << m_stream
+                                << " lifecycleId=" << lifecycleId
                                 << " rtpArrival=" << rtpArrivalTime
                                 << " mainThread=" << mainThreadTime
                                 << " queueDelay=" << queueDelay << "ms"
@@ -1115,13 +1169,13 @@ void WebRtcClient::setupVideoDecoder()
                     ++m_framesSinceLastStats;
                     try {
                         dec->feedRtp(reinterpret_cast<const uint8_t *>(pkt.constData()),
-                                     static_cast<size_t>(pkt.size()));
+                                     static_cast<size_t>(pkt.size()), lifecycleId);
                     } catch (const std::exception& e) {
                         qCritical() << "[Client][WebRTC][ERROR] feedRtp 异常 stream=" << m_stream
-                                    << " pktSize=" << pkt.size() << " error=" << e.what();
+                                    << " pktSize=" << pkt.size() << " lifecycleId=" << lifecycleId << " error=" << e.what();
                     } catch (...) {
                         qCritical() << "[Client][WebRTC][ERROR] feedRtp 未知异常 stream=" << m_stream
-                                    << " pktSize=" << pkt.size();
+                                    << " pktSize=" << pkt.size() << " lifecycleId=" << lifecycleId;
                     }
                 }, Qt::QueuedConnection);
             }
@@ -1142,8 +1196,12 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
     if (!s_loggedStreams.contains(m_stream)) {
         s_loggedStreams.insert(m_stream);
         qInfo() << "[Client][WebRTC][onVideoFrameFromDecoder] ★★★ 函数被调用（信号从 H264Decoder 到达）★★★"
-                   " stream=" << m_stream << " frameId=" << frameId;
+                   " stream=" << m_stream << " frameId=" << frameId
+                   << " lifecycleId=" << (m_h264Decoder ? m_h264Decoder->currentLifecycleId() : 0);
     }
+
+    // ── v3 新增：从 H264Decoder 获取 lifecycleId ──────────────────────────
+    const quint64 lifecycleId = m_h264Decoder ? m_h264Decoder->currentLifecycleId() : 0;
 
     try {
         // ── 队列积压诊断：进入时计数，用于判断主线程是否被阻塞 ───────────────────
@@ -1151,12 +1209,35 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
         const int64_t handlerEnterTime = QDateTime::currentMSecsSinceEpoch();
 
         if (image.isNull()) {
-            qWarning() << "[Client][WebRTC][WARN] 收到空视频帧 stream=" << m_stream;
+            // ★★★ FrameDiag：空帧根因诊断 ★★★
+            qCritical() << "[WebRTC][FrameDiag] ★★★ 收到空视频帧！frameId=" << frameId
+                        << " stream=" << m_stream
+                        << " lifecycleId=" << lifecycleId
+                        << " ★ 此帧将被静默丢弃！检查 sws_scale/m_frameBuffer/IDR 等待 ★"
+                        << " ★ 若持续出现 → ZLM 侧断流或解码器需要重新初始化 ★";
             --m_framesPendingInQueue;
             return;
         }
 
         m_videoFrameLogCount++;
+
+        // ★★★ FrameDiag：renderer 注册状态诊断 ★★★
+        // 用于区分「帧到达但 renderer 未注册导致静默丢弃」vs「其他原因丢帧」
+        {
+            static int s_rendererDiagLogged = 0;
+            if (s_rendererDiagLogged < 4) {
+                ++s_rendererDiagLogged;
+                qInfo() << "[WebRTC][FrameDiag] renderer注册状态"
+                        << " stream=" << m_stream
+                        << " frame#=" << m_videoFrameLogCount
+                        << " m_videoRenderer.isNull=" << m_videoRenderer.isNull()
+                        << " rendererClass=" << (m_videoRenderer ?
+                            QString::fromLatin1(m_videoRenderer->metaObject()->className()) : "N/A")
+                        << " directInvokeWillRun=" << (bool)m_videoRenderer
+                        << " ★ m_videoRenderer.isNull=true → 帧将只走 QML signal 路径 ★"
+                        << " ★ 对比 VideoRenderer setFrame 日志确认 C++→QML 链路是否通 ★";
+            }
+        }
 
         // ── 诊断：帧时间戳追踪（用于断开时判断"根本没收到帧"还是"收到了但卡在解码"） ──
         if (m_lastFrameTime > 0) {
@@ -1267,11 +1348,14 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
                     //   - QImage：隐式共享拷贝（refcount+1，数据共享，写时复制）
                     //     解码器侧的原始 image 在函数返回后仍安全有效
                     //   - quint64：值拷贝（64位整数，直接序列化）
+                    // ── v3 新增：lifecycleId 用于端到端追踪 ──────────────────────
+                    quint64 lid = lifecycleId;
                     bool ok = setFrameMethod.invoke(
                         m_videoRenderer.data(),
                         Qt::QueuedConnection,
                         QGenericArgument(QMetaType::typeName(qMetaTypeId<QImage>()), &image),
-                        QGenericArgument(QMetaType::typeName(qMetaTypeId<quint64>()), &frameId)
+                        QGenericArgument(QMetaType::typeName(qMetaTypeId<quint64>()), &frameId),
+                        QGenericArgument(QMetaType::typeName(qMetaTypeId<quint64>()), &lid)
                     );
 
                     if (ok) {
@@ -1280,6 +1364,7 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
                             const int64_t cost = QDateTime::currentMSecsSinceEpoch() - emitEnterTime;
                             qInfo() << "[Client][WebRTC][DirectCall] ★★★ 直接调用成功 ★★★"
                                      << " stream=" << m_stream << " frameId=" << frameId
+                                     << " lifecycleId=" << lifecycleId
                                      << " method=" << QString::fromLatin1(setFrameMethod.methodSignature())
                                      << " invokeCost≈0ms(QueuedConnection) frame#=" << m_videoFrameLogCount
                                      << " ★ 对比 VideoRenderer setFrame 日志确认 frameId";
@@ -1289,6 +1374,7 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
                         // 常见原因：VideoRenderer 正在 QML 销毁过程中、GL 上下文失效
                         qCritical() << "[Client][WebRTC][DirectCall][ERROR] stream=" << m_stream
                                      << " frameId=" << frameId
+                                     << " lifecycleId=" << lifecycleId
                                      << " ★★★ QMetaMethod::invoke 失败！fallback 到 emit ★★★"
                                      << " error=invoke returned false"
                                      << " renderer=" << QString::number((quintptr)m_videoRenderer.data(), 16)
@@ -1354,22 +1440,28 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
             if (isFirstFrames || signalReceiverCount == 0) {
                 qInfo() << "[Client][WebRTC][emitDone] stream=" << m_stream << " frame#=" << m_videoFrameLogCount
                          << " frameId=" << frameId
+                         << " lifecycleId=" << lifecycleId
                          << " emitCost=" << emitCost << "ms"
                          << " signalReceivers=" << signalReceiverCount
                          << " directInvokeSuccess=" << directInvokeSuccess
                          << " thisPtr=" << QString::number((quintptr)this, 16)
+                         << " m_stream=" << m_stream
                          << " ★ directInvokeSuccess=true → 直接路径工作；false → fallback"
                          << " ★ signalReceivers>0=QML Connections 已连接"
                          << " ★ 对比 VideoRenderer setFrame 日志确认 frameId 是否到达";
             }
             if (Q_UNLIKELY(signalReceiverCount == 0 && !directInvokeSuccess)) {
                 // 两个路径都失败 → 帧丢失（已降级到 FATAL）
-                qCritical() << "[Client][WebRTC][FATAL][emitDone] stream=" << m_stream
-                             << " frameId=" << frameId
-                             << " thisPtr=" << QString::number((quintptr)this, 16)
-                             << " ★★★ 直接调用失败 + QML Connections 无接收者！帧被静默丢弃！★★★"
-                             << " ★ 检查 VideoRenderer 是否正确调用了 setVideoRenderer"
-                             << " ★ videoFrameReadySignalMeta=" << videoFrameReadySignalMeta();
+                qCritical() << "[Client][WebRTC][FATAL][emitDone] ★★★ 两个传递路径全部失败！帧被静默丢弃！★★★"
+                           << " stream=" << m_stream
+                           << " frameId=" << frameId
+                           << " lifecycleId=" << lifecycleId
+                           << " thisPtr=" << QString::number((quintptr)this, 16)
+                           << " signalReceivers=" << signalReceiverCount
+                           << " directInvokeSuccess=" << directInvokeSuccess
+                           << " rendererNull=" << m_videoRenderer.isNull()
+                           << " ★ 立即检查 VideoRenderer.setFrame 日志和 QML Connections ★"
+                           << " ★ 常见原因：VideoRenderer 未调用 setVideoRenderer() ★";
             } else if (Q_UNLIKELY(signalReceiverCount == 0 && directInvokeSuccess)) {
                 // 直接调用成功但信号无接收者 → 正常（直接路径绕过了信号机制）
                 qInfo() << "[Client][WebRTC][emitDone] stream=" << m_stream

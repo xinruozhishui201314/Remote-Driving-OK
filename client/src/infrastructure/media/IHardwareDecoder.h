@@ -60,6 +60,12 @@ struct VideoFrame {
     int64_t  captureTimestamp = 0; // 原始采集时间戳（用于 E2E 延迟计算）
     uint32_t cameraId       = 0;
     quint64  frameId        = 0;   // 端到端帧序列号（C++ emit → QML → setFrame → deliverFrame → updatePaintNode）
+    quint64  lifecycleId    = 0;   // ★★★ v3 新增：端到端帧生命周期追踪 ID ★★★
+                                  //   - 在 RTP 包到达时生成唯一 ID（递增计数器）
+                                  //   - 流经：RTP arrival → H264Decoder → onVideoFrameFromDecoder → setFrame → deliverFrame → updatePaintNode → VideoMaterial::uploadYuvFrame
+                                  //   - 在每个关键节点记录，用于追踪帧是否在某个环节丢失/延迟
+                                  //   - 使用递增原子计数器，保证全局唯一且线程安全
+                                  //   - 日志关键词：[lifecycleId=N] 便于精确 grep 和关联
 
     PlaneInfo   planes[3]; // Y, U, V 或 RGB（CPU_MEMORY 路径）
     DmaBufInfo  dmaBuf;    // DMA_BUF 路径的描述符
@@ -73,6 +79,16 @@ struct VideoFrame {
     // 持有底层 AVFrame/surface 的生命周期引用
     // 确保 DMA-BUF fd 在 GL 纹理创建并使用完毕之前不被关闭
     std::shared_ptr<void> poolRef;
+
+    // ★★★ v3 新增：生命周期 ID 生成器 ★★★
+    // 在 webrtcclient.cpp 的 RTP 包到达时递增并分配给 frame
+    static std::atomic<quint64>& globalLifecycleIdCounter() {
+        static std::atomic<quint64> counter{0};
+        return counter;
+    }
+    static quint64 nextLifecycleId() {
+        return ++globalLifecycleIdCounter();
+    }
 
     void reset() {
         pts = 0;

@@ -27,7 +27,7 @@ class VideoSGNode;
  *   - updatePaintNode() 只在 Qt Render Thread 调用（与 GUI 线程同步）
  *
  * ═══════════════════════════════════════════════════════════════════════════════
- * ★★★ 根因分析与修复方案（方案 C：渲染线程直接刷新）★★★
+ * ★★★ 根因分析与修复方案（方案 C：Qt 6 scheduleRenderJob 渲染线程刷新）★★★
  *
  * 问题现象：四个视频视图都不显示，pendingFrames 累积到 1400+，updatePaintNode 不被调用
  *
@@ -43,15 +43,16 @@ class VideoSGNode;
  * QEvent::UpdateRequest 堆积在主线程队列中，无法被 Scene Graph 处理。
  * forceRefresh() 在 onClosed 后调用，已太晚。
  *
- * 修复方案 C（渲染线程直接刷新）：
+ * 修复方案 C（Qt 6 兼容）：
  * 1. QQuickWindow::update() 只向主线程事件队列投递 UpdateRequest
  *    → 主线程被模态对话框阻塞时完全失效
- * 2. 方案 C：检测到渲染阻塞时，向渲染线程直接发送刷新信号
- *    QQuickWindow 提供 polishAndUpdate()，在 Qt::QueuedConnection 下
- *    会向渲染线程的事件队列投递刷新请求
- *    → 绕过主线程事件循环，直接触发 Scene Graph 重绘
+ * 2. Qt 6 正确做法：使用 QQuickWindow::scheduleRenderJob() 向渲染线程投递任务
+ *    QQuickWindow::scheduleRenderJob(RenderRefreshRunnable, BeforeSynchronizingStage)
+ *    → 投递到渲染线程事件队列 → 渲染线程有独立事件循环
+ *    → modal 对话框阻塞主线程时仍能响应
  * 3. 配合 modality: Qt.WindowModal 减少主线程阻塞时间
  * 4. 对话框打开期间持续调用（非只在关闭时）
+ * 5. 主动轮询定时器：dialog 打开期间持续刷新
  * ═══════════════════════════════════════════════════════════════════════════════
  */
 class VideoRenderer : public QQuickItem {
@@ -75,13 +76,15 @@ public:
     void setMirrorHorizontal(bool m) { m_mirrorH = m; emit mirrorChanged(); update(); }
 
     // MediaPipeline 信号连接（可在任意线程调用）
-    /** @param frameId  端到端帧序列号（emit→QML→setFrame→deliverFrame→updatePaintNode 追踪） */
-    Q_INVOKABLE void deliverFrame(std::shared_ptr<VideoFrame> frame, quint64 frameId = 0);
+    /** @param frameId  端到端帧序列号（emit→QML→setFrame→deliverFrame→updatePaintNode 追踪）
+     *  @param lifecycleId v3 新增：从 RTP 包到达时分配的端到端追踪 ID，用于链路诊断 */
+    Q_INVOKABLE void deliverFrame(std::shared_ptr<VideoFrame> frame, quint64 frameId = 0, quint64 lifecycleId = 0);
 
     /** QML / WebRtcClient::videoFrameReady(QImage)：RGB→YUV420P 后走 deliverFrame（与现有 YUV 着色器一致）。
      *  @param frameId  从 C++ WebRtcClient::emit 传入的帧序列号，用于端到端追踪。
+     *  @param lifecycleId v3 新增：从 RTP 包到达时分配的端到端追踪 ID，用于链路诊断。
      *                  QML 端已打印 frameId，可与 C++ 日志对比确认 emit→setFrame→updatePaintNode 不断链。 */
-    Q_INVOKABLE void setFrame(const QImage& image, quint64 frameId = 0);
+    Q_INVOKABLE void setFrame(const QImage& image, quint64 frameId = 0, quint64 lifecycleId = 0);
 
 signals:
     void cameraIdChanged();
@@ -94,15 +97,14 @@ signals:
     void requestRenderThreadRefresh();
 
 public:
-    // ── 方案 C：渲染线程直接刷新 ──────────────────────────────────────────
+    // ── 方案 C：Qt 6 scheduleRenderJob 渲染线程刷新 ───────────────────────────
     /** Q_INVOKABLE：供 QML 在 VehicleSelectionDialog 打开/关闭时调用，强制触发渲染。
-     *  核心修复：优先使用 QMetaMethod::invoke 跨线程向渲染线程直接发送刷新请求，
+     *  核心修复：使用 QQuickWindow::scheduleRenderJob() 向渲染线程投递刷新任务，
      *  绕过主线程事件循环（modal 对话框阻塞时 window()->update() 完全失效）。
-     *  降级策略：
-     *    1. tryPolishAndUpdate() → 向渲染线程事件队列投递刷新（Qt::QueuedConnection）
-     *    2. QMetaMethod::invoke(window, Qt::QueuedConnection) → 显式跨线程
-     *    3. polish() + window()->update() → 主线程（对话框打开时可能无效）
-     */
+     *  Qt 6 兼容方案（polishAndUpdate() 不是公开 API）：
+     *    1. triggerRenderRefresh() → scheduleRenderJob() → 渲染线程事件队列
+     *    2. renderThreadRefreshImpl() → scheduleRenderJob() → 渲染线程事件队列
+     *    → 渲染线程有独立事件循环 → modal 对话框阻塞主线程时仍能响应 */
     Q_INVOKABLE void forceRefresh();
 
     /** 诊断：返回当前帧累积状态，供调试使用 */

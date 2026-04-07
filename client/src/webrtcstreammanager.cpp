@@ -115,11 +115,24 @@ int WebRtcStreamManager::getQmlSignalReceiverCount() const
 {
     // ★★★ 关键诊断：直接检查 QML 是否连接到 videoFrameReady 信号 ★★★
     // 返回值：
+    //   -1 = m_front 为 null（异常）
     //   0 = QML 完全没有连接到信号（根因！）
     //   >0 = QML 有连接（理论上视频应该显示）
     // 注意：只在 front 上检查，因为四路都走同样逻辑
-    if (!m_front) return -1;
-    return m_front->receiverCountVideoFrameReady();
+
+    if (!m_front) {
+        qWarning() << "[StreamManager][Diag] getQmlSignalReceiverCount: m_front is NULL! streamManager=" << (void*)this
+                  << " ★★★ FATAL: WebRtcClient 未初始化！★★★"
+                  << " 可能原因：对象被意外删除或构造失败";
+        return -1;
+    }
+
+    int rc = m_front->receiverCountVideoFrameReady();
+    qInfo() << "[StreamManager][Diag] getQmlSignalReceiverCount"
+            << " m_front=" << (void*)m_front
+            << " rc=" << rc
+            << " ★ -1=前端m_front为null | 0=信号无接收者 | >0=有QML连接 ★";
+    return rc;
 }
 
 int WebRtcStreamManager::getFrontSignalReceiverCount() const
@@ -227,13 +240,13 @@ void WebRtcStreamManager::dumpStreamInfo() const
 
 void WebRtcStreamManager::forceRefreshAllRenderers()
 {
-    // ── 方案 C：渲染线程直接刷新 ──────────────────────────────────────
+    // ── Qt 6 兼容：渲染线程刷新 ──────────────────────────────────────
     // 根因：Qt Scene Graph 在 VehicleSelectionDialog modal=true 显示期间
     // 完全阻塞主事件循环，导致 window()->update() 投递的 QEvent::UpdateRequest
     // 堆积在主线程队列中无法处理，Scene Graph 停止调用 updatePaintNode。
     //
-    // 修复：VideoRenderer::forceRefresh() 使用 QMetaMethod::invoke + Qt::QueuedConnection
-    // 向渲染线程事件队列直接投递刷新请求，绕过主线程阻塞。
+    // Qt 6 修复：VideoRenderer::forceRefresh() 使用 QQuickWindow::scheduleRenderJob()
+    // 向渲染线程事件队列投递刷新任务，绕过主线程阻塞。
     // 对话框打开期间每 16ms 持续调用（dialogOpenPollingTimer），持续驱动渲染线程。
     const int64_t now = QDateTime::currentMSecsSinceEpoch();
     static QAtomicInt s_callCount{0};
@@ -244,7 +257,7 @@ void WebRtcStreamManager::forceRefreshAllRenderers()
             << " front=" << (void*)m_front << " rear=" << (void*)m_rear
             << " left=" << (void*)m_left << " right=" << (void*)m_right
             << " callingThread=" << (void*)QThread::currentThreadId()
-            << " ★ 方案C：向渲染线程直接投递刷新请求 ★";
+            << " ★ Qt 6 scheduleRenderJob 方案：向渲染线程投递刷新任务 ★";
 
     // 遍历四路 WebRtcClient，调用其 forceRefresh 方法
     auto refreshClient = [&](const char* name, WebRtcClient* client) {
@@ -270,7 +283,7 @@ void WebRtcStreamManager::forceRefreshAllRenderers()
     const int64_t doneTime = QDateTime::currentMSecsSinceEpoch();
     qInfo() << "[StreamManager] forceRefreshAllRenderers 完成，耗时=" << (doneTime - now) << "ms"
             << " callSeq=" << callSeq
-            << " ★★★ 对比 updatePaintNode 日志确认渲染线程是否被唤醒 ★★★";
+            << " ★ 对比 updatePaintNode 日志确认渲染线程是否被 scheduleRenderJob 唤醒 ★";
 }
 
 bool WebRtcStreamManager::anyConnected() const

@@ -611,6 +611,26 @@ ensure_qsb_in_container() {
     return 1
 }
 
+# ---------- 确保 client-dev 内有 libxkbcommon-dev（Qt6Gui 依赖 XKB::XKB CMake 目标）----------
+ensure_client_libxkbcommon_dev() {
+    if dc_main exec -T client-dev bash -c 'test -f /usr/include/xkbcommon/xkbcommon.h' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} libxkbcommon-dev 已存在（XKB::XKB CMake 目标可用）"
+        return 0
+    fi
+    echo -e "${YELLOW}容器内未检测到 libxkbcommon-dev，正在安装...${NC}"
+    if dc_main exec -T -u root client-dev bash -c \
+        'apt-get update -qq && apt-get install -y -qq --no-install-recommends libxkbcommon-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        if dc_main exec -T client-dev bash -c 'test -f /usr/include/xkbcommon/xkbcommon.h' 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} libxkbcommon-dev 已安装，XKB::XKB CMake 目标可用"
+            return 0
+        fi
+    fi
+    echo -e "${RED}✗${NC} libxkbcommon-dev 安装失败，Qt6Gui 将找不到 XKB::XKB 目标"
+    echo -e "${YELLOW}  可尝试: 以 root 进入容器手动 apt-get install libxkbcommon-dev${NC}"
+    echo ""
+    return 1
+}
+
 # ---------- 强制重新编译客户端（确保使用最新代码）----------
 ensure_client_built() {
     echo -e "${CYAN}========== 编译客户端（强制重新编译以确保使用最新代码）==========${NC}"
@@ -859,6 +879,7 @@ if [ "$DO_VERIFY" -eq 1 ] || [ "$DO_CLIENT" -eq 1 ]; then
     ensure_client_chinese_font
     ensure_client_mosquitto_pub
     ensure_client_libgl_mesa_dev
+    ensure_client_libxkbcommon_dev
     ensure_qsb_in_container
     
     # 强制编译客户端（如果设置了 no-build，则跳过编译，客户端启动时自动编译）

@@ -251,14 +251,16 @@ bool H264Decoder::handleParameterSet(const uint8_t *nal, size_t nalLen)
 // ============================================================================
 // RTP
 // ============================================================================
-void H264Decoder::feedRtp(const uint8_t *data, size_t len)
+void H264Decoder::feedRtp(const uint8_t *data, size_t len, quint64 lifecycleId)
 {
     // ── ★★★ 端到端追踪：feedRtp 进入（主线程） ★★★ ────────────────────────
     const int64_t feedRtpEnterTime = QDateTime::currentMSecsSinceEpoch();
     m_lastFeedRtpTime = feedRtpEnterTime;
+    m_currentLifecycleId = lifecycleId;  // 传递给解码流程，emitDecodedFrames 使用
 
     if (len <= kRtpHeaderMinLen) {
-        qWarning() << "[H264][feedRtp] RTP 包太短，忽略 len=" << len;
+        qWarning() << "[H264][feedRtp] RTP 包太短，忽略 len=" << len
+                   << " lifecycleId=" << lifecycleId;
         return;
     }
 
@@ -878,6 +880,7 @@ void H264Decoder::emitDecodedFrames()
     const int64_t funcEnterTime = QDateTime::currentMSecsSinceEpoch();
     const int64_t feedRtpToEmitMs = (m_lastFeedRtpTime > 0) ? (funcEnterTime - m_lastFeedRtpTime) : -1;
     qInfo() << "[H264][emit] ★★★ emitDecodedFrames ENTER ★★★ stream=" << m_streamTag
+             << " lifecycleId=" << m_currentLifecycleId
              << " feedRtpToEmitMs=" << feedRtpToEmitMs
              << "（从 RTP 包到解码输出的端到端耗时，>200ms 说明主线程阻塞或解码卡顿）";
 
@@ -989,6 +992,7 @@ void H264Decoder::emitDecodedFrames()
             if (m_framesEmitted <= 5) {
                 qInfo() << "[H264][" << m_streamTag << "] ★★★ emitDecoded 输出帧 ★★★ #" << m_framesEmitted
                          << " frameId=" << m_frameIdCounter
+                         << " lifecycleId=" << m_currentLifecycleId
                          << " w=" << w << " h=" << h
                          << " rtpSeq=" << m_lastRtpSeq
                          << " codecOpen=" << m_codecOpen
@@ -1006,6 +1010,7 @@ void H264Decoder::emitDecodedFrames()
                     int queuedConnCount = this->receivers(SIGNAL(frameReady(const QImage&, quint64)));
                     qInfo() << "[H264][" << m_streamTag << "] ★★★ emit frameReady 完成 ★★★"
                              << " frameId=" << m_frameIdCounter
+                             << " lifecycleId=" << m_currentLifecycleId
                              << " queuedConnections=" << queuedConnCount
                              << " ★ queuedConnections=0 → WebRtcClient::onVideoFrameFromDecoder 未连接到 frameReady 信号！"
                              << " queuedConnections>0 → 链路完整，对比 onVideoFrameFromDecoder frameId 确认";
