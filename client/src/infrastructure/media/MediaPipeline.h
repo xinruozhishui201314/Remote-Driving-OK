@@ -1,6 +1,7 @@
 #pragma once
 #include <QObject>
 #include <QThread>
+#include <QMutex>
 #include <memory>
 #include "IHardwareDecoder.h"
 #include "FramePool.h"
@@ -13,7 +14,9 @@
  * 数据流：
  *   IO线程: onVideoPacketReceived() → 压入 m_decodeQueue
  *   解码线程: 从队列取包 → IHardwareDecoder → 帧池帧 → emit frameReady
- *   渲染线程: 接收 frameReady → VideoRenderer::deliverFrame()
+ *   UI 线程: 接收 frameReady → QVideoSink::setVideoFrame()（经 WebRtcClient）
+ *
+ * 背压：m_decodeQueue 为 SPSC、容量 256；满时丢帧并累计 framesDropped（见 onVideoPacketReceived）。
  */
 class MediaPipeline : public QObject {
     Q_OBJECT
@@ -49,7 +52,13 @@ public:
     // 重新配置（降级/升级时使用）
     void reconfigure(const PipelineConfig& config);
 
-    PipelineStats stats() const { return m_stats; }
+    // 动态调整帧池容量
+    void setFramePoolCapacity(int capacity);
+
+    PipelineStats stats() const {
+        QMutexLocker lock(&m_statsMutex);
+        return m_stats;
+    }
     bool isRunning() const      { return m_running; }
 
 signals:
@@ -75,4 +84,5 @@ private:
     QThread* m_decodeThread = nullptr;
     std::atomic<bool> m_running{false};
     mutable PipelineStats m_stats{};
+    mutable QMutex m_statsMutex{}; // 保护 m_stats 的并发访问
 };

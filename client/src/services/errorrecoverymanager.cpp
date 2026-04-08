@@ -72,6 +72,12 @@ void ErrorRecoveryManager::attemptRecovery()
     if (it == m_errors.end()) return;
 
     auto& record = it->second;
+
+    // 防止重试计数溢出
+    if (record.retryCount > 10000) {
+        record.retryCount = 10000;
+    }
+
     const RecoveryLevel level = record.currentLevel;
 
     auto actionIt = m_actions.find(level);

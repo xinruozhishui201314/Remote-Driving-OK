@@ -88,8 +88,8 @@ private:
     QTimer m_safetyTimer;
 
     // Latency watchdog
-    double m_currentOneWayMs = 0.0;
-    double m_currentRTTMs    = 0.0;
+    std::atomic<double> m_currentOneWayMs{0.0};
+    std::atomic<double> m_currentRTTMs{0.0};
     int    m_latencyViolationCount = 0;
 
     // Heartbeat monitor

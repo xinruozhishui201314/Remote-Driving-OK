@@ -1,5 +1,6 @@
 #include "mqttcontroller.h"
 #include "webrtcclient.h"
+#include "core/tracing.h"
 #include <QJsonDocument>
 #include <QDebug>
 #include <QUrl>
@@ -9,10 +10,7 @@
 #include <QTimer>
 #include <QRegularExpression>
 
-// TODO: 实际实现需要集成 MQTT 客户端库
-// #include <QMqttClient>  // Qt MQTT (如果可用)
-// 或
-// #include <mqtt/client.h>  // Paho MQTT C++
+// 生产构建：定义 ENABLE_MQTT_PAHO 时使用 Paho async_client（见 CMakeLists / connectToBroker）。
 
 MqttController::MqttController(QObject *parent)
     : QObject(parent)
@@ -20,6 +18,10 @@ MqttController::MqttController(QObject *parent)
 #ifdef ENABLE_MQTT_PAHO
     // Paho MQTT 客户端将在 connectToBroker 时初始化
 #endif
+    // 初始化重连定时器（指数退避）
+    m_reconnectTimer = new QTimer(this);
+    m_reconnectTimer->setSingleShot(true);
+    connect(m_reconnectTimer, &QTimer::timeout, this, &MqttController::onReconnectTimer);
 }
 
 bool MqttController::isConnected() const
@@ -300,6 +302,22 @@ void MqttController::sendLightCommand(const QString &lightType, bool active)
     sendControlCommand(cmd);
 }
 
+void MqttController::sendUiEnvelopeJson(const QString &type, const QVariantMap &payload)
+{
+    if (Tracing::instance().currentTraceId().isEmpty()) {
+        Tracing::instance().setCurrentTraceId(Tracing::generateTraceId());
+    }
+    QJsonObject obj;
+    obj[QStringLiteral("schemaVersion")] = QStringLiteral("1.0");
+    obj[QStringLiteral("vin")] = m_currentVin;
+    obj[QStringLiteral("sessionId")] = QString();
+    obj[QStringLiteral("type")] = type;
+    obj[QStringLiteral("payload")] = QJsonObject::fromVariantMap(payload);
+    obj[QStringLiteral("timestampMs")] = QDateTime::currentMSecsSinceEpoch();
+    obj[QStringLiteral("trace_id")] = Tracing::instance().currentTraceId();
+    sendControlCommand(obj);
+}
+
 void MqttController::sendControlCommand(const QJsonObject &command)
 {
     const bool dataChannelOk = m_webrtcClient && m_webrtcClient->isConnected();
@@ -545,6 +563,9 @@ void MqttController::publishMessage(const QString &topic, const QJsonObject &pay
 void MqttController::onConnected()
 {
     m_isConnected = true;
+    // 重置重连计数器
+    m_reconnectAttempts = 0;
+    m_reconnectScheduled = false;
     qDebug() << "[CLIENT][MQTT] 已连接 m_currentVin=" << m_currentVin
              << " m_controlTopic=" << m_controlTopic
              << "（发送 start_stream/remote_control 时将带此 VIN，若为空请先选车）";
@@ -711,8 +732,40 @@ void MqttController::onConnected()
 
 void MqttController::onDisconnected()
 {
-    qDebug() << "MQTT disconnected";
+    qDebug() << "MQTT disconnected, scheduling reconnect...";
     updateConnectionStatus(false);
+    scheduleReconnect();
+}
+
+void MqttController::scheduleReconnect()
+{
+    if (m_reconnectScheduled) {
+        return;
+    }
+
+    if (m_reconnectAttempts >= m_maxReconnectAttempts) {
+        qWarning() << "[CLIENT][MQTT] 达到最大重连次数 (" << m_maxReconnectAttempts
+                   << ")，停止自动重连，请检查网络和 broker";
+        emit errorOccurred("MQTT 连接失败，已达到最大重连次数");
+        return;
+    }
+
+    m_reconnectScheduled = true;
+    // 指数退避：base * 2^attempts，最大 30 秒
+    int delay = std::min(m_baseReconnectDelayMs * (1 << m_reconnectAttempts), m_maxReconnectDelayMs);
+    m_reconnectAttempts++;
+
+    qDebug() << "[CLIENT][MQTT] 计划" << delay << "ms 后重连 (attempt" << m_reconnectAttempts << "/"
+             << m_maxReconnectAttempts << ")";
+    m_reconnectTimer->start(delay);
+}
+
+void MqttController::onReconnectTimer()
+{
+    m_reconnectScheduled = false;
+    qDebug() << "[CLIENT][MQTT] 执行重连 (attempt" << m_reconnectAttempts << "/"
+             << m_maxReconnectAttempts << ")";
+    connectToBroker();
 }
 
 void MqttController::onMessageReceived(const QByteArray &topic, const QByteArray &payload)

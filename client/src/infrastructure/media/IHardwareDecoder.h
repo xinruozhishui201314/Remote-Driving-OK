@@ -59,10 +59,10 @@ struct VideoFrame {
     int64_t  pts            = 0;
     int64_t  captureTimestamp = 0; // 原始采集时间戳（用于 E2E 延迟计算）
     uint32_t cameraId       = 0;
-    quint64  frameId        = 0;   // 端到端帧序列号（C++ emit → QML → setFrame → deliverFrame → updatePaintNode）
-    quint64  lifecycleId    = 0;   // ★★★ v3 新增：端到端帧生命周期追踪 ID ★★★
+    quint64  frameId        = 0;   // 端到端帧序列号（解码 → WebRtcClient → QVideoSink / QML）
+    quint64  lifecycleId    = 0;   // 端到端帧生命周期追踪 ID
                                   //   - 在 RTP 包到达时生成唯一 ID（递增计数器）
-                                  //   - 流经：RTP arrival → H264Decoder → onVideoFrameFromDecoder → setFrame → deliverFrame → updatePaintNode → VideoMaterial::uploadYuvFrame
+                                  //   - 流经：RTP → H264Decoder → onVideoFrameFromDecoder → QVideoSink::setVideoFrame
                                   //   - 在每个关键节点记录，用于追踪帧是否在某个环节丢失/延迟
                                   //   - 使用递增原子计数器，保证全局唯一且线程安全
                                   //   - 日志关键词：[lifecycleId=N] 便于精确 grep 和关联

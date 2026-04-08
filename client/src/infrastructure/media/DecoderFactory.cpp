@@ -1,8 +1,13 @@
 #include "DecoderFactory.h"
 #include <QDebug>
+#include <QFile>
+#include <QProcess>
 
 #ifdef ENABLE_VAAPI
-#include "VAAPIDecoder.h"
+#include <va/va.h>
+#include <va/va_drm.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 #ifdef ENABLE_NVDEC
@@ -73,14 +78,108 @@ QStringList DecoderFactory::availableDecoders()
 {
     QStringList list;
 #ifdef ENABLE_VAAPI
-    list << "VAAPI(DRM-Prime)";
+    if (isVaapiAvailable()) {
+        list << "VAAPI(DRM-Prime)";
+    }
 #endif
 #ifdef ENABLE_NVDEC
-    list << "NVDEC(CUDA)";
+    if (isNvdecAvailable()) {
+        list << "NVDEC(CUDA)";
+    }
 #endif
 #ifdef ENABLE_FFMPEG
     list << "FFmpeg(CPU)";
 #endif
     if (list.isEmpty()) list << "(none)";
     return list;
+}
+
+bool DecoderFactory::isVaapiAvailable()
+{
+#ifdef ENABLE_VAAPI
+    // 尝试打开DRM设备并检查VAAPI能力
+    int drmFd = open("/dev/dri/renderD128", O_RDWR);
+    if (drmFd < 0) {
+        drmFd = open("/dev/dri/renderD129", O_RDWR);
+    }
+    if (drmFd < 0) {
+        qDebug() << "[Client][DecoderFactory] VAAPI: no DRM render device available";
+        return false;
+    }
+
+    VADisplay vaDisplay = vaGetDisplayDRM(drmFd);
+    if (!vaDisplay) {
+        close(drmFd);
+        qDebug() << "[Client][DecoderFactory] VAAPI: vaGetDisplayDRM failed";
+        return false;
+    }
+
+    VAStatus status = vaInitialize(vaDisplay, nullptr, nullptr);
+    if (status != VA_STATUS_SUCCESS) {
+        close(drmFd);
+        qDebug() << "[Client][DecoderFactory] VAAPI: vaInitialize failed" << status;
+        return false;
+    }
+
+    // 检查H264解码能力
+    VAConfigAttrib attrib;
+    attrib.type = VAConfigAttribRTFormat;
+    status = vaGetConfigAttributes(vaDisplay, VAProfileH264Main, VAEntrypointVLD,
+                                   &attrib, 1);
+    if (status != VA_STATUS_SUCCESS || !(attrib.value & VA_RT_FORMAT_YUV420)) {
+        vaTerminate(vaDisplay);
+        close(drmFd);
+        qDebug() << "[Client][DecoderFactory] VAAPI: H264 decoding not supported";
+        return false;
+    }
+
+    vaTerminate(vaDisplay);
+    close(drmFd);
+    qInfo() << "[Client][DecoderFactory] VAAPI hardware decode available";
+    return true;
+#else
+    return false;
+#endif
+}
+
+bool DecoderFactory::isNvdecAvailable()
+{
+#ifdef ENABLE_NVDEC
+    // 检查NVIDIA GPU设备文件
+    if (QFile::exists("/dev/nvidia0")) {
+        qInfo() << "[Client][DecoderFactory] NVDEC: NVIDIA GPU device found via /dev/nvidia0";
+        return true;
+    }
+    if (QFile::exists("/dev/nvidiactl")) {
+        qInfo() << "[Client][DecoderFactory] NVDEC: NVIDIA GPU device found via /dev/nvidiactl";
+        return true;
+    }
+
+    // 检查nvidia-smi命令
+    QProcess proc;
+    proc.start("nvidia-smi", {"--query-gpu=name", "--format=csv,noheader"});
+    if (proc.waitForFinished(2000) && proc.exitCode() == 0) {
+        QString gpuName = QString::fromLocal8Bit(proc.readAllStandardOutput()).trimmed();
+        if (!gpuName.isEmpty()) {
+            qInfo() << "[Client][DecoderFactory] NVDEC: NVIDIA GPU found via nvidia-smi:" << gpuName;
+            return true;
+        }
+    }
+    qDebug() << "[Client][DecoderFactory] NVDEC: no NVIDIA GPU detected";
+    return false;
+#else
+    return false;
+#endif
+}
+
+bool DecoderFactory::isHardwareDecodeAvailable(const QString& type)
+{
+    if (type == "vaapi" || type == "VAAPI") {
+        return isVaapiAvailable();
+    }
+    if (type == "nvdec" || type == "NVDEC" || type == "cuda" || type == "CUDA") {
+        return isNvdecAvailable();
+    }
+    qWarning() << "[Client][DecoderFactory] Unknown hardware decode type:" << type;
+    return false;
 }

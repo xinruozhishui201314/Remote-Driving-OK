@@ -93,6 +93,15 @@ private:
     void addTransition(SystemState from, Trigger trig, SystemState to,
                        std::function<bool()> guard = {},
                        std::function<void()> action = {});
+
+    // ★★★ 新增：状态进入/退出/转换动作注册接口 ★★★
+    // 状态进入动作：每次进入该状态时执行
+    void registerEntryAction(SystemState state, std::function<void()> action);
+    // 状态退出动作：每次离开该状态时执行
+    void registerExitAction(SystemState state, std::function<void()> action);
+    // 转换动作：特定触发器触发时执行（在 enter/exit 动作之后）
+    void registerTransitionAction(Trigger trigger, std::function<void()> action);
+
     void setupTransitions();
     void onEnterState(SystemState state);
     void onExitState(SystemState state);
@@ -108,6 +117,7 @@ private:
     std::map<std::pair<SystemState, Trigger>, Transition> m_transitions;
     std::map<SystemState, std::function<void()>> m_entryActions;
     std::map<SystemState, std::function<void()>> m_exitActions;
+    std::map<Trigger, std::function<void()>> m_transitionActions;  // ★★★ 修复：转换动作映射 ★★★
     SystemState m_current = SystemState::IDLE;
     mutable QMutex m_mutex;
 };

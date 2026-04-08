@@ -1,6 +1,10 @@
 # Client Configuration File
 # 驾驶舱客户端配置文件
 # 环境变量优先级高于配置文件
+#
+# ═══════════════════════════════════════════════════════════════════════════════════════
+# 产品化增强配置（v2）
+# ═══════════════════════════════════════════════════════════════════════════════════════
 
 # ========================================
 # 应用配置
@@ -8,26 +12,93 @@
 app:
   # 应用名称
   name: "Remote Driving Client"
-  
+
   # 应用版本
   version: "1.0.0"
-  
+
   # 组织名称
   organization: "RemoteDriving"
 
+  # 实例 ID（用于多实例部署时区分）
+  # 环境变量: CLIENT_INSTANCE_ID
+  instance_id: ""
+
 # ========================================
-# 日志配置
+# 日志配置（产品化增强）
 # ========================================
 logging:
   # 日志文件路径
   # 环境变量: CLIENT_LOG_FILE
   file_path: "/tmp/remote-driving-client.log"
-  
+
   # 日志级别: debug, info, warning, error
   level: "info"
-  
+
   # 启用控制台输出
   console_enabled: true
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：有界队列防止内存膨胀
+  # ═══════════════════════════════════════════════════════════════
+  # 队列最大容量（条），超过则丢弃最老条目
+  # 环境变量: CLIENT_LOG_QUEUE_SIZE
+  queue_max_size: 10000
+
+  # 溢出警告阈值（丢弃超过此数时触发告警）
+  overflow_warning_threshold: 1000
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：日志轮转
+  # ═══════════════════════════════════════════════════════════════
+  # 启用日志轮转
+  rotation_enabled: true
+
+  # 单文件最大大小（MB），超过则轮转
+  rotation_max_size_mb: 100
+
+  # 保留文件个数，超过则删除最老的
+  rotation_max_files: 7
+
+  # 轮转文件名前缀
+  rotation_file_prefix: "client"
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：JSON 结构化日志
+  # ═══════════════════════════════════════════════════════════════
+  # 启用 JSON 格式输出（便于日志收集系统解析；生产建议 true）
+  json_format: false
+
+  # 包含字段掩码（逗号分隔）：timestamp,level,module,component,message,threadId
+  json_include_fields: "timestamp,level,module,message"
+
+# ========================================
+# 监控指标配置（产品化新增）
+# ========================================
+metrics:
+  # 启用 Prometheus 指标暴露
+  enabled: false
+
+  # HTTP 监听端口（设为 0 则禁用）
+  port: 9090
+
+  # 指标收集间隔（秒）
+  collection_interval_sec: 10
+
+  # 指标端点路径
+  endpoint: "/metrics"
+
+  # 收集的指标项
+  collect:
+    # 视频指标
+    video: true
+    # 控制命令指标
+    control: true
+    # 网络质量指标
+    network: true
+    # 安全事件指标
+    safety: true
+    # 系统资源指标
+    system: true
 
 # ========================================
 # Keycloak 认证配置
@@ -115,23 +186,78 @@ webrtc:
     - "VP8"
     - "VP9"
     - "AV1"
-  
+
   # 视频分辨率
   video_resolution: "1280x720"
-  
+
   # 视频帧率
   video_fps: 30
-  
+
   # 音频启用
   audio_enabled: true
-  
+
   # STUN 服务器列表
   stun_servers:
     - "stun:stun.l.google.com:19302"
     - "stun:stun1.l.google.com:19302"
-  
+
   # TURN 服务器配置（可选）
   turn_servers: []
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：视频解码器配置
+  # ═══════════════════════════════════════════════════════════════
+  decoder:
+    # 解码器类型：auto, vaapi, v4l2m2m, nvdec, ffmpeg
+    type: "auto"
+
+    # 解码线程数（0=自动）
+    thread_count: 1
+
+    # 帧缓冲区大小
+    frame_buffer_size: 16
+
+    # 丢包处理策略：drop, repeat, wait
+    packet_loss_strategy: "repeat"
+
+    # 最大分辨率（用于内存保护）
+    max_width: 1920
+    max_height: 1080
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：GPU 加速配置
+  # ═══════════════════════════════════════════════════════════════
+  gpu:
+    # GPU 互操作类型：auto, egl, vaapi, cpu
+    interop_type: "auto"
+
+    # 启用 GPU 零拷贝
+    enable_zero_copy: true
+
+    # 显存预留大小（MB）
+    reserved_memory_mb: 256
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：视频渲染配置
+  # ═══════════════════════════════════════════════════════════════
+  rendering:
+    # 帧率上限
+    max_fps: 60
+
+    # 允许跳帧（省 CPU）
+    allow_frame_skip: false
+
+    # 三缓冲启用
+    triple_buffer_enabled: true
+
+    # 渲染失败重试次数
+    render_retry_count: 3
+
+    # 渲染超时（ms）
+    render_timeout_ms: 1000
+
+    # 黑屏检测阈值（连续丢帧数）
+    black_screen_threshold: 30
 
 # ========================================
 # 界面配置
@@ -212,12 +338,93 @@ security:
 performance:
   # MQTT 消息处理队列大小
   mqtt_queue_size: 100
-  
+
   # 视频渲染缓冲区大小
   video_buffer_size: 5
-  
+
   # 遥测数据更新频率限制（Hz）
   telemetry_update_limit: 30
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：控制环路配置
+  # ═══════════════════════════════════════════════════════════════
+  control_loop:
+    # 控制频率（Hz）
+    rate_hz: 100
+
+    # 方向盘最大角速度（rad/s）
+    max_steering_rate_rad_per_sec: 2.0
+
+    # 非线性曲线指数（1.0 = 线性）
+    steering_curve: 1.5
+
+    # 油门死区
+    throttle_deadzone: 0.02
+
+    # 刹车死区
+    brake_deadzone: 0.02
+
+    # 启用延迟补偿
+    enable_latency_compensation: true
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：安全监控配置
+  # ═══════════════════════════════════════════════════════════════
+  safety:
+    # Deadman 超时（ms）
+    deadman_timeout_ms: 3000
+
+    # 单程延迟阈值（ms）
+    max_one_way_latency_ms: 150.0
+
+    # RTT 阈值（ms）
+    max_round_trip_ms: 250.0
+
+    # 警告延迟阈值（ms）
+    warning_latency_ms: 100.0
+
+    # 连续超限触发急停次数
+    emergency_trigger_count: 3
+
+    # 心跳间隔（ms）
+    heartbeat_interval_ms: 100
+
+    # 心跳超时（ms）
+    heartbeat_timeout_ms: 500
+
+    # 操作员失活超时（ms）
+    inactivity_timeout_ms: 5000
+
+  # ═══════════════════════════════════════════════════════════════
+  # 产品化增强：降级策略配置
+  # ═══════════════════════════════════════════════════════════════
+  degradation:
+    # 启用自动降级
+    enabled: true
+
+    # 降级迟滞时间（ms）：快降慢升，防止震荡
+    hysteresis_ms: 3000
+
+    # 轻度降级阈值：延迟（ms）
+    light_degradation_latency_ms: 150
+
+    # 轻度降级阈值：丢包率（%）
+    light_degradation_packet_loss_percent: 5
+
+    # 重度降级阈值：延迟（ms）
+    severe_degradation_latency_ms: 300
+
+    # 重度降级阈值：丢包率（%）
+    severe_degradation_packet_loss_percent: 10
+
+    # 降级级别定义
+    levels:
+      level_0_full:   { latency_max_ms: 150,  loss_max_percent: 5,   speed_limit_kmh: 0 }
+      level_1_limited: { latency_max_ms: 200,  loss_max_percent: 8,   speed_limit_kmh: 20 }
+      level_2_caution: { latency_max_ms: 300,  loss_max_percent: 10,  speed_limit_kmh: 10 }
+      level_3_stop:   { latency_max_ms: 500,  loss_max_percent: 20,  speed_limit_kmh: 5 }
+      level_4_emergency: { latency_max_ms: 0, loss_max_percent: 0, speed_limit_kmh: 0 }
+      level_5_safety_stop: { latency_max_ms: 0, loss_max_percent: 0, speed_limit_kmh: 0 }
 
 # ========================================
 # 日志采样配置

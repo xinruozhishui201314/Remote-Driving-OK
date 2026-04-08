@@ -1,39 +1,50 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import RemoteDriving 1.0
+import "styles" as ThemeModule
 
 /**
- * 登录页面（嵌入主窗口）
- * 美观的登录界面，作为应用首页
+ * 登录页面
+ * 统一使用 AppContext 和 Theme
  */
 Rectangle {
     id: loginPage
-    
-    // 中文字体（从主窗口继承或使用默认）
-    property string chineseFont: {
-        if (typeof window !== "undefined" && window.chineseFont) {
-            return window.chineseFont
+
+    // ── 错误状态管理 ──────────────────────────────────────────────────
+    QtObject {
+        id: loginErrorState
+        property string errorMessage: ""
+        property int errorCode: 0
+        
+        function showError(code, message) {
+            errorCode = code
+            errorMessage = message
+            console.log("[Client][UI][LoginPage] Error: code=" + code + " message=" + message)
         }
-        var fonts = ["WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Noto Sans CJK SC"]
-        var availableFonts = Qt.fontFamilies()
-        for (var i = 0; i < fonts.length; i++) {
-            if (availableFonts.indexOf(fonts[i]) !== -1) {
-                return fonts[i]
-            }
+        
+        function clearError() {
+            errorCode = 0
+            errorMessage = ""
         }
-        return ""
     }
-    
-    // 登录状态
+
+    // ── 统一属性 ─────────────────────────────────────────────────────
     property bool isLoggingIn: false
-    // 密码是否明文显示（可选切换）
     property bool passwordVisible: false
+    
+    // 统一字体获取
+    readonly property string chineseFont: AppContext.chineseFont
+    
+    // 统一 AuthManager 访问
+    readonly property var authManager: AppContext.authManager
+    readonly property var nodeHealthChecker: AppContext.nodeHealthChecker
     
     // 背景渐变
     gradient: Gradient {
-        GradientStop { position: 0.0; color: "#1E1E2E" }
-        GradientStop { position: 0.5; color: "#2A2A3E" }
-        GradientStop { position: 1.0; color: "#1E1E2E" }
+        GradientStop { position: 0.0; color: ThemeModule.Theme.colorBackground }
+        GradientStop { position: 0.5; color: ThemeModule.Theme.colorSurface }
+        GradientStop { position: 1.0; color: ThemeModule.Theme.colorBackground }
     }
     
     // 装饰性背景元素
@@ -41,8 +52,8 @@ Rectangle {
         anchors.fill: parent
         opacity: 0.1
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#4A90E2" }
-            GradientStop { position: 1.0; color: "#50C878" }
+            GradientStop { position: 0.0; color: ThemeModule.Theme.colorBorderActive }
+            GradientStop { position: 1.0; color: ThemeModule.Theme.colorAccent }
         }
         rotation: -15
         transformOrigin: Item.TopLeft
@@ -59,18 +70,18 @@ Rectangle {
             Layout.alignment: Qt.AlignHCenter
             spacing: 20
             
-            // Logo 图标
+            // Logo
             Rectangle {
                 Layout.alignment: Qt.AlignHCenter
                 width: 100
                 height: 100
                 radius: 50
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: "#4A90E2" }
-                    GradientStop { position: 1.0; color: "#357ABD" }
+                    GradientStop { position: 0.0; color: ThemeModule.Theme.colorBorderActive }
+                    GradientStop { position: 1.0; color: ThemeModule.Theme.colorPrimary }
                 }
                 
-                // 简单阴影
+                // 阴影
                 Rectangle {
                     anchors.fill: parent
                     anchors.margins: -5
@@ -91,7 +102,7 @@ Rectangle {
             // 标题
             Text {
                 text: "远程驾驶客户端"
-                color: "#FFFFFF"
+                color: ThemeModule.Theme.colorText
                 font.pixelSize: 32
                 font.family: loginPage.chineseFont || font.family
                 font.bold: true
@@ -101,7 +112,7 @@ Rectangle {
             // 副标题
             Text {
                 text: "Remote Driving Client"
-                color: "#B0B0B0"
+                color: ThemeModule.Theme.colorTextDim
                 font.pixelSize: 16
                 Layout.alignment: Qt.AlignHCenter
             }
@@ -113,8 +124,8 @@ Rectangle {
                 height: 4
                 radius: 2
                 gradient: Gradient {
-                    GradientStop { position: 0.0; color: "#4A90E2" }
-                    GradientStop { position: 1.0; color: "#50C878" }
+                    GradientStop { position: 0.0; color: ThemeModule.Theme.colorBorderActive }
+                    GradientStop { position: 1.0; color: ThemeModule.Theme.colorAccent }
                 }
             }
         }
@@ -123,12 +134,12 @@ Rectangle {
         Rectangle {
             Layout.fillWidth: true
             Layout.preferredHeight: loginForm.implicitHeight + 40
-            color: "#2A2A3E"
-            border.color: "#4A90E2"
+            color: ThemeModule.Theme.colorSurface
+            border.color: ThemeModule.Theme.colorBorderActive
             border.width: 2
             radius: 16
             
-            // 简单阴影
+            // 阴影
             Rectangle {
                 anchors.fill: parent
                 anchors.margins: -5
@@ -157,7 +168,7 @@ Rectangle {
                     
                     Text {
                         text: "服务器地址"
-                        color: "#FFFFFF"
+                        color: ThemeModule.Theme.colorText
                         font.pixelSize: 14
                         font.family: loginPage.chineseFont || font.family
                         font.bold: true
@@ -167,14 +178,13 @@ Rectangle {
                         id: serverUrlField
                         Layout.fillWidth: true
                         placeholderText: "http://192.168.1.100:8081"
-                        // 容器内运行可设置 DEFAULT_SERVER_URL=http://backend:8080，宿主机不设则用 localhost:8081
                         text: (typeof defaultServerUrlFromEnv !== 'undefined' && defaultServerUrlFromEnv) ? defaultServerUrlFromEnv : "http://localhost:8081"
-                        color: "#FFFFFF"
+                        color: ThemeModule.Theme.colorText
                         placeholderTextColor: "#666666"
                         selectByMouse: true
                         background: Rectangle {
-                            color: serverUrlField.focus ? "#3A3A4E" : "#1A1A2A"
-                            border.color: serverUrlField.focus ? "#4A90E2" : "#444444"
+                            color: serverUrlField.focus ? ThemeModule.Theme.colorButtonBgHover : ThemeModule.Theme.colorButtonBg
+                            border.color: serverUrlField.focus ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorButtonBorder
                             border.width: serverUrlField.focus ? 2 : 1
                             radius: 8
                             Behavior on color { ColorAnimation { duration: 200 } }
@@ -183,12 +193,12 @@ Rectangle {
                     }
                 }
 
-                // 节点状态（Backend / Keycloak / ZLM）
+                // 节点状态
                 Rectangle {
                     Layout.fillWidth: true
                     Layout.preferredHeight: nodeStatusColumn.implicitHeight + 24
-                    color: "#1A1A2A"
-                    border.color: "#444444"
+                    color: ThemeModule.Theme.colorButtonBg
+                    border.color: ThemeModule.Theme.colorButtonBorder
                     radius: 8
                     ColumnLayout {
                         id: nodeStatusColumn
@@ -200,35 +210,56 @@ Rectangle {
                             spacing: 8
                             Text {
                                 text: "节点状态"
-                                color: "#B0B0B0"
+                                color: ThemeModule.Theme.colorTextDim
                                 font.pixelSize: 12
                                 font.family: loginPage.chineseFont || font.family
                             }
                             Item { Layout.fillWidth: true }
                             Button {
-                                text: typeof nodeHealthChecker !== 'undefined' && nodeHealthChecker.isChecking ? "检测中..." : "检测"
-                                enabled: typeof nodeHealthChecker !== 'undefined' && !nodeHealthChecker.isChecking
+                                text: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    return nhc && nhc.isChecking ? "检测中..." : "检测"
+                                }
+                                enabled: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    return nhc && !nhc.isChecking
+                                }
                                 font.pixelSize: 12
                                 font.family: loginPage.chineseFont || font.family
                                 onClicked: {
-                                    if (typeof nodeHealthChecker !== 'undefined')
-                                        nodeHealthChecker.refresh(serverUrlField.text)
+                                    var nhc = loginPage.nodeHealthChecker
+                                    if (nhc && typeof nhc.refresh === "function") {
+                                        nhc.refresh(serverUrlField.text)
+                                    }
                                 }
                             }
                         }
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 6
-                            Text { text: "Backend"; color: "#B0B0B0"; font.pixelSize: 11; font.family: loginPage.chineseFont || font.family; Layout.preferredWidth: 70 }
+                            Text { text: "Backend"; color: ThemeModule.Theme.colorTextDim; font.pixelSize: 11; font.family: loginPage.chineseFont || font.family; Layout.preferredWidth: 70 }
                             Text {
-                                text: typeof nodeHealthChecker !== 'undefined' ? nodeHealthChecker.backendStatus : "—"
-                                color: (typeof nodeHealthChecker !== 'undefined' && nodeHealthChecker.backendStatus === "正常") ? "#50C878" : (typeof nodeHealthChecker !== 'undefined' && (nodeHealthChecker.backendStatus === "不可达" || nodeHealthChecker.backendStatus === "异常") ? "#FF6B6B" : "#B0B0B0")
+                                text: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    return nhc ? nhc.backendStatus : "—"
+                                }
+                                color: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    if (!nhc) return ThemeModule.Theme.colorTextDim
+                                    var s = nhc.backendStatus
+                                    if (s === "正常") return ThemeModule.Theme.colorAccent
+                                    if (s === "不可达" || s === "异常") return ThemeModule.Theme.colorDanger
+                                    return ThemeModule.Theme.colorTextDim
+                                }
                                 font.pixelSize: 11
                                 font.family: loginPage.chineseFont || font.family
                             }
                             Text {
-                                text: typeof nodeHealthChecker !== 'undefined' && nodeHealthChecker.backendMessage ? (" " + nodeHealthChecker.backendMessage) : ""
-                                color: "#888888"
+                                text: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    return nhc && nhc.backendMessage ? " " + nhc.backendMessage : ""
+                                }
+                                color: ThemeModule.Theme.colorTextDim
                                 font.pixelSize: 10
                                 font.family: loginPage.chineseFont || font.family
                                 Layout.fillWidth: true
@@ -238,16 +269,29 @@ Rectangle {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 6
-                            Text { text: "Keycloak"; color: "#B0B0B0"; font.pixelSize: 11; font.family: loginPage.chineseFont || font.family; Layout.preferredWidth: 70 }
+                            Text { text: "Keycloak"; color: ThemeModule.Theme.colorTextDim; font.pixelSize: 11; font.family: loginPage.chineseFont || font.family; Layout.preferredWidth: 70 }
                             Text {
-                                text: typeof nodeHealthChecker !== 'undefined' ? nodeHealthChecker.keycloakStatus : "—"
-                                color: (typeof nodeHealthChecker !== 'undefined' && nodeHealthChecker.keycloakStatus === "正常") ? "#50C878" : (typeof nodeHealthChecker !== 'undefined' && (nodeHealthChecker.keycloakStatus === "不可达" || nodeHealthChecker.keycloakStatus === "异常") ? "#FF6B6B" : "#B0B0B0")
+                                text: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    return nhc ? nhc.keycloakStatus : "—"
+                                }
+                                color: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    if (!nhc) return ThemeModule.Theme.colorTextDim
+                                    var s = nhc.keycloakStatus
+                                    if (s === "正常") return ThemeModule.Theme.colorAccent
+                                    if (s === "不可达" || s === "异常") return ThemeModule.Theme.colorDanger
+                                    return ThemeModule.Theme.colorTextDim
+                                }
                                 font.pixelSize: 11
                                 font.family: loginPage.chineseFont || font.family
                             }
                             Text {
-                                text: typeof nodeHealthChecker !== 'undefined' && nodeHealthChecker.keycloakMessage ? (" " + nodeHealthChecker.keycloakMessage) : ""
-                                color: "#888888"
+                                text: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    return nhc && nhc.keycloakMessage ? " " + nhc.keycloakMessage : ""
+                                }
+                                color: ThemeModule.Theme.colorTextDim
                                 font.pixelSize: 10
                                 font.family: loginPage.chineseFont || font.family
                                 Layout.fillWidth: true
@@ -257,16 +301,29 @@ Rectangle {
                         RowLayout {
                             Layout.fillWidth: true
                             spacing: 6
-                            Text { text: "ZLM"; color: "#B0B0B0"; font.pixelSize: 11; font.family: loginPage.chineseFont || font.family; Layout.preferredWidth: 70 }
+                            Text { text: "ZLM"; color: ThemeModule.Theme.colorTextDim; font.pixelSize: 11; font.family: loginPage.chineseFont || font.family; Layout.preferredWidth: 70 }
                             Text {
-                                text: typeof nodeHealthChecker !== 'undefined' ? nodeHealthChecker.zlmStatus : "—"
-                                color: (typeof nodeHealthChecker !== 'undefined' && nodeHealthChecker.zlmStatus === "正常") ? "#50C878" : (typeof nodeHealthChecker !== 'undefined' && (nodeHealthChecker.zlmStatus === "不可达" || nodeHealthChecker.zlmStatus === "异常") ? "#FF6B6B" : "#B0B0B0")
+                                text: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    return nhc ? nhc.zlmStatus : "—"
+                                }
+                                color: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    if (!nhc) return ThemeModule.Theme.colorTextDim
+                                    var s = nhc.zlmStatus
+                                    if (s === "正常") return ThemeModule.Theme.colorAccent
+                                    if (s === "不可达" || s === "异常") return ThemeModule.Theme.colorDanger
+                                    return ThemeModule.Theme.colorTextDim
+                                }
                                 font.pixelSize: 11
                                 font.family: loginPage.chineseFont || font.family
                             }
                             Text {
-                                text: typeof nodeHealthChecker !== 'undefined' && nodeHealthChecker.zlmMessage ? (" " + nodeHealthChecker.zlmMessage) : ""
-                                color: "#888888"
+                                text: {
+                                    var nhc = loginPage.nodeHealthChecker
+                                    return nhc && nhc.zlmMessage ? " " + nhc.zlmMessage : ""
+                                }
+                                color: ThemeModule.Theme.colorTextDim
                                 font.pixelSize: 10
                                 font.family: loginPage.chineseFont || font.family
                                 Layout.fillWidth: true
@@ -275,18 +332,20 @@ Rectangle {
                         }
                     }
                     Component.onCompleted: {
-                        if (typeof nodeHealthChecker !== 'undefined' && serverUrlField.text.length > 0)
-                            nodeHealthChecker.refresh(serverUrlField.text)
+                        var nhc = loginPage.nodeHealthChecker
+                        if (nhc && serverUrlField.text.length > 0 && typeof nhc.refresh === "function") {
+                            nhc.refresh(serverUrlField.text)
+                        }
                     }
                 }
                 
-                // 用户名（支持历史输入）
+                // 用户名
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 8
                     Text {
                         text: "用户名"
-                        color: "#FFFFFF"
+                        color: ThemeModule.Theme.colorText
                         font.pixelSize: 14
                         font.family: loginPage.chineseFont || font.family
                         font.bold: true
@@ -295,12 +354,12 @@ Rectangle {
                         id: usernameField
                         Layout.fillWidth: true
                         placeholderText: "请输入用户名"
-                        color: "#FFFFFF"
+                        color: ThemeModule.Theme.colorText
                         placeholderTextColor: "#666666"
                         selectByMouse: true
                         background: Rectangle {
-                            color: usernameField.focus ? "#3A3A4E" : "#1A1A2A"
-                            border.color: usernameField.focus ? "#4A90E2" : "#444444"
+                            color: usernameField.focus ? ThemeModule.Theme.colorButtonBgHover : ThemeModule.Theme.colorButtonBg
+                            border.color: usernameField.focus ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorButtonBorder
                             border.width: usernameField.focus ? 2 : 1
                             radius: 8
                             Behavior on color { ColorAnimation { duration: 200 } }
@@ -315,39 +374,46 @@ Rectangle {
                             }
                         }
                         Component.onCompleted: {
-                            if (typeof authManager !== 'undefined' && authManager.username && authManager.username.length > 0) {
-                                usernameField.text = authManager.username
-                                console.log("[Client][UI] 登录页 已填充上次账户名 len=" + authManager.username.length)
+                            var am = loginPage.authManager
+                            if (am && am.username && am.username.length > 0) {
+                                usernameField.text = am.username
+                                console.log("[Client][UI][LoginPage] 已填充上次账户名")
                             }
                         }
                     }
-                    // 历史账户名快捷选择
+                    // 历史账户名
                     Flow {
                         Layout.fillWidth: true
                         spacing: 6
-                        visible: typeof authManager !== 'undefined' && authManager.usernameHistory && authManager.usernameHistory.length > 0
+                        visible: {
+                            var am = loginPage.authManager
+                            return am && am.usernameHistory && am.usernameHistory.length > 0
+                        }
                         Repeater {
-                            model: typeof authManager !== 'undefined' ? authManager.usernameHistory : []
+                            model: {
+                                var am = loginPage.authManager
+                                return am ? am.usernameHistory : []
+                            }
                             Button {
                                 text: modelData
                                 font.pixelSize: 11
                                 font.family: loginPage.chineseFont || font.family
                                 onClicked: {
                                     usernameField.text = modelData
-                                    console.log("[Client][UI] 选择历史账户名 " + modelData)
+                                    console.log("[Client][UI][LoginPage] 选择历史账户名 " + modelData)
                                 }
                             }
                         }
                     }
                 }
 
-                // 密码（框内眼睛图标切换可见/不可见）
+                // 密码
                 ColumnLayout {
                     Layout.fillWidth: true
                     spacing: 8
                     Text {
                         text: "密码"
-                        color: "#FFFFFF"
+                        color: ThemeModule.Theme.colorText
                         font.pixelSize: 14
                         font.family: loginPage.chineseFont || font.family
                         font.bold: true
@@ -361,12 +427,12 @@ Rectangle {
                             rightPadding: 44
                             placeholderText: "请输入密码"
                             echoMode: loginPage.passwordVisible ? TextInput.Normal : TextInput.Password
-                            color: "#FFFFFF"
+                            color: ThemeModule.Theme.colorText
                             placeholderTextColor: "#666666"
                             selectByMouse: true
                             background: Rectangle {
-                                color: passwordField.focus ? "#3A3A4E" : "#1A1A2A"
-                                border.color: passwordField.focus ? "#4A90E2" : "#444444"
+                                color: passwordField.focus ? ThemeModule.Theme.colorButtonBgHover : ThemeModule.Theme.colorButtonBg
+                                border.color: passwordField.focus ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorButtonBorder
                                 border.width: passwordField.focus ? 2 : 1
                                 radius: 8
                                 Behavior on color { ColorAnimation { duration: 200 } }
@@ -376,7 +442,7 @@ Rectangle {
                                 if (usernameField.text.length > 0 && passwordField.text.length > 0) loginButton.clicked()
                             }
                         }
-                        // 密码框内右侧眼睛图标（SVG，不依赖 emoji 字体），点击切换明文/掩码
+                        // 密码可见切换
                         MouseArea {
                             anchors.right: parent.right
                             anchors.verticalCenter: parent.verticalCenter
@@ -386,7 +452,7 @@ Rectangle {
                             cursorShape: Qt.PointingHandCursor
                             onClicked: {
                                 loginPage.passwordVisible = !loginPage.passwordVisible
-                                console.log("[Client][UI] 密码框 可见=" + loginPage.passwordVisible)
+                                console.log("[Client][UI][LoginPage] 密码框 可见=" + loginPage.passwordVisible)
                             }
                             Image {
                                 anchors.centerIn: parent
@@ -402,12 +468,12 @@ Rectangle {
                 // 错误信息
                 Rectangle {
                     Layout.fillWidth: true
-                    height: errorText.text.length > 0 ? errorText.implicitHeight + 12 : 0
+                    height: loginErrorState.errorMessage.length > 0 ? errorText.implicitHeight + 12 : 0
                     color: "#3A1E1E"
-                    border.color: "#FF6B6B"
+                    border.color: ThemeModule.Theme.colorDanger
                     border.width: 1
                     radius: 8
-                    visible: errorText.text.length > 0
+                    visible: loginErrorState.errorMessage.length > 0
                     
                     Behavior on height { NumberAnimation { duration: 200 } }
                     
@@ -415,11 +481,14 @@ Rectangle {
                         id: errorText
                         anchors.fill: parent
                         anchors.margins: 6
-                        color: "#FF6B6B"
+                        color: ThemeModule.Theme.colorDanger
                         font.pixelSize: 12
                         font.family: loginPage.chineseFont || font.family
                         wrapMode: Text.WordWrap
                         verticalAlignment: Text.AlignVCenter
+                        text: loginErrorState.errorCode > 0
+                            ? "[" + loginErrorState.errorCode + "] " + loginErrorState.errorMessage
+                            : loginErrorState.errorMessage
                     }
                 }
                 
@@ -436,7 +505,7 @@ Rectangle {
                         font.pixelSize: 18
                         font.family: loginPage.chineseFont || font.family
                         font.bold: true
-                        color: loginButton.enabled ? "#FFFFFF" : "#666666"
+                        color: loginButton.enabled ? ThemeModule.Theme.colorText : "#666666"
                         horizontalAlignment: Text.AlignHCenter
                         verticalAlignment: Text.AlignVCenter
                     }
@@ -446,19 +515,18 @@ Rectangle {
                         gradient: Gradient {
                             GradientStop { 
                                 position: 0.0
-                                color: loginButton.enabled ? (loginButton.pressed ? "#357ABD" : (loginButton.hovered ? "#5AA0F2" : "#4A90E2"))
-                                : "#2A2A3E"
+                                color: loginButton.enabled ? (loginButton.pressed ? "#357ABD" : (loginButton.hovered ? "#5AA0F2" : ThemeModule.Theme.colorBorderActive))
+                                : ThemeModule.Theme.colorButtonBg
                             }
                             GradientStop { 
                                 position: 1.0
-                                color: loginButton.enabled ? (loginButton.pressed ? "#2A5A8D" : (loginButton.hovered ? "#4A80D2" : "#357ABD"))
-                                : "#1E1E2E"
+                                color: loginButton.enabled ? (loginButton.pressed ? "#2A5A8D" : (loginButton.hovered ? "#4A80D2" : ThemeModule.Theme.colorPrimary))
+                                : ThemeModule.Theme.colorSurface
                             }
                         }
-                        border.color: loginButton.enabled ? "#5AA0F2" : "#444444"
+                        border.color: loginButton.enabled ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorButtonBorder
                         border.width: 1
                         
-                        // 简单阴影
                         Rectangle {
                             anchors.fill: parent
                             anchors.margins: -2
@@ -480,41 +548,63 @@ Rectangle {
         // 底部信息
         Text {
             text: "© 2026 Remote Driving System"
-            color: "#666666"
+            color: ThemeModule.Theme.colorTextDim
             font.pixelSize: 12
             Layout.alignment: Qt.AlignHCenter
         }
     }
     
-    // 开始登录
+    // ── 登录逻辑 ─────────────────────────────────────────────────────
     function startLogin() {
-        errorText.text = ""
+        if (serverUrlField.text.trim().length === 0) {
+            loginErrorState.showError(1001, "请输入服务器地址")
+            return
+        }
+        if (usernameField.text.trim().length === 0) {
+            loginErrorState.showError(1002, "请输入用户名")
+            return
+        }
+        if (passwordField.text.length === 0) {
+            loginErrorState.showError(1003, "请输入密码")
+            return
+        }
+
+        loginErrorState.clearError()
         isLoggingIn = true
-        if (typeof authManager !== "undefined" && authManager) {
-            authManager.login(usernameField.text, passwordField.text, serverUrlField.text)
+        
+        var am = loginPage.authManager
+        if (am) {
+            console.log("[Client][UI][LoginPage] 开始登录:", usernameField.text, "->", serverUrlField.text)
+            am.login(usernameField.text, passwordField.text, serverUrlField.text)
+        } else {
+            isLoggingIn = false
+            loginErrorState.showError(1000, "认证管理器不可用")
         }
     }
     
-    // 连接认证管理器信号
+    // ── 信号连接 ─────────────────────────────────────────────────────
     Connections {
-        target: authManager
+        target: loginPage.authManager
         ignoreUnknownSignals: true
         
         function onLoginSucceeded(token, userInfo) {
             isLoggingIn = false
-            errorText.text = ""
-            if (userInfo && userInfo.username && typeof authManager !== 'undefined') {
-                authManager.addUsernameToHistory(userInfo.username)
+            loginErrorState.clearError()
+            var am = loginPage.authManager
+            if (am && userInfo && userInfo.username && typeof am.addUsernameToHistory === "function") {
+                am.addUsernameToHistory(userInfo.username)
             }
+            console.log("[Client][UI][LoginPage] 登录成功")
         }
         
         function onLoginFailed(error) {
             isLoggingIn = false
-            errorText.text = error
+            loginErrorState.showError(4001, error || "登录失败，请检查用户名和密码")
+            console.log("[Client][UI][LoginPage] 登录失败:", error)
         }
     }
     
-    // 页面进入动画：首帧即可见（opacity 1）避免 Docker/无 GPU 下黑屏；仅做缩放动画
+    // 页面动画
     opacity: 1
     scale: 0.98
     

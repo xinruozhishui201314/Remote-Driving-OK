@@ -1,33 +1,26 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import RemoteDriving 1.0
+import "styles" as ThemeModule
 
 /**
  * 车辆选择对话框
+ * 统一使用 AppContext 和 Theme
  */
 Popup {
     id: vehicleSelectionDialog
     
-    // 用 QtObject 持有状态，避免 Popup 嵌套层级中 id 作用域导致的 "Cannot assign to non-existent property" 及重复触发
     QtObject {
         id: sessionState
         property bool creating: false
     }
     
-    // 中文字体（从主窗口继承或使用默认）
-    property string chineseFont: {
-        if (typeof window !== "undefined" && window.chineseFont) {
-            return window.chineseFont
-        }
-        var fonts = ["WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Noto Sans CJK SC"]
-        var availableFonts = Qt.fontFamilies()
-        for (var i = 0; i < fonts.length; i++) {
-            if (availableFonts.indexOf(fonts[i]) !== -1) {
-                return fonts[i]
-            }
-        }
-        return ""
-    }
+    // ── 统一属性 ─────────────────────────────────────────────────────
+    readonly property string chineseFont: AppContext ? AppContext.chineseFont : ""
+    readonly property var authManager: AppContext ? AppContext.authManager : null
+    readonly property var vehicleManager: AppContext ? AppContext.vehicleManager : null
+    
     width: 600
     height: 650
     modal: true
@@ -53,14 +46,13 @@ Popup {
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#2A2A3E" }
-            GradientStop { position: 1.0; color: "#1E1E2E" }
+            GradientStop { position: 0.0; color: ThemeModule.Theme.colorSurface }
+            GradientStop { position: 1.0; color: ThemeModule.Theme.colorBackground }
         }
-        border.color: "#4A90E2"
+        border.color: ThemeModule.Theme.colorBorderActive
         border.width: 2
         radius: 12
         
-        // 简单阴影效果
         Rectangle {
             anchors.fill: parent
             anchors.margins: -5
@@ -88,7 +80,7 @@ Popup {
                 
                 Text {
                     text: "选择车辆"
-                    color: "#FFFFFF"
+                    color: ThemeModule.Theme.colorText
                     font.pixelSize: 22
                     font.family: vehicleSelectionDialog.chineseFont || font.family
                     font.bold: true
@@ -101,8 +93,8 @@ Popup {
                     height: 3
                     radius: 2
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: "#4A90E2" }
-                        GradientStop { position: 1.0; color: "#50C878" }
+                        GradientStop { position: 0.0; color: ThemeModule.Theme.colorBorderActive }
+                        GradientStop { position: 1.0; color: ThemeModule.Theme.colorAccent }
                     }
                 }
             }
@@ -113,15 +105,27 @@ Popup {
 
                 Button {
                     text: "刷新列表"
+                    font.family: vehicleSelectionDialog.chineseFont || font.family
+                    background: Rectangle {
+                        radius: 6
+                        color: parent.pressed ? ThemeModule.Theme.colorPrimary : (parent.hovered ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorBorderActive)
+                        border.color: parent.hovered ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorBorder
+                        border.width: 1
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        font.pixelSize: 12
+                        font.family: vehicleSelectionDialog.chineseFont || font.family
+                        color: parent.enabled ? ThemeModule.Theme.colorText : ThemeModule.Theme.colorTextDim
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
                     onClicked: {
-                        if (authManager.isLoggedIn) {
-                            var baseUrl = authManager.serverUrl && authManager.serverUrl.length > 0
-                                           ? authManager.serverUrl
-                                           : "http://localhost:8081"
-                            vehicleManager.refreshVehicleList(
-                                baseUrl,
-                                authManager.authToken
-                            )
+                        var am = vehicleSelectionDialog.authManager
+                        var vm = vehicleSelectionDialog.vehicleManager
+                        if (am && am.isLoggedIn && vm) {
+                            var baseUrl = (am.serverUrl && am.serverUrl.length > 0) ? am.serverUrl : "http://localhost:8081"
+                            vm.refreshVehicleList(baseUrl, am.authToken)
                         }
                     }
                 }
@@ -129,25 +133,27 @@ Popup {
                 Button {
                     text: "退出登录"
                     font.family: vehicleSelectionDialog.chineseFont || font.family
-                    onClicked: {
-                        if (typeof authManager !== "undefined" && authManager) {
-                            console.log("[Client][UI] 车辆选择页点击「退出登录」")
-                            authManager.logout()
-                        }
-                        vehicleSelectionDialog.close()
-                    }
-                    contentItem: Text {
-                        text: parent.text
-                        font: parent.font
-                        color: parent.enabled ? "#FFFFFF" : "#666666"
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
                     background: Rectangle {
                         radius: 6
                         color: parent.pressed ? "#8B3A3A" : (parent.hovered ? "#A04444" : "#6B2A2A")
-                        border.color: parent.hovered ? "#CC6666" : "#555555"
+                        border.color: parent.hovered ? "#CC6666" : ThemeModule.Theme.colorBorder
                         border.width: 1
+                    }
+                    contentItem: Text {
+                        text: parent.text
+                        font.pixelSize: 12
+                        font.family: vehicleSelectionDialog.chineseFont || font.family
+                        color: parent.enabled ? ThemeModule.Theme.colorText : ThemeModule.Theme.colorTextDim
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+                    onClicked: {
+                        var am = vehicleSelectionDialog.authManager
+                        if (am) {
+                            console.log("[Client][UI][VehicleSelection] 退出登录")
+                            am.logout()
+                        }
+                        vehicleSelectionDialog.close()
                     }
                 }
 
@@ -164,29 +170,30 @@ Popup {
 
                 ListView {
                     id: vehicleListView
-                    model: vehicleManager.vehicleList
+                    model: vehicleSelectionDialog.vehicleManager ? vehicleSelectionDialog.vehicleManager.vehicleList : []
                     spacing: 5
 
                     delegate: Rectangle {
                         width: vehicleListView.width
                         height: 70
-                        color: vehicleManager.currentVin === modelData ? "#3A4A6A" : (mouseArea.containsMouse ? "#2A3A4A" : "#1A1A2A")
-                        border.color: vehicleManager.currentVin === modelData ? "#4A90E2" : "#444444"
-                        border.width: vehicleManager.currentVin === modelData ? 2 : 1
+                        property var vm: vehicleSelectionDialog.vehicleManager
+                        property bool isSelected: vm && vm.currentVin === modelData
+                        color: isSelected ? ThemeModule.Theme.colorBorderActive + "44" : (mouseArea.containsMouse ? ThemeModule.Theme.colorButtonBgHover : ThemeModule.Theme.colorButtonBg)
+                        border.color: isSelected ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorBorder
+                        border.width: isSelected ? 2 : 1
                         radius: 8
                         
                         Behavior on color { ColorAnimation { duration: 200 } }
                         Behavior on border.color { ColorAnimation { duration: 200 } }
                         
-                        // 选中状态的光晕效果
                         Rectangle {
                             anchors.fill: parent
                             radius: parent.radius
                             gradient: Gradient {
-                                GradientStop { position: 0.0; color: vehicleManager.currentVin === modelData ? "#204A90E2" : "#00000000" }
+                                GradientStop { position: 0.0; color: isSelected ? "#204A90E2" : "#00000000" }
                                 GradientStop { position: 1.0; color: "#00000000" }
                             }
-                            visible: vehicleManager.currentVin === modelData
+                            visible: isSelected
                         }
                         
                         MouseArea {
@@ -194,7 +201,10 @@ Popup {
                             anchors.fill: parent
                             hoverEnabled: true
                             onClicked: {
-                                vehicleManager.selectVehicle(modelData)
+                                var vm = vehicleSelectionDialog.vehicleManager
+                                if (vm) {
+                                    vm.selectVehicle(modelData)
+                                }
                             }
                         }
 
@@ -206,61 +216,65 @@ Popup {
                             ColumnLayout {
                                 Layout.fillWidth: true
                                 spacing: 5
+                                property var vm: vehicleSelectionDialog.vehicleManager
 
                                 Text {
-                                    text: vehicleManager.getVehicleInfo(modelData).name || modelData
-                                    color: "#ffffff"
+                                    text: {
+                                        var vm = vehicleSelectionDialog.vehicleManager
+                                        return vm ? (vm.getVehicleInfo(modelData).name || modelData) : modelData
+                                    }
+                                    color: ThemeModule.Theme.colorText
                                     font.pixelSize: 14
-                font.family: vehicleSelectionDialog.chineseFont || font.family
+                                    font.family: vehicleSelectionDialog.chineseFont || font.family
                                     font.bold: true
                                 }
 
                                 Text {
                                     text: "VIN: " + modelData
-                                    color: "#aaaaaa"
+                                    color: ThemeModule.Theme.colorTextDim
                                     font.pixelSize: 12
-                font.family: vehicleSelectionDialog.chineseFont || font.family
+                                    font.family: vehicleSelectionDialog.chineseFont || font.family
                                 }
                             }
 
                             Button {
-                                text: vehicleManager.currentVin === modelData ? "✓ 已选择" : "选择"
-                                enabled: vehicleManager.currentVin !== modelData
-                                
-                                contentItem: Text {
-                                    text: parent.text
-                                    font.pixelSize: 13
-                                    font.family: vehicleSelectionDialog.chineseFont || font.family
-                                    font.bold: true
-                                    color: parent.enabled ? "#FFFFFF" : "#666666"
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
-                                
+                                property var vm: vehicleSelectionDialog.vehicleManager
+                                text: (vm && vm.currentVin === modelData) ? "✓ 已选择" : "选择"
+                                enabled: !(vm && vm.currentVin === modelData)
                                 background: Rectangle {
                                     radius: 6
                                     gradient: Gradient {
                                         GradientStop { 
                                             position: 0.0
-                                            color: parent.parent.enabled ? (parent.parent.pressed ? "#357ABD" : (parent.parent.hovered ? "#5AA0F2" : "#4A90E2"))
-                                            : "#2A2A3E"
+                                            color: parent.enabled ? (parent.pressed ? ThemeModule.Theme.colorPrimary : (parent.hovered ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorBorderActive))
+                                            : ThemeModule.Theme.colorBorder
                                         }
                                         GradientStop { 
                                             position: 1.0
-                                            color: parent.parent.enabled ? (parent.parent.pressed ? "#2A5A8D" : (parent.parent.hovered ? "#4A80D2" : "#357ABD"))
-                                            : "#1E1E2E"
+                                            color: parent.enabled ? (parent.pressed ? ThemeModule.Theme.colorPrimary : (parent.hovered ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorPrimary))
+                                            : ThemeModule.Theme.colorSurface
                                         }
                                     }
-                                    border.color: parent.parent.enabled ? "#5AA0F2" : "#444444"
+                                    border.color: parent.enabled ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorBorder
                                     border.width: 1
                                 }
-                                
+                                contentItem: Text {
+                                    text: parent.text
+                                    font.pixelSize: 13
+                                    font.family: vehicleSelectionDialog.chineseFont || font.family
+                                    font.bold: true
+                                    color: parent.enabled ? ThemeModule.Theme.colorText : ThemeModule.Theme.colorTextDim
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
+                                }
                                 onClicked: {
-                                    vehicleManager.selectVehicle(modelData)
+                                    var vm = vehicleSelectionDialog.vehicleManager
+                                    if (vm) {
+                                        vm.selectVehicle(modelData)
+                                    }
                                 }
                             }
                         }
-
                     }
                 }
             }
@@ -269,11 +283,12 @@ Popup {
             Rectangle {
                 Layout.fillWidth: true
                 height: 50
-                color: "#1a1a1a"
-                border.color: "#444444"
+                color: ThemeModule.Theme.colorButtonBg
+                border.color: ThemeModule.Theme.colorBorder
                 border.width: 1
                 radius: 3
-                visible: vehicleManager.currentVin.length > 0
+                property var vm: vehicleSelectionDialog.vehicleManager
+                visible: vm && vm.currentVin && vm.currentVin.length > 0
 
                 RowLayout {
                     anchors.fill: parent
@@ -281,17 +296,20 @@ Popup {
 
                     Text {
                         text: "当前车辆:"
-                        color: "#ffffff"
+                        color: ThemeModule.Theme.colorText
                         font.pixelSize: 12
-                font.family: vehicleSelectionDialog.chineseFont || font.family
+                        font.family: vehicleSelectionDialog.chineseFont || font.family
                     }
 
                     Text {
                         Layout.fillWidth: true
-                        text: vehicleManager.currentVehicleName || vehicleManager.currentVin
-                        color: "#00ff00"
+                        text: {
+                            var vm = vehicleSelectionDialog.vehicleManager
+                            return vm ? (vm.currentVehicleName || vm.currentVin) : ""
+                        }
+                        color: ThemeModule.Theme.colorGood
                         font.pixelSize: 12
-                font.family: vehicleSelectionDialog.chineseFont || font.family
+                        font.family: vehicleSelectionDialog.chineseFont || font.family
                         font.bold: true
                     }
                 }
@@ -301,22 +319,23 @@ Popup {
             Text {
                 id: errorText
                 Layout.fillWidth: true
-                color: "#ff0000"
+                color: ThemeModule.Theme.colorDanger
                 font.pixelSize: 12
                 font.family: vehicleSelectionDialog.chineseFont || font.family
                 visible: text.length > 0
                 wrapMode: Text.WordWrap
             }
 
-            // 会话信息显示区域（美化样式）
+            // 会话信息显示区域
             Rectangle {
                 Layout.fillWidth: true
                 height: sessionInfoColumn.implicitHeight + 24
-                color: "#1A2A3A"
-                border.color: "#4A90E2"
+                color: ThemeModule.Theme.colorButtonBg
+                border.color: ThemeModule.Theme.colorBorderActive
                 border.width: 1
                 radius: 8
-                visible: vehicleManager.lastSessionId && vehicleManager.lastSessionId.length > 0
+                property var vm: vehicleSelectionDialog.vehicleManager
+                visible: vm && vm.lastSessionId && vm.lastSessionId.length > 0
                 
                 ColumnLayout {
                     id: sessionInfoColumn
@@ -326,7 +345,7 @@ Popup {
                     
                     Text {
                         text: "📋 会话信息"
-                        color: "#4A90E2"
+                        color: ThemeModule.Theme.colorBorderActive
                         font.pixelSize: 14
                         font.family: vehicleSelectionDialog.chineseFont || font.family
                         font.bold: true
@@ -334,8 +353,8 @@ Popup {
                 
                     Text {
                         Layout.fillWidth: true
-                        text: "会话 ID: " + (vehicleManager.lastSessionId || "")
-                        color: "#FFFFFF"
+                        text: "会话 ID: " + (vehicleSelectionDialog.vehicleManager ? vehicleSelectionDialog.vehicleManager.lastSessionId || "" : "")
+                        color: ThemeModule.Theme.colorText
                         font.pixelSize: 11
                         font.family: vehicleSelectionDialog.chineseFont || font.family
                         wrapMode: Text.Wrap
@@ -343,8 +362,8 @@ Popup {
                     
                     Text {
                         Layout.fillWidth: true
-                        text: "WHIP URL: " + (vehicleManager.lastWhipUrl || "")
-                        color: "#B0B0B0"
+                        text: "WHIP URL: " + (vehicleSelectionDialog.vehicleManager ? vehicleSelectionDialog.vehicleManager.lastWhipUrl || "" : "")
+                        color: ThemeModule.Theme.colorTextDim
                         font.pixelSize: 10
                         font.family: vehicleSelectionDialog.chineseFont || font.family
                         wrapMode: Text.Wrap
@@ -352,8 +371,8 @@ Popup {
                     
                     Text {
                         Layout.fillWidth: true
-                        text: "WHEP URL: " + (vehicleManager.lastWhepUrl || "")
-                        color: "#B0B0B0"
+                        text: "WHEP URL: " + (vehicleSelectionDialog.vehicleManager ? vehicleSelectionDialog.vehicleManager.lastWhepUrl || "" : "")
+                        color: ThemeModule.Theme.colorTextDim
                         font.pixelSize: 10
                         font.family: vehicleSelectionDialog.chineseFont || font.family
                         wrapMode: Text.Wrap
@@ -361,122 +380,113 @@ Popup {
                     
                     Text {
                         Layout.fillWidth: true
-                        text: "控制协议: " + (vehicleManager.lastControlConfig.algo || "N/A")
-                        color: "#B0B0B0"
+                        text: "控制协议: " + (vehicleSelectionDialog.vehicleManager && vehicleSelectionDialog.vehicleManager.lastControlConfig ? vehicleSelectionDialog.vehicleManager.lastControlConfig.algo || "N/A" : "N/A")
+                        color: ThemeModule.Theme.colorTextDim
                         font.pixelSize: 10
                         font.family: vehicleSelectionDialog.chineseFont || font.family
                     }
                 }
             }
             
-            // 创建会话按钮（美化样式）
+            // 创建会话按钮
             Button {
                 Layout.fillWidth: true
                 height: 48
                 text: sessionState.creating ? "创建中..." : "创建会话"
-                enabled: vehicleManager.currentVin.length > 0 && !sessionState.creating
-                
-                contentItem: Text {
-                    text: parent.text
-                    font.pixelSize: 16
-                    font.family: vehicleSelectionDialog.chineseFont || font.family
-                    font.bold: true
-                    color: parent.enabled ? "#FFFFFF" : "#666666"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                
+                property var vm: vehicleSelectionDialog.vehicleManager
+                enabled: (vm && vm.currentVin && vm.currentVin.length > 0) && !sessionState.creating
                 background: Rectangle {
                     radius: 8
                     gradient: Gradient {
                         GradientStop { 
                             position: 0.0
-                            color: parent.parent.enabled ? (parent.parent.pressed ? "#357ABD" : (parent.parent.hovered ? "#5AA0F2" : "#4A90E2"))
-                            : "#2A2A3E"
+                            color: parent.enabled ? (parent.pressed ? ThemeModule.Theme.colorPrimary : (parent.hovered ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorBorderActive))
+                            : ThemeModule.Theme.colorBorder
                         }
                         GradientStop { 
                             position: 1.0
-                            color: parent.parent.enabled ? (parent.parent.pressed ? "#2A5A8D" : (parent.parent.hovered ? "#4A80D2" : "#357ABD"))
-                            : "#1E1E2E"
+                            color: parent.enabled ? (parent.pressed ? ThemeModule.Theme.colorPrimary : (parent.hovered ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorPrimary))
+                            : ThemeModule.Theme.colorSurface
                         }
                     }
-                    border.color: parent.parent.enabled ? "#5AA0F2" : "#444444"
+                    border.color: parent.enabled ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorBorder
                     border.width: 1
-                    
-                    // 简单阴影
                     Rectangle {
                         anchors.fill: parent
                         anchors.margins: -2
                         z: -1
                         radius: parent.radius + 2
-                        color: parent.parent.parent.enabled ? "#30000000" : "#00000000"
+                        color: parent.parent.enabled ? "#30000000" : "#00000000"
                     }
                 }
-                
+                contentItem: Text {
+                    text: parent.text
+                    font.pixelSize: 16
+                    font.family: vehicleSelectionDialog.chineseFont || font.family
+                    font.bold: true
+                    color: parent.enabled ? ThemeModule.Theme.colorText : ThemeModule.Theme.colorTextDim
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
                 onClicked: {
-                    if (vehicleManager.currentVin.length > 0) {
+                    var am = vehicleSelectionDialog.authManager
+                    var vm = vehicleSelectionDialog.vehicleManager
+                    if (vm && vm.currentVin && vm.currentVin.length > 0 && am) {
                         sessionState.creating = true
-                        var baseUrl = authManager.serverUrl && authManager.serverUrl.length > 0
-                                       ? authManager.serverUrl
-                                       : "http://localhost:8081"
-                        vehicleManager.startSessionForCurrentVin(baseUrl, authManager.authToken)
+                        var baseUrl = (am.serverUrl && am.serverUrl.length > 0) ? am.serverUrl : "http://localhost:8081"
+                        vm.startSessionForCurrentVin(baseUrl, am.authToken)
                     }
                 }
             }
             
-            // 确认按钮：进入远程驾驶主页面（美化样式）
+            // 确认并进入驾驶按钮
             Button {
                 Layout.fillWidth: true
                 height: 48
                 text: sessionState.creating ? "创建中..." : "确认并进入驾驶"
-                enabled: vehicleManager.currentVin.length > 0 && !sessionState.creating
-                
-                contentItem: Text {
-                    text: parent.text
-                    font.pixelSize: 16
-                    font.family: vehicleSelectionDialog.chineseFont || font.family
-                    font.bold: true
-                    color: parent.enabled ? "#FFFFFF" : "#666666"
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-                
+                property var vm: vehicleSelectionDialog.vehicleManager
+                enabled: (vm && vm.currentVin && vm.currentVin.length > 0) && !sessionState.creating
                 background: Rectangle {
                     radius: 8
                     gradient: Gradient {
                         GradientStop { 
                             position: 0.0
-                            color: parent.parent.enabled ? (parent.parent.pressed ? "#2A8D5A" : (parent.parent.hovered ? "#60D888" : "#50C878"))
-                            : "#2A2A3E"
+                            color: parent.enabled ? (parent.pressed ? ThemeModule.Theme.colorAccent : (parent.hovered ? ThemeModule.Theme.colorAccent : ThemeModule.Theme.colorAccent))
+                            : ThemeModule.Theme.colorBorder
                         }
                         GradientStop { 
                             position: 1.0
-                            color: parent.parent.enabled ? (parent.parent.pressed ? "#1A6D3A" : (parent.parent.hovered ? "#50C868" : "#40B868"))
-                            : "#1E1E2E"
+                            color: parent.enabled ? (parent.pressed ? "#1A6D3A" : (parent.hovered ? "#60D888" : "#40B868"))
+                            : ThemeModule.Theme.colorSurface
                         }
                     }
-                    border.color: parent.parent.enabled ? "#60D888" : "#444444"
+                    border.color: parent.enabled ? "#60D888" : ThemeModule.Theme.colorBorder
                     border.width: 1
-                    
-                    // 简单阴影
                     Rectangle {
                         anchors.fill: parent
                         anchors.margins: -2
                         z: -1
                         radius: parent.radius + 2
-                        color: parent.parent.parent.enabled ? "#30000000" : "#00000000"
+                        color: parent.parent.enabled ? "#30000000" : "#00000000"
                     }
                 }
-                
+                contentItem: Text {
+                    text: parent.text
+                    font.pixelSize: 16
+                    font.family: vehicleSelectionDialog.chineseFont || font.family
+                    font.bold: true
+                    color: parent.enabled ? ThemeModule.Theme.colorText : ThemeModule.Theme.colorTextDim
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
                 onClicked: {
-                    if (vehicleManager.currentVin.length > 0) {
-                        if (sessionState.creating) return
-                        console.log("[Client][选车] 确认并进入驾驶：先创建会话 vin=" + vehicleManager.currentVin)
+                    var am = vehicleSelectionDialog.authManager
+                    var vm = vehicleSelectionDialog.vehicleManager
+                    if (vm && vm.currentVin && vm.currentVin.length > 0 && !sessionState.creating) {
+                        console.log("[Client][UI][VehicleSelection] 确认并进入驾驶：vin=" + vm.currentVin)
                         sessionState.creating = true
-                        var baseUrl = authManager.serverUrl && authManager.serverUrl.length > 0
-                                       ? authManager.serverUrl
-                                       : "http://localhost:8081"
-                        vehicleManager.startSessionForCurrentVin(baseUrl, authManager.authToken)
+                        var baseUrl = (am && am.serverUrl && am.serverUrl.length > 0) ? am.serverUrl : "http://localhost:8081"
+                        vm.startSessionForCurrentVin(baseUrl, am ? am.authToken : "")
                     }
                 }
             }
@@ -484,15 +494,16 @@ Popup {
     }
 
     Connections {
-        target: vehicleManager
+        target: vehicleSelectionDialog.vehicleManager
+        ignoreUnknownSignals: true
         
         function onVehicleListLoadFailed(error) {
-            errorText.text = error
+            errorText.text = error || "加载车辆列表失败"
         }
         
         function onVehicleListLoaded(vehicles) {
             errorText.text = ""
-            if (vehicles.length === 0) {
+            if (vehicles && vehicles.length === 0) {
                 errorText.text = "没有可用的车辆"
             }
         }
@@ -500,35 +511,29 @@ Popup {
         function onSessionCreated(sessionId, whipUrl, whepUrl, controlConfig) {
             errorText.text = ""
             sessionState.creating = false
-            console.log("[Client][选车] 会话创建成功 vin=" + vehicleManager.currentVin + " sessionId=" + sessionId)
-            console.log("[Client][选车] whepUrl 已设置，连接车端时将用此拉流；mqtt_broker 来自 controlConfig")
-            // 延迟到下一事件循环再关闭，避免在 C++ 信号回调栈中同步 close 导致重入/布局重算卡死主线程
+            console.log("[Client][UI][VehicleSelection] 会话创建成功 sessionId=" + sessionId)
             Qt.callLater(function() { vehicleSelectionDialog.close() })
         }
         
         function onSessionCreateFailed(error) {
-            errorText.text = "创建会话失败: " + error
+            errorText.text = "创建会话失败: " + (error || "未知错误")
             sessionState.creating = false
-            console.log("[Client][选车] 会话创建失败:", error)
+            console.log("[Client][UI][VehicleSelection] 会话创建失败:", error)
         }
     }
 
     Component.onCompleted: {
-        // 延迟加载车辆列表，避免初始化阶段调用 C++ 导致崩溃
         loadListTimer.start()
     }
     Timer {
         id: loadListTimer
         interval: 200
         onTriggered: {
-            if (authManager.isLoggedIn) {
-                var baseUrl = authManager.serverUrl && authManager.serverUrl.length > 0
-                               ? authManager.serverUrl
-                               : "http://localhost:8081"
-                vehicleManager.loadVehicleList(
-                    baseUrl,
-                    authManager.authToken
-                )
+            var am = vehicleSelectionDialog.authManager
+            var vm = vehicleSelectionDialog.vehicleManager
+            if (am && am.isLoggedIn && vm) {
+                var baseUrl = (am.serverUrl && am.serverUrl.length > 0) ? am.serverUrl : "http://localhost:8081"
+                vm.loadVehicleList(baseUrl, am.authToken)
             }
         }
     }

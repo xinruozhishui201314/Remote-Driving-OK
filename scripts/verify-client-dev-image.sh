@@ -112,6 +112,21 @@ else
     FAILED=$((FAILED + 1))
 fi
 
+# 5b. Qt Multimedia（client CMake / QML 视频；镜像构建时应 aqt 安装 qtmultimedia）
+echo ""
+echo "[5b] 检查 Qt6 Multimedia..."
+if docker exec "$CONTAINER_NAME" bash -c '
+    test -f /opt/Qt/6.8.0/gcc_64/lib/cmake/Qt6Multimedia/Qt6MultimediaConfig.cmake \
+    && { test -f /opt/Qt/6.8.0/gcc_64/lib/cmake/Qt6MultimediaQuick/Qt6MultimediaQuickConfig.cmake \
+        || test -f /opt/Qt/6.8.0/gcc_64/lib/libQt6MultimediaQuick.so; }
+' 2>/dev/null; then
+    echo -e "  ${GREEN}✓${NC} Qt6 Multimedia + Quick 已就绪"
+    PASSED=$((PASSED + 1))
+else
+    echo -e "  ${RED}✗${NC} Qt6 Multimedia 缺失（请重建镜像: docker compose ... build client-dev）"
+    FAILED=$((FAILED + 1))
+fi
+
 # 7. 检查预编译的客户端（如果存在）
 echo ""
 echo "[6] 检查预编译的客户端..."

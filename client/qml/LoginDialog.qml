@@ -2,11 +2,13 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import QtQuick 2.15 as QtQuick2
+import "styles" as ThemeModule
 
 /**
  * 登录对话框
+ * 统一使用 AppContext 和 Theme
  */
-    Popup {
+Popup {
     id: loginDialog
     width: 450
     height: 520
@@ -24,29 +26,18 @@ import QtQuick 2.15 as QtQuick2
         NumberAnimation { property: "scale"; from: 1.0; to: 0.9; duration: 200 }
     }
     
-    // 登录状态（必须在顶层定义，以便子组件访问）
+    // ── 属性 ────────────────────────────────────────────────────────────
     property bool isLoggingIn: false
-    // 密码是否明文显示
     property bool passwordVisible: false
-    // 开发测试模式：为测试账号预填充（仅开发/测试环境）
-    property bool devTestMode: true  // 默认开启，方便开发测试
-
-    // 中文字体（从主窗口继承或使用默认）
-    property string chineseFont: {
-        if (typeof window !== "undefined" && window.chineseFont) {
-            return window.chineseFont
-        }
-        var fonts = ["WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Noto Sans CJK SC"]
-        var availableFonts = Qt.fontFamilies()
-        for (var i = 0; i < fonts.length; i++) {
-            if (availableFonts.indexOf(fonts[i]) !== -1) {
-                return fonts[i]
-            }
-        }
-        return ""
-    }
-
-    // 背景遮罩（模糊效果）
+    property bool devTestMode: true  // 开发测试模式
+    
+    // ── 统一字体获取 ──────────────────────────────────────────────────
+    readonly property string chineseFont: AppContext.chineseFont
+    
+    // ── 统一 AuthManager 访问 ──────────────────────────────────────────
+    readonly property var authManager: AppContext.authManager
+    
+    // ── 背景遮罩 ─────────────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
         color: "#80000000"
@@ -55,14 +46,14 @@ import QtQuick 2.15 as QtQuick2
     Rectangle {
         anchors.fill: parent
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#2A2A3E" }
-            GradientStop { position: 1.0; color: "#1E1E2E" }
+            GradientStop { position: 0.0; color: ThemeModule.Theme.colorPanel }
+            GradientStop { position: 1.0; color: ThemeModule.Theme.colorBackground }
         }
-        border.color: "#4A90E2"
+        border.color: ThemeModule.Theme.colorBorderActive
         border.width: 2
         radius: 12
         
-        // 简单阴影效果（使用多个半透明矩形）
+        // 阴影效果
         Rectangle {
             anchors.fill: parent
             anchors.margins: -5
@@ -83,7 +74,7 @@ import QtQuick 2.15 as QtQuick2
             anchors.margins: 40
             spacing: 24
 
-            // 标题区域（带图标效果）
+            // 标题区域
             ColumnLayout {
                 Layout.alignment: Qt.AlignHCenter
                 spacing: 10
@@ -94,8 +85,8 @@ import QtQuick 2.15 as QtQuick2
                     height: 60
                     radius: 30
                     gradient: Gradient {
-                        GradientStop { position: 0.0; color: "#4A90E2" }
-                        GradientStop { position: 1.0; color: "#357ABD" }
+                        GradientStop { position: 0.0; color: ThemeModule.Theme.colorBorderActive }
+                        GradientStop { position: 1.0; color: ThemeModule.Theme.colorPrimary }
                     }
                     
                     Image {
@@ -109,7 +100,7 @@ import QtQuick 2.15 as QtQuick2
                 
                 Text {
                     text: "远程驾驶客户端"
-                    color: "#FFFFFF"
+                    color: ThemeModule.Theme.colorText
                     font.pixelSize: 24
                     font.family: loginDialog.chineseFont || font.family
                     font.bold: true
@@ -118,21 +109,21 @@ import QtQuick 2.15 as QtQuick2
                 
                 Text {
                     text: "登录您的账户"
-                    color: "#B0B0B0"
+                    color: ThemeModule.Theme.colorTextDim
                     font.pixelSize: 14
                     font.family: loginDialog.chineseFont || font.family
                     Layout.alignment: Qt.AlignHCenter
                 }
             }
 
-                // 服务器地址
+            // 服务器地址
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 5
 
                 Text {
                     text: "服务器地址:"
-                    color: "#ffffff"
+                    color: ThemeModule.Theme.colorText
                     font.pixelSize: 12
                     font.family: loginDialog.chineseFont || font.family
                 }
@@ -141,14 +132,13 @@ import QtQuick 2.15 as QtQuick2
                     id: serverUrlField
                     Layout.fillWidth: true
                     placeholderText: "http://192.168.1.100:8080"
-                    // 容器内运行可设置 DEFAULT_SERVER_URL=http://backend:8080，宿主机不设则用 localhost:8081
                     text: (typeof defaultServerUrlFromEnv !== 'undefined' && defaultServerUrlFromEnv) ? defaultServerUrlFromEnv : "http://localhost:8081"
-                    color: "#FFFFFF"
+                    color: ThemeModule.Theme.colorText
                     placeholderTextColor: "#666666"
                     selectByMouse: true
                     background: Rectangle {
-                        color: serverUrlField.focus ? "#3A3A4E" : "#2A2A3E"
-                        border.color: serverUrlField.focus ? "#4A90E2" : "#444444"
+                        color: serverUrlField.focus ? ThemeModule.Theme.colorButtonBgHover : ThemeModule.Theme.colorButtonBg
+                        border.color: serverUrlField.focus ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorButtonBorder
                         border.width: serverUrlField.focus ? 2 : 1
                         radius: 6
                         Behavior on color { ColorAnimation { duration: 200 } }
@@ -156,7 +146,7 @@ import QtQuick 2.15 as QtQuick2
                     }
                 }
 
-                // 开发测试模式说明（仅开发/测试环境可见）
+                // 开发测试模式说明
                 Text {
                     text: "注意：开发测试模式下点击右侧 [TEST] 按钮可自动填充测试账号"
                     color: "#FFB84D"
@@ -167,7 +157,7 @@ import QtQuick 2.15 as QtQuick2
                 }
             }
 
-            // 开发测试：[TEST] 按钮预填充测试账号（仅开发/测试环境可见）
+            // 开发测试按钮
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 5
@@ -178,7 +168,7 @@ import QtQuick 2.15 as QtQuick2
                     onClicked: {
                         usernameField.text = "e2e-test"
                         passwordField.text = "e2e-test-password"
-                        console.log("[Client][UI] 开发测试：已填充测试账号 e2e-test")
+                        console.log("[Client][UI][LoginDialog] 开发测试：已填充测试账号 e2e-test")
                         if (usernameField.text.length > 0 && passwordField.text.length > 0) loginButton.clicked()
                     }
                 }
@@ -191,21 +181,21 @@ import QtQuick 2.15 as QtQuick2
 
                 Text {
                     text: "用户名:"
-                    color: "#ffffff"
+                    color: ThemeModule.Theme.colorText
                     font.pixelSize: 12
-                font.family: loginDialog.chineseFont || font.family
+                    font.family: loginDialog.chineseFont || font.family
                 }
 
                 TextField {
                     id: usernameField
                     Layout.fillWidth: true
                     placeholderText: "请输入用户名"
-                    color: "#FFFFFF"
+                    color: ThemeModule.Theme.colorText
                     placeholderTextColor: "#666666"
                     selectByMouse: true
                     background: Rectangle {
-                        color: usernameField.focus ? "#3A3A4E" : "#2A2A3E"
-                        border.color: usernameField.focus ? "#4A90E2" : "#444444"
+                        color: usernameField.focus ? ThemeModule.Theme.colorButtonBgHover : ThemeModule.Theme.colorButtonBg
+                        border.color: usernameField.focus ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorButtonBorder
                         border.width: usernameField.focus ? 2 : 1
                         radius: 6
                         Behavior on color { ColorAnimation { duration: 200 } }
@@ -220,38 +210,41 @@ import QtQuick 2.15 as QtQuick2
                         }
                     }
                     Component.onCompleted: {
-                        if (typeof authManager !== 'undefined' && authManager.username && authManager.username.length > 0) {
-                            usernameField.text = authManager.username
-                            console.log("[Client][UI] 登录对话框 已填充上次账户名 len=" + authManager.username.length)
+                        var am = loginDialog.authManager
+                        if (am && am.username && am.username.length > 0) {
+                            usernameField.text = am.username
+                            console.log("[Client][UI][LoginDialog] 已填充上次账户名")
                         }
                     }
                 }
+                
+                // 历史账户名
                 Flow {
                     Layout.fillWidth: true
                     spacing: 6
-                    visible: typeof authManager !== 'undefined' && authManager.usernameHistory && authManager.usernameHistory.length > 0
+                    visible: loginDialog.authManager && loginDialog.authManager.usernameHistory && loginDialog.authManager.usernameHistory.length > 0
                     Repeater {
-                        model: typeof authManager !== 'undefined' ? authManager.usernameHistory : []
+                        model: loginDialog.authManager ? loginDialog.authManager.usernameHistory : []
                         Button {
                             text: modelData
                             font.pixelSize: 11
                             font.family: loginDialog.chineseFont || font.family
                             onClicked: {
                                 usernameField.text = modelData
-                                console.log("[Client][UI] 选择历史账户名 " + modelData)
+                                console.log("[Client][UI][LoginDialog] 选择历史账户名 " + modelData)
                             }
                         }
                     }
                 }
             }
 
-            // 密码（框内眼睛图标切换可见/不可见）
+            // 密码
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 5
                 Text {
                     text: "密码:"
-                    color: "#ffffff"
+                    color: ThemeModule.Theme.colorText
                     font.pixelSize: 12
                     font.family: loginDialog.chineseFont || font.family
                 }
@@ -264,12 +257,12 @@ import QtQuick 2.15 as QtQuick2
                         rightPadding: 40
                         placeholderText: "请输入密码"
                         echoMode: loginDialog.passwordVisible ? TextInput.Normal : TextInput.Password
-                        color: "#FFFFFF"
+                        color: ThemeModule.Theme.colorText
                         placeholderTextColor: "#666666"
                         selectByMouse: true
                         background: Rectangle {
-                            color: passwordField.focus ? "#3A3A4E" : "#2A2A3E"
-                            border.color: passwordField.focus ? "#4A90E2" : "#444444"
+                            color: passwordField.focus ? ThemeModule.Theme.colorButtonBgHover : ThemeModule.Theme.colorButtonBg
+                            border.color: passwordField.focus ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorButtonBorder
                             border.width: passwordField.focus ? 2 : 1
                             radius: 6
                             Behavior on color { ColorAnimation { duration: 200 } }
@@ -279,7 +272,7 @@ import QtQuick 2.15 as QtQuick2
                             if (usernameField.text.length > 0 && passwordField.text.length > 0) loginButton.clicked()
                         }
                     }
-                    // 密码框内右侧眼睛图标（SVG，不依赖 emoji 字体），点击切换明文/掩码
+                    // 密码可见切换
                     MouseArea {
                         anchors.right: parent.right
                         anchors.verticalCenter: parent.verticalCenter
@@ -289,7 +282,7 @@ import QtQuick 2.15 as QtQuick2
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
                             loginDialog.passwordVisible = !loginDialog.passwordVisible
-                            console.log("[Client][UI] 密码框 可见=" + loginDialog.passwordVisible)
+                            console.log("[Client][UI][LoginDialog] 密码框 可见=" + loginDialog.passwordVisible)
                         }
                         Image {
                             anchors.centerIn: parent
@@ -302,12 +295,12 @@ import QtQuick 2.15 as QtQuick2
                 }
             }
 
-            // 错误信息（美化样式）
+            // 错误信息
             Rectangle {
                 Layout.fillWidth: true
                 height: errorText.text.length > 0 ? errorText.implicitHeight + 12 : 0
                 color: "#3A1E1E"
-                border.color: "#FF6B6B"
+                border.color: ThemeModule.Theme.colorDanger
                 border.width: 1
                 radius: 6
                 visible: errorText.text.length > 0
@@ -318,7 +311,7 @@ import QtQuick 2.15 as QtQuick2
                     id: errorText
                     anchors.fill: parent
                     anchors.margins: 6
-                    color: "#FF6B6B"
+                    color: ThemeModule.Theme.colorDanger
                     font.pixelSize: 12
                     font.family: loginDialog.chineseFont || font.family
                     wrapMode: Text.WordWrap
@@ -326,7 +319,7 @@ import QtQuick 2.15 as QtQuick2
                 }
             }
 
-            // 登录/取消按钮（现代化样式）
+            // 登录按钮
             Button {
                 id: loginButton
                 Layout.fillWidth: true
@@ -339,7 +332,7 @@ import QtQuick 2.15 as QtQuick2
                     font.pixelSize: 16
                     font.family: loginDialog.chineseFont || font.family
                     font.bold: true
-                    color: loginButton.enabled ? "#FFFFFF" : "#666666"
+                    color: loginButton.enabled ? ThemeModule.Theme.colorText : "#666666"
                     horizontalAlignment: Text.AlignHCenter
                     verticalAlignment: Text.AlignVCenter
                 }
@@ -349,19 +342,18 @@ import QtQuick 2.15 as QtQuick2
                     gradient: Gradient {
                         GradientStop { 
                             position: 0.0
-                            color: loginButton.enabled ? (loginButton.pressed ? "#357ABD" : (loginButton.hovered ? "#5AA0F2" : "#4A90E2"))
-                            : "#2A2A3E"
+                            color: loginButton.enabled ? (loginButton.pressed ? "#357ABD" : (loginButton.hovered ? "#5AA0F2" : ThemeModule.Theme.colorBorderActive))
+                            : ThemeModule.Theme.colorButtonBg
                         }
                         GradientStop { 
                             position: 1.0
-                            color: loginButton.enabled ? (loginButton.pressed ? "#2A5A8D" : (loginButton.hovered ? "#4A80D2" : "#357ABD"))
-                            : "#1E1E2E"
+                            color: loginButton.enabled ? (loginButton.pressed ? "#2A5A8D" : (loginButton.hovered ? "#4A80D2" : ThemeModule.Theme.colorPrimary))
+                            : ThemeModule.Theme.colorSurface
                         }
                     }
-                    border.color: loginButton.enabled ? "#5AA0F2" : "#444444"
+                    border.color: loginButton.enabled ? ThemeModule.Theme.colorBorderActive : ThemeModule.Theme.colorButtonBorder
                     border.width: 1
                     
-                    // 简单阴影
                     Rectangle {
                         anchors.fill: parent
                         anchors.margins: -2
@@ -380,56 +372,63 @@ import QtQuick 2.15 as QtQuick2
                 }
             }
             
-            // 开始登录
+            // ── 登录逻辑 ───────────────────────────────────────────────
             function startLogin() {
                 errorText.text = ""
                 isLoggingIn = true
                 loginButton.text = "取消"
-                authManager.login(usernameField.text, passwordField.text, serverUrlField.text)
+                var am = loginDialog.authManager
+                if (am) {
+                    console.log("[Client][UI][LoginDialog] 开始登录:", usernameField.text, "->", serverUrlField.text)
+                    am.login(usernameField.text, passwordField.text, serverUrlField.text)
+                } else {
+                    isLoggingIn = false
+                    loginButton.text = "登录"
+                    errorText.text = "认证管理器不可用"
+                }
             }
             
-            // 取消登录
             function cancelLogin() {
                 isLoggingIn = false
                 loginButton.text = "登录"
-                // 如果主页面已经显示，关闭它并返回登录界面
-                if (authManager.isLoggedIn) {
-                    authManager.logout()
+                var am = loginDialog.authManager
+                if (am && am.isLoggedIn) {
+                    am.logout()
                 }
             }
         }
     }
 
+    // ── 信号连接 ─────────────────────────────────────────────────────
     Connections {
-        target: authManager
+        target: loginDialog.authManager
         
         function onLoginSucceeded(token, userInfo) {
             isLoggingIn = false
             loginButton.text = "登录"
-            if (userInfo && userInfo.username && typeof authManager !== 'undefined') {
-                authManager.addUsernameToHistory(userInfo.username)
+            var am = loginDialog.authManager
+            if (am && userInfo && userInfo.username && typeof am.addUsernameToHistory === "function") {
+                am.addUsernameToHistory(userInfo.username)
             }
-            
-            // 延迟关闭登录对话框，显示主页面
-            // 给用户一个短暂的时间窗口可以点击取消
+            console.log("[Client][UI][LoginDialog] 登录成功")
             loginSuccessTimer.start()
         }
         
         function onLoginFailed(error) {
-            // 登录失败，重置按钮状态
             isLoggingIn = false
             loginButton.text = "登录"
-            errorText.text = error
+            errorText.text = error || "登录失败，请检查用户名和密码"
+            console.log("[Client][UI][LoginDialog] 登录失败:", error)
         }
     }
     
-    // 登录成功定时器（给用户时间点击取消）
+    // 登录成功延迟关闭
     QtQuick2.Timer {
         id: loginSuccessTimer
-        interval: 500  // 500ms 延迟，给用户时间点击取消
+        interval: 500
         onTriggered: {
-            // 如果用户没有点击取消，关闭登录对话框
-            if (authManager.isLoggedIn) {
+            var am = loginDialog.authManager
+            if (am && am.isLoggedIn) {
                 loginDialog.close()
             }
         }

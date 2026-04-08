@@ -118,11 +118,7 @@ check_contains "Quadratic prediction" "src/services/latencycompensator.cpp" "qua
 # ─── Phase 4: Presentation Layer ─────────────────────────────
 echo ""
 echo "【Phase 4】表现层"
-check "VideoRenderer (QQuickItem)"  "src/presentation/renderers/VideoRenderer.h"
-check "VideoSGNode"                 "src/presentation/renderers/VideoSGNode.h"
-check "VideoMaterial"               "src/presentation/renderers/VideoMaterial.h"
-check "GLSL vertex shader"          "shaders/video.vert"
-check "GLSL fragment shader"        "shaders/video.frag"
+check "WebRtcClient (QVideoSink)"   "src/webrtcclient.h"
 check "TelemetryModel"              "src/presentation/models/TelemetryModel.h"
 check "NetworkStatusModel"          "src/presentation/models/NetworkStatusModel.h"
 check "SafetyStatusModel"           "src/presentation/models/SafetyStatusModel.h"
@@ -134,9 +130,7 @@ check "SafetyWarningOverlay.qml"    "qml/components/SafetyWarningOverlay.qml"
 check "SteeringIndicator.qml"       "qml/components/SteeringIndicator.qml"
 check "GearIndicator.qml"           "qml/components/GearIndicator.qml"
 
-check_contains "Triple buffer in VideoRenderer" "src/presentation/renderers/VideoRenderer.h" "m_middleIdx"
-check_contains "Zero-copy QSGNode"              "src/presentation/renderers/VideoSGNode.h" "QSGGeometryNode"
-check_contains "YUV-RGB shader BT.709"          "shaders/video.frag" "BT.709"
+check_contains "QVideoSink on WebRtcClient"     "src/webrtcclient.h" "QVideoSink"
 
 # ─── Phase 5: Engineering ────────────────────────────────────
 echo ""
@@ -167,28 +161,17 @@ check_contains "Session creds VCS"     "src/services/vehiclecontrolservice.cpp" 
 check_contains "Replay block in MQTT"  "src/infrastructure/mqtttransportadapter.cpp" "REPLAY BLOCKED"
 check_contains "HMAC verify in MQTT"   "src/infrastructure/mqtttransportadapter.cpp" "verify"
 
-# ─── Phase 7: GPU Zero-Copy ──────────────────────────────────
+# ─── Phase 7: 媒体解码 / 帧模型（UI 显示走 Qt Multimedia QVideoSink）──────────
 echo ""
-echo "【Phase 7】GPU 零拷贝"
-check "IGpuInterop interface"      "src/infrastructure/media/gpu/IGpuInterop.h"
-check "EGLDmaBufInterop header"    "src/infrastructure/media/gpu/EGLDmaBufInterop.h"
-check "EGLDmaBufInterop impl"      "src/infrastructure/media/gpu/EGLDmaBufInterop.cpp"
-check "CpuUploadInterop"           "src/infrastructure/media/gpu/CpuUploadInterop.h"
-check "GpuInteropFactory header"   "src/infrastructure/media/gpu/GpuInteropFactory.h"
-check "GpuInteropFactory impl"     "src/infrastructure/media/gpu/GpuInteropFactory.cpp"
+echo "【Phase 7】媒体解码与帧模型"
 check "NvdecDecoder header"        "src/infrastructure/media/NvdecDecoder.h"
 check "NvdecDecoder impl"          "src/infrastructure/media/NvdecDecoder.cpp"
 
 check_contains "DmaBufInfo in VideoFrame"  "src/infrastructure/media/IHardwareDecoder.h" "DmaBufInfo"
 check_contains "PixelFormat NV12"          "src/infrastructure/media/IHardwareDecoder.h" "NV12"
 check_contains "DRM Prime export in VAAPI" "src/infrastructure/media/VAAPIDecoder.cpp"   "DRM_PRIME"
-check_contains "Zero-copy EGL DMA-BUF"    "src/infrastructure/media/gpu/EGLDmaBufInterop.cpp" "eglCreateImage"
-check_contains "GPU interop in SGNode"     "src/presentation/renderers/VideoSGNode.h"    "IGpuInterop"
-check_contains "GPU interop in Renderer"   "src/presentation/renderers/VideoRenderer.h"  "IGpuInterop"
-check_contains "NV12 uniform in shader"    "shaders/video.frag"                          "isNv12"
-check_contains "NV12 branch in shader"     "shaders/video.frag"                          "isNv12 == 1"
-check_contains "GpuInteropFactory create"  "src/presentation/renderers/VideoRenderer.cpp" "GpuInteropFactory"
 check_contains "NVDEC CUDA device"         "src/infrastructure/media/NvdecDecoder.cpp"   "AV_HWDEVICE_TYPE_CUDA"
+check_contains "Qt Multimedia link"         "CMakeLists.txt"                              "Qt6::Multimedia"
 
 # ─── Summary ─────────────────────────────────────────────────
 echo ""

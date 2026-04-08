@@ -191,6 +191,7 @@ private:
         ClientEvent::Priority priority;
         int seq;
         std::shared_ptr<ClientEvent> event;
+        int64_t enqueueTimeNs = 0;  // 入队时间戳，用于计算分发延迟
 
         bool operator>(const QueuedEvent& o) const {
             if (priority != o.priority)
@@ -199,13 +200,89 @@ private:
         }
     };
 
-    QMutex m_subMutex;
+    // ═══════════════════════════════════════════════════════════════
+    // 队列监控统计
+    // ═══════════════════════════════════════════════════════════════
+
+    /**
+     * 队列监控统计结构
+     */
+    struct QueueStats {
+        int queueDepth = 0;           // 当前队列深度
+        int subscriberCount = 0;      // 总订阅者数
+        int64_t lastDispatchMs = 0;   // 上次分发时间
+        int64_t avgDispatchIntervalMs = 0;  // 平均分发间隔
+        int64_t totalDispatched = 0;  // 总分发数
+        int64_t totalDropped = 0;      // 总丢弃数
+        double fillRatio = 0.0;       // 队列填充率（深度/容量）
+        double avgDispatchLatencyMs = 0.0;  // 平均分发延迟
+        int64_t maxDispatchLatencyMs = 0;   // 最大分发延迟
+        int64_t lastQueueMaxDepth = 0;       // 历史最大深度
+        int64_t overflowWarnings = 0;        // 溢出警告次数
+    };
+
+    // 队列容量限制（防内存膨胀）
+    static constexpr int MAX_QUEUE_DEPTH = 10000;
+
+    // 分发延迟警告阈值（毫秒）
+    static constexpr int64_t DISPATCH_LATENCY_WARNING_MS = 100;
+
+    /**
+     * 获取队列监控统计
+     */
+    Q_INVOKABLE QueueStats getQueueStats() const;
+
+    /**
+     * 重置队列统计
+     */
+    Q_INVOKABLE void resetQueueStats();
+
+    /**
+     * 获取队列填充率
+     */
+    Q_INVOKABLE double getQueueFillRatio() const;
+
+    /**
+     * 获取最大分发延迟（毫秒）
+     */
+    Q_INVOKABLE int64_t getMaxDispatchLatencyMs() const;
+
+signals:
+    /**
+     * 队列溢出警告信号（队列深度接近上限时触发）
+     */
+    void queueOverflowWarning(int currentDepth, int maxDepth);
+
+    /**
+     * 分发延迟警告信号（延迟超过阈值时��发）
+     */
+    void dispatchLatencyWarning(int64_t latencyMs);
+
+    /**
+     * 事件丢弃信号
+     */
+    void eventDropped(uint32_t typeId, int totalDropped);
+
+private:
+    mutable QMutex m_subMutex;
     std::unordered_map<uint32_t, std::vector<Subscriber>> m_subscribers;
     std::atomic<SubscriptionHandle> m_nextHandle{1};
 
-    QMutex m_queueMutex;
+    mutable QMutex m_queueMutex;
     // 使用 vector + push_heap/pop_heap 实现优先级队列
     std::vector<QueuedEvent> m_queue;
     std::atomic<int> m_seqCounter{0};
     std::atomic<bool> m_flushScheduled{false};
+
+    // ── 队列监控统计 ──────────────────────────────────────────────
+    mutable QMutex m_statsMutex;
+    int64_t m_lastDispatchTimeNs = 0;
+    std::atomic<int64_t> m_totalDispatched{0};
+    std::atomic<int64_t> m_totalDropped{0};
+    int64_t m_dispatchIntervalSumNs = 0;
+    int64_t m_dispatchIntervalCount = 0;
+    int64_t m_totalDispatchLatencyNs = 0;
+    int64_t m_maxDispatchLatencyNs = 0;
+    std::atomic<int64_t> m_lastQueueMaxDepth{0};
+    std::atomic<int64_t> m_overflowWarnings{0};
 };

@@ -1,0 +1,22 @@
+# 在本地已有完备镜像上「叠一层」，避免从 ubuntu + Qt 基础完整重编。
+#
+# 前提：宿主机已有 remote-driving-client-dev:full（或你指定的 tag），例如：
+#   docker image inspect remote-driving-client-dev:full
+#
+# 构建示例：
+#   docker build -f client/Dockerfile.client-dev.from-full \
+#     --build-arg EXTEND_BASE_IMAGE=remote-driving-client-dev:full \
+#     -t remote-driving-client-dev:patched client/
+#
+# Compose：docker-compose.client-dev.from-full.yml
+
+ARG EXTEND_BASE_IMAGE=remote-driving-client-dev:full
+FROM ${EXTEND_BASE_IMAGE}
+
+USER root
+
+# 在此追加增量 RUN（系统包、aqt 补模块等）。无改动时保持 no-op 亦可完成「验证 FROM」构建。
+# 示例：
+# RUN apt-get update && apt-get install -y --no-install-recommends YOUR_PKG \
+#     && rm -rf /var/lib/apt/lists/*
+RUN true

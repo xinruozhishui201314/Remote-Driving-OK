@@ -57,10 +57,36 @@ if(NOT XKB_FOUND)
 endif()
 
 # ── Qt6 必需模块 ─────────────────────────────────────────────────────────────
-find_package(Qt6 REQUIRED COMPONENTS Core Network Gui Quick Qml)
+# Multimedia + MultimediaQuick：QVideoSink / QML VideoOutput 官方显示路径（替代自研 VideoRenderer）
+# 部分 Qt 6.8 发行版 / aqt 镜像仅有 libQt6MultimediaQuick.so + 头文件，但缺少 Qt6MultimediaQuickConfig.cmake
+# （只带 Qt6MultimediaQuickPrivate）。此时用 IMPORTED 目标补齐，行为与官方包一致。
+find_package(Qt6 REQUIRED COMPONENTS Core Network Gui Quick Qml Multimedia)
+find_package(Qt6 QUIET COMPONENTS MultimediaQuick)
+if(NOT TARGET Qt6::MultimediaQuick)
+    get_filename_component(_QT6_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
+    find_library(_QT6_MULTIMEDIAQUICK_LIB
+        NAMES Qt6MultimediaQuick
+        HINTS "${_QT6_PREFIX}/lib"
+        NO_DEFAULT_PATH)
+    if(_QT6_MULTIMEDIAQUICK_LIB AND EXISTS "${_QT6_PREFIX}/include/QtMultimediaQuick")
+        add_library(Qt6::MultimediaQuick SHARED IMPORTED)
+        set_target_properties(Qt6::MultimediaQuick PROPERTIES
+            IMPORTED_LOCATION "${_QT6_MULTIMEDIAQUICK_LIB}"
+            INTERFACE_INCLUDE_DIRECTORIES
+                "${_QT6_PREFIX}/include/QtMultimediaQuick;${_QT6_PREFIX}/include"
+            INTERFACE_LINK_LIBRARIES "Qt6::Multimedia;Qt6::Quick;Qt6::OpenGL")
+        message(STATUS "Qt6::MultimediaQuick: IMPORTED fallback (no Qt6MultimediaQuickConfig.cmake)")
+    else()
+        message(FATAL_ERROR
+            "Qt6 MultimediaQuick required for QML video (QVideoSink / VideoOutput). "
+            "Install Qt qtmultimedia with Quick QML support, or use a full Qt build.")
+    endif()
+    unset(_QT6_MULTIMEDIAQUICK_LIB CACHE)
+endif()
+unset(_QT6_PREFIX)
 
 # ── Qt6 可选模块 ─────────────────────────────────────────────────────────────
-foreach(_mod Multimedia WebSockets QuickControls2 ShaderTools OpenGL Test)
+foreach(_mod WebSockets QuickControls2 ShaderTools OpenGL Test)
     find_package(Qt6 QUIET COMPONENTS ${_mod})
     if(Qt6${_mod}_FOUND)
         message(STATUS "Found Qt6${_mod}")
@@ -71,88 +97,8 @@ foreach(_mod Multimedia WebSockets QuickControls2 ShaderTools OpenGL Test)
     endif()
 endforeach()
 
-# ── Qt ShaderTools 编译 ──────────────────────────────────────────────────────────
-# 编译 GLSL → Qt Shader Binary (.qsb)，供 QSGMaterialShader 使用。
-# qsb 查找顺序：① PATH / Qt 安装目录  ② FetchContent 从 GitHub 源码编译（离线 fallback）
-# 若两者均失败 → FATAL_ERROR（视频无法渲染）
-if(NOT ENABLE_QT6_ShaderTools)
-    message(FATAL_ERROR "Qt6 ShaderTools (find_package) not found — GPU video rendering will FAIL! "
-        "Install Qt6 ShaderTools in Docker image (see client/Dockerfile.client-dev).")
-endif()
-
-# 查找 qsb：优先 PATH → Qt bin 目录
-find_program(QSB_EXECUTABLE NAMES qsb qmake-qsb qsb6 PATHS
-    ${Qt6_DIR}/../../../bin
-    ${Qt6_DIR}/../../bin
-    $ENV{HOME}/Qt/6.*/gcc_64/bin
-    $ENV{PATH}
-    CMAKE_FIND_ROOT_PATH_BEFORE_MAKE
-)
-
-if(NOT QSB_EXECUTABLE)
-    # qsb 不可用：从 GitHub FetchContent 编译 qsb（一次性，构建时需要 git + cmake）
-    message(WARNING "qsb not in PATH — building from source via FetchContent (one-time setup)")
-    include(FetchContent)
-    FetchContent_Declare(
-        qsb_src
-        GIT_REPOSITORY https://github.com/qt/qttools.git
-        GIT_TAG        v6.8.0
-        GIT_SHALLOW    TRUE
-        SOURCE_SUBDIR  src/shaders
-    )
-    FetchContent_MakeAvailable(qsb_src)
-    find_program(QSB_EXECUTABLE NAMES qsb PATHS
-        "${CMAKE_BINARY_DIR}/qsb_src-src/src/shaders"
-        "${CMAKE_BINARY_DIR}/qsb_src-prefix/src/qsb_src-build/src/shaders"
-        CMAKE_FIND_ROOT_PATH_BEFORE_MAKE
-    )
-endif()
-
-if(QSB_EXECUTABLE)
-    message(STATUS "ShaderTools: qsb=${QSB_EXECUTABLE}")
-    set(SHADER_GEN_DIR "${CMAKE_BINARY_DIR}/shaders_gen")
-    file(MAKE_DIRECTORY "${SHADER_GEN_DIR}")
-
-    set(VERT_QSB "${SHADER_GEN_DIR}/video.vert.qsb")
-    set(FRAG_QSB "${SHADER_GEN_DIR}/video.frag.qsb")
-
-    add_custom_command(OUTPUT "${VERT_QSB}"
-        COMMAND ${QSB_EXECUTABLE} --glsl "440:core:es300" -o "${VERT_QSB}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/video.vert"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/video.vert"
-        COMMENT "qsb: video.vert → video.vert.qsb"
-        VERBATIM COMMAND_ERROR_IS_FATAL ANY
-    )
-    add_custom_command(OUTPUT "${FRAG_QSB}"
-        COMMAND ${QSB_EXECUTABLE} --glsl "440:core:es300" -o "${FRAG_QSB}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/shaders/video.frag"
-        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/video.frag"
-        COMMENT "qsb: video.frag → video.frag.qsb"
-        VERBATIM COMMAND_ERROR_IS_FATAL ANY
-    )
-
-    if(NOT TARGET shader_compilation)
-        add_custom_target(shader_compilation ALL)
-    endif()
-    add_custom_target(shader_compilation_files DEPENDS "${VERT_QSB}" "${FRAG_QSB}")
-    add_dependencies(shader_compilation shader_compilation_files)
-
-    # 验证 .qsb 非空（缺失则 FATAL）
-    add_custom_command(TARGET shader_compilation_files POST_BUILD
-        COMMAND bash -c "f='${VERT_QSB}'; ff='${FRAG_QSB}'; "
-            "test -s \"$f\" || { echo FATAL: video.vert.qsb missing; exit 1; }; "
-            "test -s \"$ff\" || { echo FATAL: video.frag.qsb missing; exit 1; }; "
-            "echo \"qsb OK: vert=\$(wc -c <\"\$f\") frag=\$(wc -c <\"\$ff\") bytes\""
-        VERBATIM COMMAND_ERROR_IS_FATAL ANY
-    )
-
-    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/shaders.qrc.in"
-        "${CMAKE_BINARY_DIR}/shaders.qrc" @ONLY)
-    message(STATUS "ShaderTools: enabled")
-else()
-    message(FATAL_ERROR "qsb not found and FetchContent build failed — video rendering will FAIL! "
-        "Install qsb in Docker: see client/Dockerfile.client-dev for installation commands.")
-endif()
+# 视频显示已改为 Qt Multimedia（QVideoSink + QML VideoOutput），不再编译自定义 GLSL/qsb。
+message(STATUS "Video: Qt Multimedia QVideoSink + VideoOutput（无 qsb 着色器依赖）")
 
 # ── PkgConfig / FFmpeg / VA-API / EGL / NVDEC ───────────────────────────────
 find_package(PkgConfig QUIET)
@@ -236,8 +182,13 @@ qt_standard_project_setup()
 # Sources
 # ─────────────────────────────────────────────────────────────────────────────
 set(SOURCES
-    # Entry point
+    # Entry point + 启动拆分（日志 / QML 注册 / 上下文）
     src/main.cpp
+    src/app/client_logging_setup.cpp
+    src/app/client_crash_diagnostics.cpp
+    src/app/client_x11_deep_diag.cpp
+    src/app/client_app_bootstrap.cpp
+    src/app/client_display_runtime_policy.cpp
 
     # Legacy network/media (kept as WebRTCChannel internals)
     src/webrtcclient.cpp
@@ -263,12 +214,24 @@ set(SOURCES
     src/core/memorymanager.cpp
     src/core/plugincontext.cpp
     src/core/pluginmanager.cpp
+    # 产品化新增
+    src/core/healthchecker.cpp
+    src/core/metricscollector.cpp
+    src/core/errorregistry.cpp
+    src/core/modelbase.cpp
+    src/core/tracing.cpp
+    src/core/httpendpointserver.cpp
+
+    # 安全模块（Phase2 Task 8: JWT 安全存储）
+    src/security/keystoremanager.cpp
 
     # ── Infrastructure Layer ─────────────────────────────────────────────────
     # Network
     src/infrastructure/itransportmanager.cpp
     src/infrastructure/mqtttransportadapter.cpp
     src/infrastructure/controlloopticker.cpp
+    # API 限流器（Phase2 Task 9）
+    src/infrastructure/network/ratelimiter.cpp
     src/infrastructure/network/WebRTCChannel.cpp
     src/infrastructure/network/UDPChannel.cpp
     src/infrastructure/network/AdaptiveBitrate.cpp
@@ -278,9 +241,6 @@ set(SOURCES
     src/infrastructure/media/DecoderFactory.cpp
     src/infrastructure/media/FramePool.cpp
     src/infrastructure/media/MediaPipeline.cpp
-    # GPU Interop
-    src/infrastructure/media/gpu/GpuInteropFactory.cpp
-
     # Hardware input
     src/infrastructure/hardware/InputSampler.cpp
     src/infrastructure/hardware/KeyboardMouseInput.cpp
@@ -295,15 +255,17 @@ set(SOURCES
     src/services/diagnosticsservice.cpp
 
     # ── Presentation Layer ───────────────────────────────────────────────────
-    src/presentation/renderers/VideoRenderer.cpp
-    src/presentation/renderers/VideoSGNode.cpp
-    src/presentation/renderers/VideoMaterial.cpp
     src/presentation/models/TelemetryModel.cpp
     src/presentation/models/NetworkStatusModel.cpp
     src/presentation/models/SafetyStatusModel.cpp
 )
 
 set(HEADERS
+    src/app/client_logging_setup.h
+    src/app/client_crash_diagnostics.h
+    src/app/client_x11_deep_diag.h
+    src/app/client_app_bootstrap.h
+    src/app/client_display_runtime_policy.h
     src/webrtcclient.h
     src/webrtcstreammanager.h
     src/mqttcontroller.h
@@ -331,10 +293,22 @@ set(HEADERS
     src/core/memorymanager.h
     src/core/antireplayguard.h
     src/core/commandsigner.h
+    # 产品化新增
+    src/core/healthchecker.h
+    src/core/metricscollector.h
+    src/core/errorregistry.h
+    src/core/modelbase.h
+    src/core/tracing.h
+    src/core/httpendpointserver.h
+
+    # 安全模块（Phase2 Task 8: JWT 安全存储）
+    src/security/keystoremanager.h
 
     src/infrastructure/itransportmanager.h
     src/infrastructure/mqtttransportadapter.h
     src/infrastructure/controlloopticker.h
+    # API 限流器（Phase2 Task 9）
+    src/infrastructure/network/ratelimiter.h
     src/infrastructure/network/WebRTCChannel.h
     src/infrastructure/network/UDPChannel.h
     src/infrastructure/network/AdaptiveBitrate.h
@@ -344,11 +318,6 @@ set(HEADERS
     src/infrastructure/media/DecoderFactory.h
     src/infrastructure/media/FramePool.h
     src/infrastructure/media/MediaPipeline.h
-    src/infrastructure/media/gpu/IGpuInterop.h
-    src/infrastructure/media/gpu/EGLDmaBufInterop.h
-    src/infrastructure/media/gpu/CpuUploadInterop.h
-    src/infrastructure/media/gpu/GpuInteropFactory.h
-
     src/infrastructure/hardware/IInputDevice.h
     src/infrastructure/hardware/InputSampler.h
     src/infrastructure/hardware/KeyboardMouseInput.h
@@ -361,9 +330,6 @@ set(HEADERS
     src/services/errorrecoverymanager.h
     src/services/diagnosticsservice.h
 
-    src/presentation/renderers/VideoRenderer.h
-    src/presentation/renderers/VideoSGNode.h
-    src/presentation/renderers/VideoMaterial.h
     src/presentation/models/TelemetryModel.h
     src/presentation/models/NetworkStatusModel.h
     src/presentation/models/SafetyStatusModel.h
@@ -393,18 +359,8 @@ if(ENABLE_NVDEC)
     list(APPEND HEADERS src/infrastructure/media/NvdecDecoder.h)
 endif()
 
-# Optional: EGL DMA-BUF interop
-if(ENABLE_EGL_DMABUF)
-    list(APPEND SOURCES src/infrastructure/media/gpu/EGLDmaBufInterop.cpp)
-endif()
-
 # ── Executable ────────────────────────────────────────────────────────────────
 qt_add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
-
-# 将 qsb 着色器资源文件加入可执行目标（必须在 qt_add_executable 之后）
-if(QSB_EXECUTABLE AND EXISTS "${CMAKE_BINARY_DIR}/shaders.qrc")
-    qt_add_resources(${PROJECT_NAME} PRIVATE "${CMAKE_BINARY_DIR}/shaders.qrc")
-endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -416,26 +372,60 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/presentation
 )
 
-# QShader 头文件在 QtGui/6.8.0/QtGui/rhi/（版本化私有路径），client-dev 镜像中 Qt 路径固定
-if(ENABLE_QT6_ShaderTools)
-    set(_qt6_install_prefix "/opt/Qt/6.8.0/gcc_64")
-    target_include_directories(${PROJECT_NAME} PRIVATE
-        "${_qt6_install_prefix}/include/QtGui/6.8.0/QtGui"
-    )
-endif()
-
 # ── Link Qt (required) ────────────────────────────────────────────────────────
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core Qt6::Quick Qt6::Network Qt6::Qml Qt6::Gui
+    Qt6::Multimedia Qt6::MultimediaQuick
 )
+
+# Linux：Qt 6 gcc_64 的 libQt6Multimedia 常带 DT_NEEDED(libpulse)，但 CMake 目标未传播，
+# 最终链接 RemoteDrivingClient 会出现大量 undefined reference to pa_*。显式链接 libpulse。
+if(UNIX AND NOT APPLE)
+    find_library(CLIENT_LIBPULSE NAMES pulse DOC "PulseAudio client library (Qt6Multimedia)")
+    if(NOT CLIENT_LIBPULSE)
+        # 仅安装 libpulse0、无 libpulse.so 开发符号链接时，直接链接 SONAME
+        # Debian/Ubuntu 常把 .so.0 放在 /lib/<multiarch>/（不在 /usr/lib/*/）
+        file(GLOB _client_libpulse_candidates
+            "/lib/*/libpulse.so.0"
+            "/usr/lib/*/libpulse.so.0"
+            "/usr/lib/libpulse.so.0"
+            "/usr/lib64/libpulse.so.0")
+        if(_client_libpulse_candidates)
+            list(SORT _client_libpulse_candidates)
+            list(GET _client_libpulse_candidates 0 CLIENT_LIBPULSE)
+        endif()
+        unset(_client_libpulse_candidates)
+    endif()
+    if(CLIENT_LIBPULSE)
+        target_link_libraries(${PROJECT_NAME} PRIVATE ${CLIENT_LIBPULSE})
+        message(STATUS "client: linked libpulse for Qt6Multimedia: ${CLIENT_LIBPULSE}")
+    else()
+        message(WARNING
+            "client: libpulse not found (install libpulse0 + libpulse-dev) — link may fail with pa_* undefined references")
+    endif()
+endif()
+
+# Linux: libxcb — 用于闪退诊断（xcb_connection_has_error 轮询、X protocol error 事件日志）
+if(UNIX AND NOT APPLE)
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(CLIENT_XCB QUIET xcb)
+        if(CLIENT_XCB_FOUND)
+            target_compile_definitions(${PROJECT_NAME} PRIVATE CLIENT_HAVE_XCB=1)
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${CLIENT_XCB_LIBRARIES})
+            target_include_directories(${PROJECT_NAME} PRIVATE ${CLIENT_XCB_INCLUDE_DIRS})
+            message(STATUS "client: CLIENT_HAVE_XCB enabled (libxcb crash diagnostics)")
+        else()
+            message(STATUS "client: pkg-config 'xcb' not found — xcb native filter/poll disabled (optional)")
+        endif()
+    endif()
+endif()
+
 target_link_options(${PROJECT_NAME} PRIVATE
     $<$<NOT:$<BOOL:${CMAKE_CROSSCOMPILING}>>:-rdynamic>)
 
 # ── Link optional Qt modules ──────────────────────────────────────────────────
-if(ENABLE_QT6_Multimedia)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Multimedia)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_QT6_MULTIMEDIA)
-endif()
+target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_QT6_MULTIMEDIA)
 if(ENABLE_QT6_WebSockets)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::WebSockets)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_QT6_WEBSOCKETS)
@@ -448,11 +438,6 @@ if(ENABLE_QT6_OpenGL)
     target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::OpenGL)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_QT6_OPENGL)
 endif()
-if(ENABLE_QT6_ShaderTools)
-    target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::ShaderToolsPrivate Qt6::ShaderTools)
-    target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_QT6_SHADERTOOLS)
-endif()
-
 # ── Link FFmpeg ──────────────────────────────────────────────────────────────
 if(ENABLE_FFMPEG)
     target_include_directories(${PROJECT_NAME} PRIVATE ${FFMPEG_INCLUDE_DIRS})
@@ -519,11 +504,25 @@ install(TARGETS ${PROJECT_NAME} RUNTIME DESTINATION bin)
 if(ENABLE_QT6_Test)
     enable_testing()
 
+    # 测试覆盖率选项
+    option(ENABLE_COVERAGE "Enable code coverage reporting with gcov" OFF)
+    if(ENABLE_COVERAGE)
+        find_program(GCOV_BIN gcov)
+        find_program(LCOV_BIN lcov)
+        find_program(GENHTML_BIN genhtml)
+        if(NOT GCOV_BIN)
+            message(WARNING "gcov not found, coverage disabled")
+            set(ENABLE_COVERAGE OFF)
+        endif()
+    endif()
+
     # State machine tests
     add_executable(client_systemstatemachine_test
         tests/test_systemstatemachine.cpp
         src/core/eventbus.cpp
         src/core/systemstatemachine.cpp
+        src/core/metricscollector.cpp
+        src/core/configuration.cpp
     )
     target_include_directories(client_systemstatemachine_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -532,24 +531,109 @@ if(ENABLE_QT6_Test)
     add_test(NAME client_systemstatemachine_test
         COMMAND client_systemstatemachine_test)
 
-    # Unit tests for services
+    # Unit tests for services — 每个测试文件有 QTEST_MAIN，各自独立可执行
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit")
-        file(GLOB UNIT_TEST_SOURCES tests/unit/*.cpp)
-        if(UNIT_TEST_SOURCES)
-            add_executable(client_unit_tests ${UNIT_TEST_SOURCES}
-                src/core/eventbus.cpp
-                src/core/systemstatemachine.cpp
-                src/core/configuration.cpp
-                src/core/logger.cpp
-                src/core/threadpool.cpp
-            )
-            target_include_directories(client_unit_tests PRIVATE
-                ${CMAKE_CURRENT_SOURCE_DIR}/src)
-            target_link_libraries(client_unit_tests PRIVATE
-                Qt6::Core Qt6::Test Qt6::Network)
-            add_test(NAME client_unit_tests COMMAND client_unit_tests)
+        set(_TEST_DEPS
+            src/core/eventbus.cpp
+            src/core/systemstatemachine.cpp
+            src/core/configuration.cpp
+            src/core/logger.cpp
+            src/core/threadpool.cpp
+            src/core/networkqualityaggregator.cpp
+            src/core/tracing.cpp
+            src/core/metricscollector.cpp
+            src/vehiclestatus.cpp
+            src/nodehealthchecker.cpp
+        )
+        set(_TEST_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        set(_TEST_LIBS Qt6::Core Qt6::Test Qt6::Network)
+
+        # 通用测试目标宏（避免重复代码）
+        function(add_client_unit_test NAME TEST_FILE)
+            add_executable(${NAME} ${TEST_FILE} ${_TEST_DEPS})
+            target_include_directories(${NAME} PRIVATE ${_TEST_INCLUDES})
+            target_link_libraries(${NAME} PRIVATE ${_TEST_LIBS})
+            if(ENABLE_COVERAGE)
+                target_compile_options(${NAME} PRIVATE -fprofile-arcs -ftest-coverage -g -O0)
+                target_link_options(${NAME} PRIVATE -fprofile-arcs -ftest-coverage)
+            endif()
+            add_test(NAME ${NAME} COMMAND ${NAME})
+        endfunction()
+
+        add_client_unit_test(test_configuration   tests/unit/test_configuration.cpp)
+        add_client_unit_test(test_threadpool       tests/unit/test_threadpool.cpp)
+        add_client_unit_test(test_networkquality   tests/unit/test_networkqualityaggregator.cpp)
+        add_client_unit_test(test_logger           tests/unit/test_logger.cpp)
+
+        add_executable(test_vehiclecontrolservice
+            tests/unit/test_vehiclecontrolservice.cpp
+            ${_TEST_DEPS}
+            src/services/vehiclecontrolservice.cpp
+            src/services/latencycompensator.cpp
+            src/core/commandsigner.cpp
+            src/vehiclemanager.cpp
+            src/infrastructure/itransportmanager.cpp
+        )
+        target_include_directories(test_vehiclecontrolservice PRIVATE ${_TEST_INCLUDES})
+        target_compile_definitions(test_vehiclecontrolservice PRIVATE VEHICLE_CONTROL_SERVICE_UNIT_TEST)
+        # vehiclecontrolservice → webrtcstreammanager.h → webrtcclient.h: QVideoSink (Multimedia), QImage (Gui), QQuickItem (Quick)
+        target_link_libraries(test_vehiclecontrolservice PRIVATE ${_TEST_LIBS} Qt6::Gui Qt6::Quick Qt6::Multimedia)
+        if(UNIX AND NOT APPLE)
+            target_link_libraries(test_vehiclecontrolservice PRIVATE atomic)
         endif()
+        add_test(NAME test_vehiclecontrolservice COMMAND test_vehiclecontrolservice)
+
+        # CTest 全局配置
+        include(CTest)
+        list(APPEND CMAKE_CTEST_ARGUMENTS "--output-on-failure")
+
+        # 统一运行目标
+        add_custom_target(run-unit-tests
+            COMMAND ctest --output-on-failure -L "test_configuration;test_threadpool;test_networkquality;test_logger"
+            COMMENT "Running all unit tests with output on failure"
+            DEPENDS test_configuration test_threadpool test_networkquality test_logger test_vehiclecontrolservice
+        )
     endif()
+    
+    add_custom_target(run-tests-verbose
+        COMMAND ctest --output-on-failure -V
+        COMMENT "Running all tests verbosely"
+        DEPENDS client_systemstatemachine_test test_configuration test_threadpool test_networkquality test_logger test_vehiclecontrolservice
+    )
+    
+    # 覆盖率报告目标（需要 lcov + genhtml）
+    if(ENABLE_COVERAGE AND LCOV_BIN AND GENHTML_BIN)
+        add_custom_target(coverage-report
+            COMMAND ${LCOV_BIN} --capture --directory . --output-file coverage.info
+            COMMAND ${GENHTML_BIN} coverage.info --output-directory coverage-html
+            COMMAND echo "Coverage report generated in coverage-html/"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            COMMENT "Generating code coverage report"
+            DEPENDS client_systemstatemachine_test test_configuration test_threadpool test_networkquality test_logger test_vehiclecontrolservice
+        )
+        add_custom_target(coverage-clean
+            COMMAND rm -rf coverage.info coverage-html
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+            COMMENT "Cleaning coverage data"
+        )
+    endif()
+endif()
+
+# ── Example plugin (IPlugin / CLIENT_PLUGIN_DIR) ─────────────────────────────
+option(CLIENT_BUILD_EXAMPLE_PLUGIN "Build noop IPlugin sample (.so in build/plugins)" OFF)
+if(CLIENT_BUILD_EXAMPLE_PLUGIN)
+    add_library(client_noop_plugin MODULE
+        plugins/noop/noop_plugin.cpp
+    )
+    set_target_properties(client_noop_plugin PROPERTIES
+        AUTOMOC ON
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/plugins"
+    )
+    target_include_directories(client_noop_plugin PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    )
+    target_link_libraries(client_noop_plugin PRIVATE Qt6::Core)
 endif()
 
 # ── Benchmarks ───────────────────────────────────────────────────────────────
@@ -568,4 +652,5 @@ message(STATUS "  EGL DMA-BUF:       ${ENABLE_EGL_DMABUF}")
 message(STATUS "  NVDEC:             ${ENABLE_NVDEC}")
 message(STATUS "  WebRTC:            ${ENABLE_WEBRTC_LIBDATACHANNEL}")
 message(STATUS "  MQTT Paho:         ${ENABLE_MQTT_PAHO}")
+message(STATUS "  Example plugin:    ${CLIENT_BUILD_EXAMPLE_PLUGIN}")
 message(STATUS "  Benchmarks:        ${ENABLE_BENCHMARKS}")

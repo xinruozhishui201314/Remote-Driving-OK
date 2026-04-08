@@ -51,6 +51,7 @@ bash scripts/setup-host-for-client.sh
 |----------|--------|------|
 | `DISPLAY` | 与宿主机一致 | 容器内使用**与宿主机相同的 DISPLAY**（如宿主机 `:1` 则传 `:1`），否则会报 “could not connect to display”。可覆盖：**CLIENT_DISPLAY=:0** 等。 |
 | `LIBGL_ALWAYS_SOFTWARE` | `1` | 容器内无宿主机 NVIDIA 驱动时使用软件渲染，避免 `libGL failed to load driver: nvidia-drm` 导致无法启动。 |
+| `QT_XCB_GL_INTEGRATION` | `glx`（软件渲染时推荐） | 与 `LIBGL_ALWAYS_SOFTWARE=1` 同时使用时，**推荐 `glx`**。`xcb_egl` + 软件 GL 在部分环境会触发 X 单请求过长（libxcb `XCB_CONN_CLOSED_REQ_LEN_EXCEED`）导致连接断开。客户端在 `main` 中会在未设 `CLIENT_FORCE_XCB_EGL` 时自动将空/`xcb_egl` 纠偏为 `glx`。调试旧行为可设 `CLIENT_FORCE_XCB_EGL=1`。 |
 | `ZLM_VIDEO_URL` | `http://zlmediakit:80` | 拉流 base URL（容器内）。 |
 | `MQTT_BROKER_URL` | `mqtt://mosquitto:1883` | MQTT 地址（容器内）。 |
 | `CLIENT_LOG_FILE` | `/tmp/remote-driving-client.log` | 客户端日志路径（容器内），便于闪退后排查。 |

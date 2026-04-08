@@ -1,7 +1,10 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import QtMultimedia
 import RemoteDriving 1.0
+import "components" as Components
+import "styles" as ThemeModule
 
 /**
  * 远程驾驶主界面 - 先整体布局再分配
@@ -134,52 +137,82 @@ Rectangle {
     }
     
     // ==================== 比例常量（先整体分配，保证每部分显示） ====================
-    readonly property real topBarRatio: 1/18
-    readonly property real mainRowRatio: 1 - topBarRatio
-    // 三列宽度比例：左右对称 20%+60%+20%=100%，铺满整个宽度
-    readonly property real sideColWidthRatio: 0.20
-    readonly property real leftColWidthRatio: sideColWidthRatio
-    readonly property real centerColWidthRatio: 0.60
-    readonly property real rightColWidthRatio: sideColWidthRatio
-    // 主内容区可用宽度（扣除边距与列间距），适当增大间距与左右边距
+    // 布局配置常量（统一管理便于维护）
+    readonly property var layoutConfig: ({
+        // 视频面板比例
+        videoPanelWidthRatio: 0.5,
+        videoPanelHeightRatio: 0.6,
+        // 顶部栏/主内容区比例
+        topBarRatio: 1/18,
+        mainRowRatio: 1 - 1/18,
+        // 三列宽度比例
+        sideColWidthRatio: 0.20,
+        centerColWidthRatio: 0.60,
+        // 侧边列子组件比例
+        leftVideoRatio: 0.58,
+        leftMapRatio: 0.40,
+        centerCameraRatio: 0.66,
+        centerControlsRatio: 0.12,
+        centerDashboardRatio: 0.20,
+        controlSideColumnRatio: 0.35,
+        // 时间间隔
+        reconnectIntervalMs: 2000,
+        healthCheckIntervalMs: 5000,
+        placeholderClearDelayMs: 2500,
+        // 最小/最大尺寸
+        sideColMinWidth: 180,
+        sideColMaxWidth: 390,
+        sideColTopMinHeight: 100,
+        sideColBottomMinHeight: 120,
+        controlSpeedometerSize: 140,
+        minControlHeight: 110,
+        minDashboardHeight: 110,
+        // 边距和间距
+        controlAreaMargin: 8,
+        controlAreaSpacing: 8,
+        dashboardMargin: 10,
+        dashboardSpacing: 12,
+        dashboardSplitterMargin: 8
+    })
+    
+    // 比例常量（向后兼容）
+    readonly property real topBarRatio: layoutConfig.topBarRatio
+    readonly property real mainRowRatio: layoutConfig.mainRowRatio
+    readonly property real sideColWidthRatio: layoutConfig.sideColWidthRatio
+    readonly property real leftColWidthRatio: layoutConfig.sideColWidthRatio
+    readonly property real centerColWidthRatio: layoutConfig.centerColWidthRatio
+    readonly property real rightColWidthRatio: layoutConfig.sideColWidthRatio
     readonly property real mainRowSpacing: 8
     readonly property real mainRowAvailW: Math.max(0, (width || 1280) - 16 - mainRowSpacing * 2)
-    // 先分配：三列按比例分配宽度，左右列共用 sideColAllocW 保证对称
-    readonly property real sideColAllocW: mainRowAvailW * sideColWidthRatio
+    readonly property real sideColAllocW: mainRowAvailW * layoutConfig.sideColWidthRatio
     readonly property real leftColAllocW: sideColAllocW
-    readonly property real centerColAllocW: mainRowAvailW * centerColWidthRatio
+    readonly property real centerColAllocW: mainRowAvailW * layoutConfig.centerColWidthRatio
     readonly property real rightColAllocW: sideColAllocW
-    // 左右列共用：侧边列最小/最大宽度、最小高度（保证左右列布局完全一致）
-    readonly property int sideColMinWidth: 180
-    readonly property int sideColMaxWidth: 390
+    readonly property int sideColMinWidth: layoutConfig.sideColMinWidth
+    readonly property int sideColMaxWidth: layoutConfig.sideColMaxWidth
     readonly property real sideColMinHeight: Math.max(400, mainRowAvailH * 0.9)
-    // 左右列子组件对称：上半(左视图/右视图)、下半(后视图/高精地图)
-    readonly property int sideColTopMinHeight: 100
-    readonly property int sideColBottomMinHeight: 120
-    // 左/右列上下块统一比例，保证 左视图↔右视图、后视图↔高精地图 水平平齐
-    readonly property real leftVideoRatio: 0.58   // 左视图、右视图 共用
-    readonly property real leftMapRatio: 0.40    // 后视图、高精地图 共用（留 2% 给 spacing）
-    readonly property real centerCameraRatio: 0.66  // 三块比例和<1，留出 spacing，避免 overflow
-    readonly property real centerControlsRatio: 0.12
-    readonly property real centerDashboardRatio: 0.20
-    // 主视图下方：控制区与仪表盘布局常量（统一管理便于调参）
-    readonly property int controlAreaMargin: 8
-    readonly property int controlAreaSpacing: 8
-    readonly property real controlSideColumnRatio: 0.35   // 车辆灯光/清扫功能 各占控制区宽度比例
-    readonly property int controlSpeedometerSize: 140     // 速度表外径上限
-    readonly property int minControlHeight: 110
-    readonly property int minDashboardHeight: 110
-    readonly property int dashboardMargin: 10
-    readonly property int dashboardSpacing: 12
+    readonly property int sideColTopMinHeight: layoutConfig.sideColTopMinHeight
+    readonly property int sideColBottomMinHeight: layoutConfig.sideColBottomMinHeight
+    readonly property real leftVideoRatio: layoutConfig.leftVideoRatio
+    readonly property real leftMapRatio: layoutConfig.leftMapRatio
+    readonly property real centerCameraRatio: layoutConfig.centerCameraRatio
+    readonly property real centerControlsRatio: layoutConfig.centerControlsRatio
+    readonly property real centerDashboardRatio: layoutConfig.centerDashboardRatio
+    readonly property int controlAreaMargin: layoutConfig.controlAreaMargin
+    readonly property int controlAreaSpacing: layoutConfig.controlAreaSpacing
+    readonly property real controlSideColumnRatio: layoutConfig.controlSideColumnRatio
+    readonly property int controlSpeedometerSize: layoutConfig.controlSpeedometerSize
+    readonly property int minControlHeight: layoutConfig.minControlHeight
+    readonly property int minDashboardHeight: layoutConfig.minDashboardHeight
+    readonly property int dashboardMargin: layoutConfig.dashboardMargin
+    readonly property int dashboardSpacing: layoutConfig.dashboardSpacing
     readonly property int dashboardGearWidth: 104
     readonly property int dashboardTankWidth: 148
     readonly property int dashboardSpeedWidth: 164
     readonly property int dashboardStatusWidth: 156
     readonly property int dashboardProgressWidth: 158
     readonly property int dashboardGearSelectWidth: 220
-    readonly property int dashboardSplitterMargin: 8
-    // 主内容区可用高度（从根 ColumnLayout 实际高度扣除顶部栏和间距），用于垂直预算，避免 mainRow 溢出
-    // 当 rootColumnLayout 未完成布局时用 drivingInterface.height 兜底，避免 mainRowAvailH=0 导致布局异常
+    readonly property int dashboardSplitterMargin: layoutConfig.dashboardSplitterMargin
     readonly property real mainRowAvailH: {
         var base = (height || 720)
         if (rootColumnLayout && topBarRect && rootColumnLayout.height > 0)
@@ -187,31 +220,23 @@ Rectangle {
         return Math.max(200, base * mainRowRatio)
     }
     
-    // ==================== 主题颜色 ====================
-    readonly property color colorBackground: "#0F0F1A"
-    readonly property color colorPanel: "#1A1A2A"
-    readonly property color colorBorder: "#2A2A3E"
-    readonly property color colorBorderActive: "#4A90E2"
-    readonly property color colorAccent: "#50C878"
-    readonly property color colorWarning: "#E8A030"
-    readonly property color colorDanger: "#E85050"
-    readonly property color colorTextPrimary: "#FFFFFF"
-    readonly property color colorTextSecondary: "#B0B0C0"
-    readonly property color colorButtonBg: "#1E2433"
-    readonly property color colorButtonBorder: "#3A4A6E"
-    readonly property color colorButtonBgHover: "#26314A"
-    readonly property color colorButtonBgPressed: "#1A2235"
+    // ==================== 主题颜色（统一从 Theme 读取） ====================
+    readonly property color colorBackground: ThemeModule.Theme.drivingColorBackground
+    readonly property color colorPanel: ThemeModule.Theme.drivingColorPanel
+    readonly property color colorBorder: ThemeModule.Theme.drivingColorBorder
+    readonly property color colorBorderActive: ThemeModule.Theme.drivingColorBorderActive
+    readonly property color colorAccent: ThemeModule.Theme.drivingColorAccent
+    readonly property color colorWarning: ThemeModule.Theme.drivingColorWarning
+    readonly property color colorDanger: ThemeModule.Theme.drivingColorDanger
+    readonly property color colorTextPrimary: ThemeModule.Theme.drivingColorTextPrimary
+    readonly property color colorTextSecondary: ThemeModule.Theme.drivingColorTextSecondary
+    readonly property color colorButtonBg: ThemeModule.Theme.drivingColorButtonBg
+    readonly property color colorButtonBorder: ThemeModule.Theme.drivingColorButtonBorder
+    readonly property color colorButtonBgHover: ThemeModule.Theme.drivingColorButtonBgHover
+    readonly property color colorButtonBgPressed: ThemeModule.Theme.drivingColorButtonBgPressed
     
-    // ==================== 字体设置 ====================
-    property string chineseFont: {
-        if (typeof window !== "undefined" && window.chineseFont) return window.chineseFont
-        var fonts = ["WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Noto Sans CJK SC"]
-        var availableFonts = Qt.fontFamilies()
-        for (var i = 0; i < fonts.length; i++) {
-            if (availableFonts.indexOf(fonts[i]) !== -1) return fonts[i]
-        }
-        return ""
-    }
+    // ==================== 字体设置（统一从 AppContext 读取） ====================
+    property string chineseFont: AppContext.chineseFont || ""
     
     // ==================== 车辆状态属性 ====================
     property string currentGear: "N"
@@ -221,14 +246,14 @@ Rectangle {
     property bool emergencyStopPressed: false  // ★ 急停按钮状态
     property real steeringAngle: 0
     // 主界面显示用：有车端状态时优先显示车端（速度、档位、转向），否则用本地/占位
-    property real displaySpeed: (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected && typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.speed : vehicleSpeed
-    property string displayGear: (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected && typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.gear : currentGear
-    property real displaySteering: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.steering : steeringAngle
+    property real displaySpeed: (AppContext.mqttController && mqttController.isConnected && AppContext.vehicleStatus) ? vehicleStatus.speed : vehicleSpeed
+    property string displayGear: (AppContext.mqttController && mqttController.isConnected && AppContext.vehicleStatus) ? vehicleStatus.gear : currentGear
+    property real displaySteering: (AppContext.vehicleStatus) ? vehicleStatus.steering : steeringAngle
     // ★ 绑定到车端遥测数据（VehicleStatus 已提供默认值）
-    property real waterTankLevel: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.waterTankLevel : 75
-    property real trashBinLevel: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.trashBinLevel : 40
-    property int cleaningCurrent: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.cleaningCurrent : 400
-    property int cleaningTotal: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.cleaningTotal : 500
+    property real waterTankLevel: (AppContext.vehicleStatus) ? vehicleStatus.waterTankLevel : 75
+    property real trashBinLevel: (AppContext.vehicleStatus) ? vehicleStatus.trashBinLevel : 40
+    property int cleaningCurrent: (AppContext.vehicleStatus) ? vehicleStatus.cleaningCurrent : 400
+    property int cleaningTotal: (AppContext.vehicleStatus) ? vehicleStatus.cleaningTotal : 500
     
     // ==================== 灯光状态 ====================
     property bool leftTurnActive: false
@@ -255,63 +280,20 @@ Rectangle {
      */
     function sendControlCommand(type, payload) {
         var legacyOnly = (typeof clientLegacyControlOnly !== "undefined" && clientLegacyControlOnly)
-        if (!legacyOnly && typeof vehicleControl !== "undefined" && vehicleControl && typeof vehicleControl.sendUiCommand === "function") {
-            vehicleControl.sendUiCommand(type, payload)
+        if (!legacyOnly) {
+            if (AppContext.vehicleControl && typeof vehicleControl.sendUiCommand === "function") {
+                vehicleControl.sendUiCommand(type, payload || {})
+                return
+            }
+            console.warn("[Client][Command] vehicleControl missing; command dropped type=", type)
             return
         }
-        var msg = JSON.stringify({
-            schemaVersion: "1.0",
-            vin: (typeof vehicleManager !== "undefined" && vehicleManager) ? vehicleManager.currentVin : "",
-            sessionId: "", // TODO: 填入实际 sessionId
-            seq: 0,        // TODO: 实现递增 seq
-            timestampMs: Date.now(),
-            payload: payload,
-            type: type
-        })
-
-        // 1. 优先尝试 WebRTC DataChannel (规范 §5.5: 客户端→ZLM→车端)
-        // 假设 frontClient 或任意已连接 Client 具备 sendDataChannelMessage 方法
-        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && 
-            webrtcStreamManager.anyConnected && webrtcStreamManager.frontClient &&
-            typeof webrtcStreamManager.frontClient.sendDataChannelMessage === "function") {
-            console.log("[Client][Command] Sending via WebRTC DataChannel (Priority):", type);
-            webrtcStreamManager.frontClient.sendDataChannelMessage(msg);
-            return;
+        // CLIENT_LEGACY_CONTROL_ONLY=1：不经 VehicleControlService，由 C++ 统一信封 + 通道选择
+        if (AppContext.mqttController && typeof mqttController.sendUiEnvelopeJson === "function") {
+            mqttController.sendUiEnvelopeJson(type, payload || {})
+            return
         }
-
-        // 2. 降级至 MQTT (规范 §8.2: 链路劣化回退)
-        // ★ 统一发送 JSON 格式，与 DataChannel 保持一致，便于车端统一解析
-        if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
-            console.log("[Client][Command] Sending via MQTT (Fallback):", type);
-            if (typeof mqttController.publish === "function") {
-                // 推荐方式：直接发送 JSON 字符串到统一 Topic，车端只需一个监听器
-                mqttController.publish("vehicle/control", msg);
-            } else {
-                // 兼容旧方式：若 mqttController 无通用 publish 方法，则映射到特定命令方法
-                console.warn("[Client][Command] mqttController.publish not found, fallback to legacy methods");
-                switch (type) {
-                    case "gear":
-                        if (typeof mqttController.sendGearCommand === "function") mqttController.sendGearCommand(payload.value);
-                        break;
-                    case "brake":
-                        if (typeof mqttController.sendBrakeCommand === "function") mqttController.sendBrakeCommand(payload.value);
-                        break;
-                    case "speed":
-                        if (typeof mqttController.sendSpeedCommand === "function") mqttController.sendSpeedCommand(payload.value);
-                        break;
-                    case "light":
-                        if (typeof mqttController.sendLightCommand === "function") mqttController.sendLightCommand(payload.name, payload.active);
-                        break;
-                    case "sweep":
-                        if (typeof mqttController.sendSweepCommand === "function") mqttController.sendSweepCommand(payload.name, payload.active);
-                        break;
-                    default:
-                        console.warn("[Client][Command] Unknown MQTT command type:", type);
-                }
-            }
-        } else {
-            console.warn("[Client][Command] No channel available (WebRTC disconnected, MQTT disconnected)");
-        }
+        console.warn("[Client][Command] legacy path: sendUiEnvelopeJson unavailable type=", type)
     }
 
     // ==================== 信号 ====================
@@ -326,28 +308,41 @@ Rectangle {
     /** 是否已停止推流（用于按钮文本状态） */
     property bool streamStopped: false
 
+    // ★★★ 调试模式标志（仅Debug模式执行诊断代码） ★★★
+    property bool isDebugMode: Qt.application.arguments.indexOf("--debug") >= 0
+    // 诊断日志上次输出时间（限制频率：每秒最多1次）
+    property int lastDiagTime: 0
+
     // ★★★ 手动诊断函数：供 QML console 直接调用，打印四路视频流与信号连接状态 ★★★
     // 调用方式：在 QML console 输入 drivingInterface.dumpVideoDiagnostics()
     function dumpVideoDiagnostics() {
-        if (typeof webrtcStreamManager === "undefined" || !webrtcStreamManager) {
+        if (!isDebugMode) return;  // 非调试模式跳过
+
+        // 限制频率：每秒最多1次
+        var now = Date.now();
+        if (now - lastDiagTime < 1000) return;
+        lastDiagTime = now;
+
+        var _wsm = AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager : null
+        if (!_wsm) {
             console.error("[Client][UI][Video] webrtcStreamManager 不存在")
             return
         }
         console.warn("=== 视频流诊断 ===")
-        console.warn("anyConnected=" + webrtcStreamManager.anyConnected)
-        console.warn("front=" + (webrtcStreamManager.frontClient ? (webrtcStreamManager.frontClient.isConnected + " / " + (webrtcStreamManager.frontClient.statusText || "未知")) : "null"))
-        console.warn("rear="  + (webrtcStreamManager.rearClient  ? (webrtcStreamManager.rearClient.isConnected  + " / " + (webrtcStreamManager.rearClient.statusText  || "未知")) : "null"))
-        console.warn("left="  + (webrtcStreamManager.leftClient  ? (webrtcStreamManager.leftClient.isConnected  + " / " + (webrtcStreamManager.leftClient.statusText  || "未知")) : "null"))
-        console.warn("right=" + (webrtcStreamManager.rightClient ? (webrtcStreamManager.rightClient.isConnected + " / " + (webrtcStreamManager.rightClient.statusText || "未知")) : "null"))
-        if (webrtcStreamManager.getQmlSignalReceiverCount) {
-            var rc = webrtcStreamManager.getQmlSignalReceiverCount()
+        console.warn("anyConnected=" + _wsm.anyConnected)
+        console.warn("front=" + (_wsm.frontClient ? (_wsm.frontClient.isConnected + " / " + (_wsm.frontClient.statusText || "未知")) : "null"))
+        console.warn("rear="  + (_wsm.rearClient  ? (_wsm.rearClient.isConnected  + " / " + (_wsm.rearClient.statusText  || "未知")) : "null"))
+        console.warn("left="  + (_wsm.leftClient  ? (_wsm.leftClient.isConnected  + " / " + (_wsm.leftClient.statusText  || "未知")) : "null"))
+        console.warn("right=" + (_wsm.rightClient ? (_wsm.rightClient.isConnected + " / " + (_wsm.rightClient.statusText || "未知")) : "null"))
+        if (_wsm.getQmlSignalReceiverCount) {
+            var rc = _wsm.getQmlSignalReceiverCount()
             console.warn("qmlSignalRc=" + rc + " (0=QML未连videoFrameReady)")
             if (rc === 0) {
                 console.error("[Client][UI][Video] ★★★ FATAL: qmlSignalRc=0！视频帧信号无法到达 QML！检查 Connections.target 绑定 ★★★")
             }
         }
-        if (webrtcStreamManager.getStreamDebugInfo) {
-            console.log("C++ StreamManager: " + webrtcStreamManager.getStreamDebugInfo())
+        if (_wsm.getStreamDebugInfo) {
+            console.log("C++ StreamManager: " + _wsm.getStreamDebugInfo())
         }
         // 检查各 VideoPanel 实例的 streamClient 绑定
         if (typeof leftFrontPanel !== "undefined" && leftFrontPanel) {
@@ -371,7 +366,7 @@ Rectangle {
         
         // ★ 检查远驾接管状态
         var remoteControlEnabled = false;
-        if (typeof vehicleStatus !== "undefined" && vehicleStatus) {
+        if (AppContext.vehicleStatus) {
             remoteControlEnabled = (vehicleStatus.drivingMode === "远驾");
         }
         if (!remoteControlEnabled) {
@@ -402,108 +397,11 @@ Rectangle {
     }
     
     // 控制按钮组件
-    component ControlButton: Rectangle {
-        id: controlBtn
-        property string label: ""
-        property bool active: false
-        property string buttonKey: ""
-        property color activeColor: colorAccent
-        signal clicked()
-        
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        Layout.minimumWidth: 50
-        Layout.minimumHeight: 36
-        
-        radius: 8
-        border.width: active ? 2 : 1
-        border.color: active ? activeColor : (mouseArea.containsMouse ? colorBorderActive : colorButtonBorder)
-        gradient: Gradient {
-            GradientStop {
-                position: 0.0
-                color: {
-                    if (controlBtn.active) return Qt.lighter(controlBtn.activeColor, 1.15)
-                    if (mouseArea.pressed) return colorButtonBgPressed
-                    if (mouseArea.containsMouse) return colorButtonBgHover
-                    return colorButtonBg
-                }
-            }
-            GradientStop {
-                position: 1.0
-                color: {
-                    if (controlBtn.active) return Qt.darker(controlBtn.activeColor, 1.35)
-                    if (mouseArea.pressed) return Qt.darker(colorButtonBgPressed, 1.2)
-                    if (mouseArea.containsMouse) return Qt.darker(colorButtonBgHover, 1.2)
-                    return Qt.darker(colorButtonBg, 1.25)
-                }
-            }
-        }
-        scale: mouseArea.pressed ? 0.96 : (mouseArea.containsMouse ? 1.02 : 1.0)
-        opacity: mouseArea.pressed ? 0.95 : 1.0
-        
-        Text {
-            anchors.centerIn: parent
-            text: controlBtn.label
-            color: controlBtn.active ? "#FFFFFF" : "#DDE6FF"
-            font.pixelSize: Math.max(10, Math.min(13, controlBtn.width / 4))
-            font.bold: controlBtn.active
-            font.family: chineseFont || font.family
-        }
-
-        Rectangle {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.margins: 1
-            height: parent.height * 0.35
-            radius: 7
-            color: controlBtn.active ? Qt.rgba(1, 1, 1, 0.18) : Qt.rgba(1, 1, 1, mouseArea.containsMouse ? 0.12 : 0.06)
-        }
-
-        Behavior on scale {
-            NumberAnimation { duration: 120; easing.type: Easing.OutCubic }
-        }
-        Behavior on border.color {
-            ColorAnimation { duration: 160 }
-        }
-        Behavior on opacity {
-            NumberAnimation { duration: 90 }
-        }
-        
-        MouseArea {
-            id: mouseArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: controlBtn.clicked()
-        }
-    }
-
-    component DashboardCard: Rectangle {
-        radius: 10
-        color: "#131A2A"
-        border.width: 1
-        border.color: "#2F3F63"
-        gradient: Gradient {
-            GradientStop { position: 0.0; color: "#1A2236" }
-            GradientStop { position: 1.0; color: "#10182A" }
-        }
-        Rectangle {
-            anchors.top: parent.top
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: 1
-            anchors.rightMargin: 1
-            anchors.topMargin: 1
-            height: 1
-            color: Qt.rgba(0.7, 0.82, 1.0, 0.28)
-            radius: 10
-        }
-    }
-    
-    // 视频窗口组件（可绑定 webrtcStreamManager 的 front/rear/left/right Client）
-    // 有视频帧时由 VideoRenderer 显示；无帧时显示占位与状态文字
+    // ControlButton 已外置到 components/ControlButton.qml
+    // DashboardCard 已外置到 components/DashboardCard.qml
+    // 有视频帧时由 VideoOutput(QVideoSink) 显示；无帧时显示占位与状态文字
     component VideoPanel: Rectangle {
+        id: videoPanelRoot
         property string title: ""
         property bool showPlaceholder: true
         property QtObject streamClient: null  // WebRtcClient*，用于显示连接状态与 videoFrameReady
@@ -511,17 +409,17 @@ Rectangle {
         // 视频帧状态：占位符仅在无视频帧时显示；渲染器始终参与 update 以避免首帧延迟
         property bool hasVideoFrame: false
         property int placeholderClearDelay: 2500  // ms，连接断开后延迟清除
+        property QtObject _prevVideoBindClient: null
 
-        // ★★★ 核心修复：Q_PROPERTY 直接赋值路径 ★★★
-        // videoRenderer id 在 Connections 和 Binding 之后才实例化，
-        // 所以用 Binding.when 自动建立绑定（忽略早于 id 定义的求值）。
-        // Q_PROPERTY 写入不依赖 Q_INVOKABLE 方法可见性，context property 对象也能用。
-        Binding {
-            when: (streamClient !== null && streamClient !== undefined && videoRenderer)
-            target: streamClient
-            property: "videoRenderer"
-            value: videoRenderer
-            restoreMode: Binding.RestoreNone
+        function rebindPanelVideoOutput() {
+            if (_prevVideoBindClient && _prevVideoBindClient !== streamClient) {
+                _prevVideoBindClient.bindVideoOutput(null)
+                _prevVideoBindClient = null
+            }
+            if (streamClient && videoOutPanel) {
+                streamClient.bindVideoOutput(videoOutPanel)
+                _prevVideoBindClient = streamClient
+            }
         }
 
         // ── 诊断：streamClient property 变化追踪（关键！）─────────────────────────
@@ -530,8 +428,15 @@ Rectangle {
         // 尚未就绪），Connections.target 被永久绑定为 null，后续不再触发重连。
         // onStreamClientChanged 作为兜底：一旦 streamClient 从 null→非null，立即
         // 将 Connections.target 重新指向新对象，强制信号重连。
-        // ★★★ 同时注册 VideoRenderer 到 WebRtcClient（C++ 直接调用路径）★★★
+        // streamClient 就绪后 Connections 自动绑定 videoFrameReady（占位/UI 状态）
         onStreamClientChanged: {
+            rebindPanelVideoOutput()
+            // 仅在调试模式且限制频率下执行诊断
+            if (!isDebugMode) return;
+            var now = Date.now();
+            if (now - lastDiagTime < 1000) return;
+            lastDiagTime = now;
+
             var info = (streamClient !== null && streamClient !== undefined)
                 ? ("ptr=" + streamClient + " type=" + (streamClient.metaObject ? streamClient.metaObject().className() : "N/A"))
                 : "null/undefined"
@@ -539,18 +444,19 @@ Rectangle {
                         + " streamClient=" + info
                         + " ★ Binding.when 已自动触发 Q_PROPERTY 赋值")
             // ★★★ 诊断：streamClient 变化时立即检查信号元数据 ★★★
-            if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamSignalMetaInfo) {
-                var meta = webrtcStreamManager.getStreamSignalMetaInfo()
+            var _wsm_diag = AppContext.webrtcStreamManager
+            if (_wsm_diag && _wsm_diag.getStreamSignalMetaInfo) {
+                var meta = _wsm_diag.getStreamSignalMetaInfo()
                 console.warn("[Client][UI][Video] VideoPanel[" + title + "] streamClientChanged 时的信号元数据:\n" + meta)
             }
             // ★★★ 诊断：streamClient 变化时打印完整 Connections 状态 ★★★
             // QML Connections.target 不是常规 Q_PROPERTY，所以用 Binding + when 观察
             // 这里手动打印连接状态
-            if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) {
-                var rcF = webrtcStreamManager.getFrontSignalReceiverCount ? webrtcStreamManager.getFrontSignalReceiverCount() : -1
-                var rcR = webrtcStreamManager.getRearSignalReceiverCount ? webrtcStreamManager.getRearSignalReceiverCount() : -1
-                var rcL = webrtcStreamManager.getLeftSignalReceiverCount ? webrtcStreamManager.getLeftSignalReceiverCount() : -1
-                var rcRi = webrtcStreamManager.getRightSignalReceiverCount ? webrtcStreamManager.getRightSignalReceiverCount() : -1
+            if (_wsm_diag) {
+                var rcF = _wsm_diag.getFrontSignalReceiverCount ? _wsm_diag.getFrontSignalReceiverCount() : -1
+                var rcR = _wsm_diag.getRearSignalReceiverCount ? _wsm_diag.getRearSignalReceiverCount() : -1
+                var rcL = _wsm_diag.getLeftSignalReceiverCount ? _wsm_diag.getLeftSignalReceiverCount() : -1
+                var rcRi = _wsm_diag.getRightSignalReceiverCount ? _wsm_diag.getRightSignalReceiverCount() : -1
                 console.warn("[Client][UI][Video] VideoPanel[" + title + "] streamClientChanged 时的各路接收者: front=" + rcF + " rear=" + rcR + " left=" + rcL + " right=" + rcRi
                             + " ★ rc=0 意味着 QML Connections 未能连接到 videoFrameReady 信号")
             }
@@ -563,8 +469,14 @@ Rectangle {
 
         // ── ★★★ 可见性诊断：追踪 VideoPanel 及其父项的可见性状态 ★★★ ──
         // 根因探索：如果 VideoPanel 或其父项在视频流开始后 visible=false，
-        // Scene Graph 可能会跳过 VideoRenderer。
+        // 子项可见性诊断（VideoOutput）。
         onVisibleChanged: {
+            // 仅在调试模式且限制频率下执行诊断
+            if (!isDebugMode) return;
+            var now = Date.now();
+            if (now - lastDiagTime < 1000) return;
+            lastDiagTime = now;
+
             console.warn("[Client][UI][Video] ★★★ VideoPanel[" + title + "] onVisibleChanged ★★★"
                 + " visible=" + visible
                 + " width=" + width + " height=" + height
@@ -590,7 +502,7 @@ Rectangle {
                 }
                 checkItem = checkItem.parent
             }
-            console.warn("[Client][UI][Video] VideoPanel[" + title + "] 可见性链: " + chain + "VideoRenderer")
+            console.warn("[Client][UI][Video] VideoPanel[" + title + "] 可见性链: " + chain + "VideoOutput")
         }
         
         // ★★★ 增强：检查布局约束导致的不可见 ★★★
@@ -623,13 +535,11 @@ Rectangle {
                        + " parent.width=" + (parent ? parent.width : "N/A"))
             console.warn("[Client][UI][Video] streamClient=" + (streamClient ? ("ptr=" + streamClient + " type=" + (streamClient.metaObject ? streamClient.metaObject().className() : "N/A")) : "null"))
             
-            // 检查 videoRenderer 是否存在
-            if (typeof videoRenderer !== "undefined" && videoRenderer) {
-                console.warn("[Client][UI][Video] VideoRenderer[" + title + "]: exists=true"
-                    + " width=" + videoRenderer.width + " height=" + videoRenderer.height
-                    + " visible=" + videoRenderer.visible)
+            if (typeof videoOutPanel !== "undefined" && videoOutPanel) {
+                console.warn("[Client][UI][Video] VideoOutput[" + title + "]: exists=true"
+                    + " width=" + videoOutPanel.width + " height=" + videoOutPanel.height)
             } else {
-                console.error("[Client][UI][Video] ★★★ VideoRenderer[" + title + "] 不存在！★★★")
+                console.error("[Client][UI][Video] ★★★ VideoOutput[" + title + "] 不存在！★★★")
             }
         }
 
@@ -654,7 +564,8 @@ Rectangle {
             running: true
             onTriggered: {
                 // 只在 webrtcStreamManager 就绪后才查询
-                if (typeof webrtcStreamManager === "undefined" || !webrtcStreamManager) return
+                var _wsm = AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager : null
+                if (!_wsm) return
                 var sc = parent.streamClient
                 var scInfo = (sc !== null && sc !== undefined)
                     ? ("ptr=" + sc + " type=" + (sc.metaObject ? sc.metaObject().className() : "N/A"))
@@ -667,11 +578,11 @@ Rectangle {
                 if (sc) {
                     // 根据 title 判断该 Panel 对应哪一路
                     if (title === "左视图") {
-                        myRc = webrtcStreamManager.getLeftSignalReceiverCount ? webrtcStreamManager.getLeftSignalReceiverCount() : -1
+                        myRc = _wsm.getLeftSignalReceiverCount ? _wsm.getLeftSignalReceiverCount() : -1
                     } else if (title === "右视图") {
-                        myRc = webrtcStreamManager.getRightSignalReceiverCount ? webrtcStreamManager.getRightSignalReceiverCount() : -1
+                        myRc = _wsm.getRightSignalReceiverCount ? _wsm.getRightSignalReceiverCount() : -1
                     } else if (title === "后视图") {
-                        myRc = webrtcStreamManager.getRearSignalReceiverCount ? webrtcStreamManager.getRearSignalReceiverCount() : -1
+                        myRc = _wsm.getRearSignalReceiverCount ? _wsm.getRearSignalReceiverCount() : -1
                     }
                 }
                 console.log("[Client][UI][Video] ★ PeriodicDiag ★ VideoPanel[" + title + "]"
@@ -700,165 +611,24 @@ Rectangle {
                 height: parent.height - 24
                 clip: true
 
-                // 视频渲染器：z=5，始终可见，无帧时显示黑底
-                VideoRenderer {
-                    id: videoRenderer
+                // Qt 6：VideoOutput.videoSink 只读；由 WebRtcClient.bindVideoOutput 读取并 setVideoFrame
+                VideoOutput {
+                    id: videoOutPanel
                     anchors.fill: parent
                     z: 5
-                    visible: true
-
-                    // ── ★★★ 几何状态诊断（防止 Scene Graph 调度器跳过 VideoRenderer）★★ ──
-                    // Qt Quick Scene Graph 在 item 首次 updatePaintNode 无有效帧且尺寸为 0 时，
-                    // 可能将该 item 标记为"静态"并永久跳过。通过 onWidthChanged/onHeightChanged
-                    // 追踪几何状态变化（注意：onVisibleChanged 在 VideoRenderer 的 Item 基类中有效）。
-                    onWidthChanged: if (width > 0) console.log("[Client][UI][Layout] VideoRenderer[" + title + "] onWidthChanged"
-                                + " width=" + width + " height=" + height
-                                + " visible=" + visible
-                                + "（width<=0 || height<=0 → 渲染器尺寸无效！）")
-                    onHeightChanged: if (height > 0) console.log("[Client][UI][Layout] VideoRenderer[" + title + "] onHeightChanged"
-                                + " width=" + width + " height=" + height
-                                + " visible=" + visible
-                                + "（width<=0 || height<=0 → 渲染器尺寸无效！）")
-                    onVisibleChanged: console.warn("[Client][UI][Layout] VideoRenderer[" + title + "] onVisibleChanged"
-                                + " visible=" + visible
-                                + " parent.visible=" + (parent ? parent.visible : "N/A")
-                                + "（false → QML visible 绑定错误，检查父项链！）")
-
-                    // ★★★ 核心修复：渲染器初始化时注册到 WebRtcClient ★★★
-                    // 根因：QML Connections { target: streamClient || null } 的 JavaScript 表达式
-                    // 在 Connections 创建时立即求值一次，结果固化。若 streamClient 此时为 null，
-                    // target 永久卡在 null，导致 signalReceivers=0，视频不显示。
-                    // 修复：C++ WebRtcClient 通过 QMetaMethod::invoke 直接调用 VideoRenderer.setFrame，
-                    // 绕过 QML Connections 信号层的不确定性。
-                    // 注册时机：VideoRenderer onCompleted 时 streamClient 应已有值；
-                    // 若 streamClient 尚未就绪（极端时序），onStreamClientChanged 会再次触发注册。
-                    Component.onCompleted: {
-                        console.log("[Client][UI][Video] ★★★ VideoRenderer onCompleted ★★★"
-                            + " id=videoRenderer title=" + title
-                            + " streamClient=" + streamClient
-                            + " typeof streamClient=" + typeof streamClient)
-                        // Binding.when 已自动建立 Q_PROPERTY 绑定
-                        // 此处额外尝试直接赋值作为同步兜底
-                        if (streamClient) {
-                            try {
-                                // Q_PROPERTY videoRenderer 可直接赋值（不依赖 Q_INVOKABLE 方法可见性）
-                                streamClient.videoRenderer = videoRenderer
-                                console.log("[Client][UI][Video] ★ onCompleted: Q_PROPERTY videoRenderer 赋值成功 ★"
-                                    + " title=" + title
-                                    + " streamClient=" + streamClient)
-                            } catch(e) {
-                                console.warn("[Client][UI][Video] VideoRenderer onCompleted: Q_PROPERTY 赋值失败"
-                                    + " title=" + title + " error=" + e
-                                    + " ★ Binding.when 会在后续事件循环重试")
-                            }
-                        } else {
-                            console.warn("[Client][UI][Video] VideoRenderer onCompleted: streamClient 未就绪"
-                                + " title=" + title + " streamClient=" + streamClient
-                                + " ★ Binding.when 会在 streamClient 就绪后自动建立绑定")
-                        }
-                    }
-
-                    // 清理：VideoRenderer 销毁时通知 WebRtcClient 解除引用
-                    Component.onDestruction: {
-                        console.log("[Client][UI][Video] ★★★ VideoRenderer onDestruction ★★★"
-                            + " id=videoRenderer title=" + title
-                            + " streamClient=" + streamClient
-                            + " ★ 若 videoRenderer 被销毁但 streamClient 仍连接，WebRtcClient.m_videoRenderer 会被 QPointer 自动置 null")
-                    }
+                    fillMode: VideoOutput.PreserveAspectCrop
+                    Component.onCompleted: videoPanelRoot.rebindPanelVideoOutput()
                 }
 
                 Connections {
-                    // target 绑定到 streamClient property（响应式，Qt 保证）：
-                    // Qt QML 官方文档："If set to null, no connection is made and any signal
-                    // handlers are ignored until the target is not null."
-                    // 因此：初始为 null 没关系，一旦 streamClient 被赋值，Connections 会自动连接。
-                    // 不使用 `|| null`（JavaScript 表达式在 Connections 创建时求值一次，结果固化）
                     target: streamClient
                     ignoreUnknownSignals: true
 
-                    // ── 诊断：Connections.target 绑定状态（帮助排查「信号未被接收」问题）───────────
-                    function onTargetChanged() {
-                        // ★★★ 关键诊断：Connections.target 变化时打印完整上下文 ★★★
-                        // Connections.target 在函数内直接访问（QML Connections 特殊属性）
-                        // 注意：QML Connections 中 target 不是标准 Q_PROPERTY，
-                        // onTargetChanged 在 Qt 6.4+ 支持；旧版本可能需要移除此 handler
-                        var targetObj = this && this.target !== undefined ? this.target : null
-                        var targetInfo = (targetObj !== null && targetObj !== undefined)
-                            ? ("ptr=" + targetObj + " type=" + (targetObj.metaObject ? targetObj.metaObject().className() : "N/A"))
-                            : "null/undefined"
-                        console.warn("[Client][UI][Video] VideoPanel[" + title + "] Connections.target changed: "
-                                    + " target=" + targetInfo
-                                    + " streamClient=" + (streamClient !== null && streamClient !== undefined ? ("ptr=" + streamClient + " type=" + (streamClient.metaObject ? streamClient.metaObject().className() : "N/A")) : "null/undefined")
-                                    + " ★ 若 target=null 且 streamClient!=null → Connections.target 绑定失败（检查 QML Connections 语法）")
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) {
-                            var rcFront = webrtcStreamManager.getFrontSignalReceiverCount ? webrtcStreamManager.getFrontSignalReceiverCount() : -1
-                            var rcRear = webrtcStreamManager.getRearSignalReceiverCount ? webrtcStreamManager.getRearSignalReceiverCount() : -1
-                            var rcLeft = webrtcStreamManager.getLeftSignalReceiverCount ? webrtcStreamManager.getLeftSignalReceiverCount() : -1
-                            var rcRight = webrtcStreamManager.getRightSignalReceiverCount ? webrtcStreamManager.getRightSignalReceiverCount() : -1
-                            console.warn("[Client][UI][Video] VideoPanel[" + title + "] target 变化后各路 rc: front=" + rcFront + " rear=" + rcRear + " left=" + rcLeft + " right=" + rcRight)
-                        }
-                    }
-
-                    // 四参数版本：与 C++ 4-param signal 重载匹配，frameId 用于端到端追踪。
-                    // 注意：不要调用 image.isNull() / image.width() / image.height()——
-                    // image 在 QML 中是 QVariant，这些方法在 QVariant 上不存在，会 TypeError。
-                    // 使用显式参数 frameWidth/frameHeight 判断有效性。
                     function onVideoFrameReady(frame, frameWidth, frameHeight, frameId) {
-                        var handlerStartTime = Date.now()
                         placeholderClearTimer.stop()
                         var hasValidSize = (frameWidth > 0 && frameHeight > 0)
-                        // ── 诊断：QML handler 进入时的完整状态 ──────────────────────────────
-                        // 检查 streamClient 当前状态（用于判断"streamClient 变化但 handler 仍用旧引用"）
-                        var clientConnected = streamClient ? streamClient.isConnected : false
-                        var clientStatus = streamClient ? (streamClient.statusText || "未知") : "streamClient=null"
-                        var rendererValid = (videoRenderer !== null && videoRenderer !== undefined)
-                        var qmlSignalRc = -1
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getQmlSignalReceiverCount) {
-                            qmlSignalRc = webrtcStreamManager.getQmlSignalReceiverCount()
-                        }
-                        // ★★★ 如果此日志出现 → signal 成功到达 QML handler（链路完整）★★★
-                        // ★★★ 如果此日志不出现 → signal 根本没到达（signalReceivers=0）★★★
-                        console.warn("[Client][UI][Video] ★★★ VideoPanel[" + title + "] onVideoFrameReady 被调用！"
-                                    + " frameId=" + frameId
-                                    + " size=" + frameWidth + "x" + frameHeight
-                                    + " hasValidSize=" + hasValidSize
-                                    + " streamClient=" + (streamClient ? "ok" : "NULL")
-                                    + " isConnected=" + clientConnected
-                                    + " status=" + clientStatus
-                                    + " videoRenderer=" + (rendererValid ? "ok" : "NULL")
-                                    + " qmlSignalRc=" + qmlSignalRc
-                                    + " ★★★")
-                        // ★★★ qmlSignalRc 诊断结论 ★★★
-                        if (qmlSignalRc === 0) {
-                            console.error("[Client][UI][Video] ★★★ FATAL: qmlSignalRc=0，视频帧无法到达 QML！"
-                                        + " 检查 QML Connections.target 绑定！streamClient=" + streamClient + " ★★★")
-                        }
-                        if (hasValidSize && videoRenderer) {
-                            // ── 诊断：QML→C++ 跨语言调用前记录时间戳 ──────────────────
-                            var beforeSetFrame = Date.now()
-                            var qmlHandlerDelay = beforeSetFrame - handlerStartTime
-                            console.log("[Client][UI][Video] ★ VideoPanel[" + title + "] calling setFrame"
-                                        + " frameId=" + frameId
-                                        + " frame=" + frameWidth + "x" + frameHeight
-                                        + " renderer=" + videoRenderer
-                                        + " qmlHandlerDelay=" + qmlHandlerDelay + "ms"
-                                        + "（>5ms=handler内有阻塞，<2ms=正常）")
-                            // 传递 frameId 给 C++（用于 C++→QML→C++→updatePaintNode 端到端追踪）
-                            videoRenderer.setFrame(frame, frameId)
-                            var afterSetFrame = Date.now()
+                        if (hasValidSize)
                             hasVideoFrame = true
-                            console.log("[Client][UI][Video] ★★★ VideoPanel[" + title + "] setFrame done"
-                                        + " frameId=" + frameId
-                                        + " setFrameCost=" + (afterSetFrame - beforeSetFrame) + "ms"
-                                        + " totalHandlerCost=" + (afterSetFrame - handlerStartTime) + "ms"
-                                        + " ★ 对比 C++ VideoRenderer setFrame 日志确认链路")
-                        } else {
-                            console.warn("[Client][UI][Video] VideoPanel[" + title + "] onVideoFrameReady: 尺寸无效或渲染器缺失"
-                                        + " frame=" + frameWidth + "x" + frameHeight
-                                        + " frameId=" + frameId
-                                        + " renderer=" + videoRenderer
-                                        + " hasValidSize=" + hasValidSize)
-                        }
                     }
                     function onConnectionStatusChanged(connected) {
                         console.log("[Client][UI][Video] VideoPanel onConnectionStatusChanged connected=" + connected)
@@ -870,7 +640,7 @@ Rectangle {
                     }
                 }
 
-                // 占位图标：仅在无视频帧且 showPlaceholder 时显示（z=15，覆盖在 VideoRenderer 之上）
+                // 占位图标：仅在无视频帧且 showPlaceholder 时显示（z=15，覆盖在 VideoOutput 之上）
                 Rectangle {
                     anchors.fill: parent
                     color: "transparent"
@@ -960,18 +730,18 @@ Rectangle {
                     Layout.alignment: Qt.AlignVCenter
                     radius: 6
                     border.width: 2
-                    border.color: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected) ? colorAccent : (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected ? "#508050" : colorButtonBorder)
-                    color: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected) ? "#1A2A1A" : (pendingConnectVideo ? "#2A3A2A" : (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected ? "#1A2A1A" : colorButtonBg))
+                    border.color: (AppContext.videoStreamsConnected) ? colorAccent : (AppContext.mqttController && mqttController.isConnected ? "#508050" : colorButtonBorder)
+                    color: (AppContext.videoStreamsConnected) ? "#1A2A1A" : (pendingConnectVideo ? "#2A3A2A" : (AppContext.mqttController && mqttController.isConnected ? "#1A2A1A" : colorButtonBg))
                     Text {
                         anchors.centerIn: parent
                         text: {
                             if (pendingConnectVideo) return "连接中..."
-                            if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected) return "已连接"
-                            if (streamStopped && typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) return "连接车辆"
-                            if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) return "MQTT已连接"
+                            if (AppContext.videoStreamsConnected) return "已连接"
+                            if (streamStopped && AppContext.mqttController && mqttController.isConnected) return "连接车辆"
+                            if (AppContext.mqttController && mqttController.isConnected) return "MQTT已连接"
                             return "连接车端"
                         }
-                        color: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected) ? colorAccent : (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected ? "#70B070" : colorTextPrimary)
+                        color: (AppContext.videoStreamsConnected) ? colorAccent : (AppContext.mqttController && mqttController.isConnected ? "#70B070" : colorTextPrimary)
                         font.pixelSize: 14
                         font.bold: true
                         font.family: chineseFont || font.family
@@ -982,14 +752,14 @@ Rectangle {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected) {
+                            if (AppContext.videoStreamsConnected) {
                                 // 先发送停止推流指令给车端
-                                if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
+                                if (AppContext.mqttController && mqttController.isConnected) {
                                     mqttController.requestStreamStop()
                                     console.log("[Client][UI][Stream] 已发送停止推流指令给车端")
                                 }
                                 // 然后断开视频流连接
-                                webrtcStreamManager.disconnectAll()
+                                if (AppContext.webrtcStreamManager) AppContext.webrtcStreamManager.disconnectAll()
                                 // ★ 标记推流已停止，按钮文本将变为"连接车辆"
                                 streamStopped = true
                                 console.log("[Client][UI][Stream] 推流已停止，按钮状态更新为 streamStopped=true")
@@ -997,20 +767,20 @@ Rectangle {
                             }
                             // ★ 重新连接时重置停止状态
                             streamStopped = false
-                            var currentVin = (typeof vehicleManager !== "undefined" && vehicleManager) ? vehicleManager.currentVin : ""
+                            var currentVin = (AppContext.vehicleManager) ? vehicleManager.currentVin : ""
                             console.log("[Client][UI][Connect] 点击连接 当前VIN=" + currentVin + " (仿真车选 carla-sim-001 连接 CARLA)")
-                            var cfg = (typeof vehicleManager !== "undefined" && vehicleManager) ? vehicleManager.lastControlConfig : ({})
-                            var brokerUrl = (cfg && (cfg.mqtt_broker_url || cfg["mqtt_broker_url"])) ? (cfg.mqtt_broker_url || cfg["mqtt_broker_url"]) : ((typeof mqttController !== "undefined" && mqttController) ? mqttController.brokerUrl : "")
+                            var cfg = (AppContext.vehicleManager) ? vehicleManager.lastControlConfig : ({})
+                            var brokerUrl = (cfg && (cfg.mqtt_broker_url || cfg["mqtt_broker_url"])) ? (cfg.mqtt_broker_url || cfg["mqtt_broker_url"]) : ((AppContext.mqttController) ? mqttController.brokerUrl : "")
                             var clientId = (cfg && (cfg.mqtt_client_id || cfg["mqtt_client_id"])) ? (cfg.mqtt_client_id || cfg["mqtt_client_id"]) : ""
-                            if (clientId && typeof mqttController !== "undefined" && mqttController)
+                            if (clientId && AppContext.mqttController)
                                 mqttController.clientId = clientId
-                            if (brokerUrl && typeof mqttController !== "undefined" && mqttController)
+                            if (brokerUrl && AppContext.mqttController)
                                 mqttController.brokerUrl = brokerUrl
-                            if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
+                            if (AppContext.mqttController && mqttController.isConnected) {
                                 // 先发 start_stream，再延迟 25s 拉流，给车端（CARLA Bridge 约 5~25s）启动推流并注册到 ZLM
                                 console.log("[Client][UI][Connect] 环节: MQTT 已连接，发送 start_stream currentVin=" + currentVin + " (若为空车端可能不响应，请先选车 carla-sim-001)")
                                 mqttController.requestStreamStart()
-                                connectVideoDelayTimer.whepUrl = (typeof vehicleManager !== "undefined" && vehicleManager) ? vehicleManager.lastWhepUrl : ""
+                                connectVideoDelayTimer.whepUrl = (AppContext.vehicleManager) ? vehicleManager.lastWhepUrl : ""
                                 connectVideoDelayTimer.start()
                                 console.log("[Client][UI][Connect] 环节: 已启动拉流延迟定时器 25s，到时将调用 connectFourStreams")
                                 return
@@ -1022,12 +792,12 @@ Rectangle {
                             }
                             pendingConnectVideo = true
                             console.log("[Client][UI][Connect] 正在连接 MQTT brokerUrl=" + brokerUrl + " currentVin=" + currentVin + " (选车后 VIN 应由 vehicleManager 已设置)")
-                            if (typeof mqttController !== "undefined" && mqttController)
+                            if (AppContext.mqttController)
                                 mqttController.connectToBroker()
                         }
                     }
                     ToolTip.visible: connectBtnMa.containsMouse
-                    ToolTip.text: pendingConnectVideo ? "正在连接 MQTT…" : ((typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected) ? "点击断开视频流并停止车端推流" : ((typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) ? "MQTT 已连接，约 10s 后自动拉流，请稍候…" : "点击连接车端（连 MQTT 并拉取四路视频）"))
+                    ToolTip.text: pendingConnectVideo ? "正在连接 MQTT…" : ((AppContext.videoStreamsConnected) ? "点击断开视频流并停止车端推流" : ((AppContext.mqttController && mqttController.isConnected) ? "MQTT 已连接，约 10s 后自动拉流，请稍候…" : "点击连接车端（连 MQTT 并拉取四路视频）"))
                     ToolTip.delay: 300
                 }
                 
@@ -1042,9 +812,9 @@ Rectangle {
                     radius: 6
                     border.width: 2
                     property bool remoteControlActive: false  // 本地状态（用于发送指令）
-                    property bool isVideoConnected: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected)  // 视频流是否已连接
+                    property bool isVideoConnected: (AppContext.videoStreamsConnected)  // 视频流是否已连接
                     property bool buttonEnabled: isVideoConnected  // 按钮是否可用（只有视频流连接时才能点击）
-                    property bool remoteControlConfirmed: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.remoteControlEnabled : false  // 车端确认的远驾接管状态
+                    property bool remoteControlConfirmed: (AppContext.vehicleStatus) ? vehicleStatus.remoteControlEnabled : false  // 车端确认的远驾接管状态
                     property bool hadVideoConnectedBefore: false  // ★ 仅当「曾连接过视频」再断开时才发 remote_control false，避免 connectFourStreams 时 disconnectAll 触发 flood
                     
                     border.color: {
@@ -1082,7 +852,7 @@ Rectangle {
                         cursorShape: parent.buttonEnabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor  // 禁用时显示禁止光标
                         onClicked: {
                             // ★ 首行日志：精确定位是否进入点击逻辑
-                            var isConn = (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected)
+                            var isConn = (AppContext.mqttController && mqttController.isConnected)
                                                     
                             // Plan 4.1: Ensure we don't attempt actions if MQTT is disconnected
                             if (!isConn) {
@@ -1094,13 +864,13 @@ Rectangle {
                                 console.log("[Client][UI][RemoteControl][Click] ✗ 未发送：视频流未连接")
                                 return
                             }
-                            if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
+                            if (AppContext.mqttController && mqttController.isConnected) {
                                 // 如果已经是"远驾已接管"状态，点击则取消接管
                                 var newState = !parent.remoteControlConfirmed
                                 parent.remoteControlActive = newState
                                 console.log("[Client][UI][RemoteControl][Click] 调用 requestRemoteControl(" + newState + ") topic=vehicle/control")
                                 mqttController.requestRemoteControl(newState)
-                                if (typeof systemStateMachine !== "undefined" && systemStateMachine && typeof systemStateMachine.fireByName === "function") {
+                                if (AppContext.systemStateMachine && typeof systemStateMachine.fireByName === "function") {
                                     if (newState) systemStateMachine.fireByName("START_SESSION")
                                     else systemStateMachine.fireByName("STOP_SESSION")
                                 }
@@ -1117,7 +887,7 @@ Rectangle {
                         target: vehicleStatus
                         ignoreUnknownSignals: true
                         function onRemoteControlEnabledChanged() {
-                            var confirmed = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.remoteControlEnabled : false
+                            var confirmed = (AppContext.vehicleStatus) ? vehicleStatus.remoteControlEnabled : false
                             console.log("[Client][UI][RemoteControl] 车端远驾接管状态变化 ==========")
                             console.log("[Client][UI][RemoteControl] 状态确认: " + (confirmed ? "已启用" : "已禁用"))
                             console.log("[Client][UI][RemoteControl] 当前 remoteControlConfirmed: " + parent.remoteControlConfirmed)
@@ -1138,7 +908,7 @@ Rectangle {
                             console.log("[Client][UI][RemoteControl] ========================================")
                         }
                         function onDrivingModeChanged() {
-                            var mode = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.drivingMode : "自驾"
+                            var mode = (AppContext.vehicleStatus) ? vehicleStatus.drivingMode : "自驾"
                             console.log("[Client][UI][RemoteControl] 驾驶模式变化 ==========")
                             console.log("[Client][UI][RemoteControl] 新驾驶模式: " + mode)
                             console.log("[Client][UI][RemoteControl] 当前按钮文本应显示: " + (parent.remoteControlConfirmed ? "远驾已接管" : "远驾接管"))
@@ -1148,12 +918,12 @@ Rectangle {
                     
                     // ★ 监听视频流状态变化：仅当「曾连接过视频」再断开时才发 remote_control false，避免 6s 后 connectFourStreams→disconnectAll 触发大量 false
                     Connections {
-                        target: webrtcStreamManager
+                        target: AppContext.webrtcStreamManager
                         ignoreUnknownSignals: true
                         function onAnyConnectedChanged() {
-                            var videoConnected = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected)
+                            var videoConnected = (AppContext.videoStreamsConnected)
                             // ── 诊断：anyConnectedChanged 时打印四路各自状态 ───────────────────
-                            var wsm = webrtcStreamManager
+                            var wsm = AppContext.webrtcStreamManager
                             var frontConn = wsm && wsm.frontClient ? wsm.frontClient.isConnected : false
                             var frontStatus = wsm && wsm.frontClient ? (wsm.frontClient.statusText || "未知") : "N/A"
                             var rearConn = wsm && wsm.rearClient ? wsm.rearClient.isConnected : false
@@ -1173,9 +943,9 @@ Rectangle {
                                 if (remoteControlTakeoverRect.hadVideoConnectedBefore) {
                                     remoteControlTakeoverRect.hadVideoConnectedBefore = false
                                     console.log("[Client][UI][RemoteControl] ⚠ 视频流已断开（曾连接过），发送 remote_control false")
-                                    if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected) {
+                                    if (AppContext.mqttController && mqttController.isConnected) {
                                         mqttController.requestRemoteControl(false)
-                                        if (typeof systemStateMachine !== "undefined" && systemStateMachine && typeof systemStateMachine.fireByName === "function")
+                                        if (AppContext.systemStateMachine && typeof systemStateMachine.fireByName === "function")
                                             systemStateMachine.fireByName("STOP_SESSION")
                                         console.log("[Client][UI][RemoteControl] ✓ 已发送远驾接管禁用指令到车端（视频流断开）")
                                     }
@@ -1209,7 +979,7 @@ Rectangle {
                     border.color: colorButtonBorder
                     color: colorButtonBg
                     
-                    property string drivingMode: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.drivingMode : "自驾"
+                    property string drivingMode: (AppContext.vehicleStatus) ? vehicleStatus.drivingMode : "自驾"
                     
                     Text {
                         anchors.centerIn: parent
@@ -1232,7 +1002,7 @@ Rectangle {
                         target: vehicleStatus
                         ignoreUnknownSignals: true
                         function onDrivingModeChanged() {
-                            var mode = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.drivingMode : "自驾"
+                            var mode = (AppContext.vehicleStatus) ? vehicleStatus.drivingMode : "自驾"
                             console.log("[Client][UI] 驾驶模式更新: " + mode)
                         }
                     }
@@ -1259,11 +1029,11 @@ Rectangle {
                     border.color: colorButtonBorder
                     color: {
                         // ★ 根据清扫状态改变颜色：启用时亮起，禁用时暗色
-                        var sweepActive = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.sweepActive : false
+                        var sweepActive = (AppContext.vehicleStatus) ? vehicleStatus.sweepActive : false
                         return sweepActive ? colorAccent : colorButtonBg
                     }
                     
-                    property bool sweepActive: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.sweepActive : false
+                    property bool sweepActive: (AppContext.vehicleStatus) ? vehicleStatus.sweepActive : false
                     
                     Text {
                         anchors.centerIn: parent
@@ -1284,7 +1054,7 @@ Rectangle {
                         target: vehicleStatus
                         ignoreUnknownSignals: true
                         function onSweepActiveChanged() {
-                            var active = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.sweepActive : false
+                            var active = (AppContext.vehicleStatus) ? vehicleStatus.sweepActive : false
                             console.log("[Client][UI][Sweep] 清扫状态更新: " + (active ? "启用" : "禁用"))
                         }
                     }
@@ -1311,11 +1081,11 @@ Rectangle {
                     border.color: colorButtonBorder
                     color: {
                         // ★ 根据刹车状态改变颜色：启用时红色亮起，禁用时暗色
-                        var brakeActive = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.brakeActive : false
+                        var brakeActive = (AppContext.vehicleStatus) ? vehicleStatus.brakeActive : false
                         return brakeActive ? colorDanger : colorButtonBg
                     }
                     
-                    property bool brakeActive: (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.brakeActive : false
+                    property bool brakeActive: (AppContext.vehicleStatus) ? vehicleStatus.brakeActive : false
                     
                     Text {
                         anchors.centerIn: parent
@@ -1336,7 +1106,7 @@ Rectangle {
                         target: vehicleStatus
                         ignoreUnknownSignals: true
                         function onBrakeActiveChanged() {
-                            var active = (typeof vehicleStatus !== "undefined" && vehicleStatus) ? vehicleStatus.brakeActive : false
+                            var active = (AppContext.vehicleStatus) ? vehicleStatus.brakeActive : false
                             console.log("[Client][UI][Brake] 刹车状态更新: " + (active ? "启用" : "禁用"))
                         }
                     }
@@ -1359,7 +1129,7 @@ Rectangle {
                     property string whepUrl: ""
                     onTriggered: {
                         var u = whepUrl || ""
-                        var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
+                        var wsm = AppContext.webrtcStreamManager
                         var triggerTime = Date.now()
                         console.warn("[Client][UI][Connect] ★★★ connectVideoDelayTimer 触发（25s到）★★★"
                                     + " whepUrl=" + (u.length > 60 ? u.substring(0, 60) + "..." : u)
@@ -1405,13 +1175,13 @@ Rectangle {
                     }
                 }
                 Connections {
-                    target: webrtcStreamManager
+                    target: AppContext.webrtcStreamManager
                     ignoreUnknownSignals: true
                     function onAnyConnectedChanged() {
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.anyConnected) {
+                        if (AppContext.videoStreamsConnected) {
                             drivingInterface.streamStopped = false
-                            var wsm = webrtcStreamManager
-                            var f = wsm.frontClient && wsm.frontClient.isConnected
+                            var wsm = AppContext.webrtcStreamManager
+                            var f = wsm && wsm.frontClient && wsm.frontClient.isConnected
                             var r = wsm.rearClient && wsm.rearClient.isConnected
                             var l = wsm.leftClient && wsm.leftClient.isConnected
                             var rt = wsm.rightClient && wsm.rightClient.isConnected
@@ -1447,7 +1217,7 @@ Rectangle {
                     radius: 6
                     border.width: 1
                     
-                    property double rtt: (typeof vehicleStatus !== "undefined" && vehicleStatus && typeof vehicleStatus.networkRtt === "number") ? vehicleStatus.networkRtt : 0
+                    property double rtt: (AppContext.vehicleStatus && typeof vehicleStatus.networkRtt === "number") ? vehicleStatus.networkRtt : 0
                     property string statusText: rttIndicator.rtt > 300 ? "网络严重" : (rttIndicator.rtt > 150 ? "网络延迟" : "网络正常")
                     
                     border.color: rttIndicator.rtt > 300 ? colorDanger : (rttIndicator.rtt > 150 ? colorWarning : colorAccent)
@@ -1543,26 +1313,27 @@ Rectangle {
                     Layout.preferredHeight: mainRowAvailH * leftVideoRatio
                     Layout.minimumHeight: sideColTopMinHeight
                     title: "左视图"
-                    streamClient: typeof webrtcStreamManager !== "undefined" && webrtcStreamManager ? webrtcStreamManager.leftClient : null
+                    streamClient: AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager.leftClient : null
                     // ★★★ 诊断：VideoPanel 创建后立即验证 QML 信号连接 ★★★
                     // 若此日志出现但 onVideoFrameReady 不触发 → streamClient 连接时序问题
                     // 若 webrtcStreamManager.getQmlSignalReceiverCount() 返回 0 → QML 根本没连到信号
                     Component.onCompleted: {
                         console.log("[Client][UI][Video] ★★★ VideoPanel[leftFrontPanel] onCompleted ★★★")
                         console.log("[Client][UI][Video] streamClient=" + streamClient + " ★ 对比 Connections.target 日志")
+                        var _wsm = AppContext.webrtcStreamManager
                         // 诊断：调用 C++ getQmlSignalReceiverCount() 验证信号接收者
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getQmlSignalReceiverCount) {
-                            var rc = webrtcStreamManager.getQmlSignalReceiverCount()
+                        if (_wsm && _wsm.getQmlSignalReceiverCount) {
+                            var rc = _wsm.getQmlSignalReceiverCount()
                             console.log("[Client][UI][Video] ★★★ getQmlSignalReceiverCount()=" + rc + " ★★★ (0=QML未连，>0=有QML连接) ★★★")
                         }
                         // 诊断：打印 webrtcStreamManager.frontClient/rearClient 等属性是否可访问
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamDebugInfo) {
+                        if (_wsm && _wsm.getStreamDebugInfo) {
                             console.log("[Client][UI][Video] ★★★ StreamManager Debug ★★★")
-                            console.log(webrtcStreamManager.getStreamDebugInfo())
+                            console.log(_wsm.getStreamDebugInfo())
                         }
                         // ★★★ 诊断：打印完整信号元数据（用于确认 QML 连接的是哪个 signal 重载）★★★
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamSignalMetaInfo) {
-                            console.log("[Client][UI][Video] leftFrontPanel onCompleted 信号元数据:\n" + webrtcStreamManager.getStreamSignalMetaInfo())
+                        if (_wsm && _wsm.getStreamSignalMetaInfo) {
+                            console.log("[Client][UI][Video] leftFrontPanel onCompleted 信号元数据:\n" + _wsm.getStreamSignalMetaInfo())
                         }
                     }
                 }
@@ -1573,26 +1344,27 @@ Rectangle {
                     Layout.preferredHeight: mainRowAvailH * leftMapRatio
                     Layout.minimumHeight: sideColBottomMinHeight
                     title: "后视图"
-                    streamClient: typeof webrtcStreamManager !== "undefined" && webrtcStreamManager ? webrtcStreamManager.rearClient : null
+                    streamClient: AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager.rearClient : null
 
                     // ★★★ 新增：与 leftFrontPanel 对称，创建时验证信号连接 ★★★
                     Component.onCompleted: {
                         console.log("[Client][UI][Video] ★★★ VideoPanel[leftRearPanel] onCompleted ★★★")
                         console.log("[Client][UI][Video] leftRearPanel streamClient=" + streamClient
-                                    + " rearClient=" + (webrtcStreamManager && webrtcStreamManager.rearClient ? "ok" : "null"))
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getQmlSignalReceiverCount) {
-                            var rc = webrtcStreamManager.getQmlSignalReceiverCount()
+                                    + " rearClient=" + (AppContext.webrtcStreamManager && AppContext.webrtcStreamManager.rearClient ? "ok" : "null"))
+                        var _wsm = AppContext.webrtcStreamManager
+                        if (_wsm && _wsm.getQmlSignalReceiverCount) {
+                            var rc = _wsm.getQmlSignalReceiverCount()
                             console.log("[Client][UI][Video] ★★★ leftRearPanel onCompleted: getQmlSignalReceiverCount()=" + rc + " ★★★")
                             if (rc === 0) {
                                 console.error("[Client][UI][Video] ★★★ FATAL: leftRearPanel rc=0！信号无法到达！检查 Connections.target 绑定 ★★★")
                             }
                         }
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamDebugInfo) {
-                            console.log("[Client][UI][Video] leftRearPanel C++ StreamManager: " + webrtcStreamManager.getStreamDebugInfo())
+                        if (_wsm && _wsm.getStreamDebugInfo) {
+                            console.log("[Client][UI][Video] leftRearPanel C++ StreamManager: " + _wsm.getStreamDebugInfo())
                         }
                         // ★★★ 诊断：打印完整信号元数据 ★★★
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamSignalMetaInfo) {
-                            console.log("[Client][UI][Video] leftRearPanel onCompleted 信号元数据:\n" + webrtcStreamManager.getStreamSignalMetaInfo())
+                        if (_wsm && _wsm.getStreamSignalMetaInfo) {
+                            console.log("[Client][UI][Video] leftRearPanel onCompleted 信号元数据:\n" + _wsm.getStreamSignalMetaInfo())
                         }
                     }
                 }
@@ -1644,20 +1416,21 @@ Rectangle {
                             Component.onCompleted: {
                                 console.log("[Client][UI][Video] ★★★ mainCameraView onCompleted ★★★")
                                 console.log("[Client][UI][Video] mainCameraView streamClient=" + streamClient
-                                            + " frontClient=" + (webrtcStreamManager && webrtcStreamManager.frontClient ? "ok" : "null"))
-                                if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getQmlSignalReceiverCount) {
-                                    var rc = webrtcStreamManager.getQmlSignalReceiverCount()
+                                            + " frontClient=" + (AppContext.webrtcStreamManager && AppContext.webrtcStreamManager.frontClient ? "ok" : "null"))
+                                var _wsm = AppContext.webrtcStreamManager
+                                if (_wsm && _wsm.getQmlSignalReceiverCount) {
+                                    var rc = _wsm.getQmlSignalReceiverCount()
                                     console.log("[Client][UI][Video] ★★★ mainCameraView onCompleted: getQmlSignalReceiverCount()=" + rc + " ★★★")
                                     if (rc === 0) {
                                         console.error("[Client][UI][Video] ★★★ FATAL: mainCameraView rc=0！信号无法到达！检查 Connections.target 绑定 ★★★")
                                     }
                                 }
-                                if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamDebugInfo) {
-                                    console.log("[Client][UI][Video] mainCameraView C++ StreamManager: " + webrtcStreamManager.getStreamDebugInfo())
+                                if (_wsm && _wsm.getStreamDebugInfo) {
+                                    console.log("[Client][UI][Video] mainCameraView C++ StreamManager: " + _wsm.getStreamDebugInfo())
                                 }
                                 // ★★★ 诊断：打印完整信号元数据（用于确认 QML 连接的是哪个 signal 重载）★★★
-                                if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamSignalMetaInfo) {
-                                    console.log("[Client][UI][Video] mainCameraView onCompleted 信号元数据:\n" + webrtcStreamManager.getStreamSignalMetaInfo())
+                                if (_wsm && _wsm.getStreamSignalMetaInfo) {
+                                    console.log("[Client][UI][Video] mainCameraView onCompleted 信号元数据:\n" + _wsm.getStreamSignalMetaInfo())
                                 }
                             }
 
@@ -1666,29 +1439,35 @@ Rectangle {
                             // 之前直接写 Connections.target: webrtcStreamManager.frontClient 存在绑定时机问题，
                             // 导致 onVideoFrameReady 信号从未被触发（虽然 onConnectionStatusChanged 正常），
                             // 根因：QML Connections.target 表达式求值时序与信号注册冲突。
-                            property QtObject streamClient: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager)
-                                                            ? webrtcStreamManager.frontClient : null
+                            property QtObject streamClient: AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager.frontClient : null
 
                             // 视频帧状态跟踪（占位 Canvas/文案是否盖在视频上；渲染器始终参与 update，避免 visible=false 丢首帧）
                             property bool hasVideoFrame: false
+                            property QtObject _prevVideoBindClient: null
+
+                            function rebindMainCameraVideoSink() {
+                                if (_prevVideoBindClient && _prevVideoBindClient !== streamClient) {
+                                    _prevVideoBindClient.bindVideoOutput(null)
+                                    _prevVideoBindClient = null
+                                }
+                                if (streamClient && frontVideoOut) {
+                                    streamClient.bindVideoOutput(frontVideoOut)
+                                    _prevVideoBindClient = streamClient
+                                }
+                            }
 
                             onStreamClientChanged: {
+                                rebindMainCameraVideoSink()
                                 // 增强诊断：记录 target 变化时的详细信息
                                 // 注意：QML Connections.target 通过 property 间接绑定，
                                 // 若 target=null 而 console.log 显示 webrtcStreamManager.frontClient 正常
                                 // → 说明是 Connections 初始化时序问题（target=null 时已创建，信号连接未建立）
 
-                                // ★★★ 核心修复：Q_PROPERTY videoRenderer 赋值 ★★★
-                                // Binding.when 已自动建立绑定，此处作为诊断和同步兜底
-                                if (streamClient !== null && streamClient !== undefined) {
-                                    try {
-                                        streamClient.videoRenderer = frontVideoRenderer
-                                        console.log("[Client][UI][Video] ★ mainCameraView onStreamClientChanged: Q_PROPERTY videoRenderer 赋值成功 ★")
-                                    } catch(e) {
-                                        console.warn("[Client][UI][Video] mainCameraView onStreamClientChanged: Q_PROPERTY 赋值失败"
-                                            + " error=" + e + " ★ Binding.when 会异步重试")
-                                    }
-                                }
+                                // 仅在调试模式且限制频率下执行诊断
+                                if (!isDebugMode) return;
+                                var now = Date.now();
+                                if (now - lastDiagTime < 1000) return;
+                                lastDiagTime = now;
 
                                 var scInfo = (streamClient !== null && streamClient !== undefined)
                                     ? ("ptr=" + streamClient + " type=" + (streamClient.metaObject ? streamClient.metaObject().className() : "N/A"))
@@ -1703,11 +1482,12 @@ Rectangle {
                                             + " target(=streamClient)=" + targetInfo
                                             + " ★ 若 target=null 但 streamClient 非null → Connections.target 绑定失效！")
                                 // ★★★ 诊断：打印完整信号元数据 ★★★
-                                if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamSignalMetaInfo) {
-                                    console.warn("[Client][UI][Video] 主视图 streamClientChanged 时的信号元数据:\n" + webrtcStreamManager.getStreamSignalMetaInfo())
+                                var _wsm_sc = AppContext.webrtcStreamManager
+                                if (_wsm_sc && _wsm_sc.getStreamSignalMetaInfo) {
+                                    console.warn("[Client][UI][Video] 主视图 streamClientChanged 时的信号元数据:\n" + _wsm_sc.getStreamSignalMetaInfo())
                                 }
-                                if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) {
-                                    var rc = webrtcStreamManager.getFrontSignalReceiverCount ? webrtcStreamManager.getFrontSignalReceiverCount() : -1
+                                if (_wsm_sc) {
+                                    var rc = _wsm_sc.getFrontSignalReceiverCount ? _wsm_sc.getFrontSignalReceiverCount() : -1
                                     console.warn("[Client][UI][Video] 主视图 frontSignalReceiverCount=" + rc
                                                 + " ★ rc=0 → QML Connections 未能连接到 videoFrameReady 信号！")
                                 }
@@ -1730,7 +1510,8 @@ Rectangle {
                                 repeat: true
                                 running: true
                                 onTriggered: {
-                                    if (typeof webrtcStreamManager === "undefined" || !webrtcStreamManager) return
+                                    var _wsm = AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager : null
+                                    if (!_wsm) return
                                     // 在 Timer.onTriggered 中使用 parent.xxx 显式引用父对象属性，
                                     // 避免 JavaScript 引擎对 bare identifier 的作用域解析问题。
                                     var sc = parent.streamClient
@@ -1738,7 +1519,7 @@ Rectangle {
                                         ? ("ptr=" + sc + " type=" + (sc.metaObject ? sc.metaObject().className() : "N/A"))
                                         : "null/undefined"
                                     var targetInfo = scInfo  // target 与 streamClient 同值
-                                    var rc = webrtcStreamManager.getFrontSignalReceiverCount ? webrtcStreamManager.getFrontSignalReceiverCount() : -1
+                                    var rc = _wsm.getFrontSignalReceiverCount ? _wsm.getFrontSignalReceiverCount() : -1
                                     console.log("[Client][UI][Video] ★ PeriodicDiag ★ mainCameraView"
                                                 + " streamClient=" + scInfo
                                                 + " target(=streamClient)=" + targetInfo
@@ -1748,113 +1529,41 @@ Rectangle {
                                 }
                             }
                             
-                            // 视频渲染器：始终可见，无帧时 paint 为黑底；占位内容用更高 z 叠在上面
-                            VideoRenderer {
-                                id: frontVideoRenderer
+                            VideoOutput {
+                                id: frontVideoOut
                                 anchors.fill: parent
                                 z: 10
-                                visible: true
-
-                                // ★★★ 核心修复：渲染器初始化时注册到 WebRtcClient ★★★
-                                Component.onCompleted: {
-                                    console.log("[Client][UI][Video] ★★★ frontVideoRenderer onCompleted ★★★"
-                                        + " frontVideoRenderer=" + frontVideoRenderer
-                                        + " mainCameraView.streamClient=" + mainCameraView.streamClient)
-                                    var sc = mainCameraView.streamClient
-                                    if (sc) {
-                                        try {
-                                            sc.videoRenderer = frontVideoRenderer
-                                            console.log("[Client][UI][Video] ★ frontVideoRenderer Q_PROPERTY 赋值成功 ★")
-                                        } catch(e) {
-                                            console.warn("[Client][UI][Video] frontVideoRenderer onCompleted: Q_PROPERTY 赋值失败"
-                                                + " error=" + e + " ★ Binding.when 会异步重试")
-                                        }
-                                    } else {
-                                        console.warn("[Client][UI][Video] frontVideoRenderer onCompleted: streamClient 未就绪"
-                                            + " sc=" + sc + " ★ Binding.when 会在 streamClient 就绪后自动绑定")
-                                    }
-                                }
-                                Component.onDestruction: {
-                                    console.log("[Client][UI][Video] ★★★ frontVideoRenderer onDestruction ★★★")
-                                }
-                            }
-
-                            // ★★★ 核心修复：Q_PROPERTY videoRenderer 绑定 ★★★
-                            Binding {
-                                when: (mainCameraView.streamClient !== null && mainCameraView.streamClient !== undefined && frontVideoRenderer)
-                                target: mainCameraView.streamClient
-                                property: "videoRenderer"
-                                value: frontVideoRenderer
-                                restoreMode: Binding.RestoreNone
+                                fillMode: VideoOutput.PreserveAspectCrop
+                                Component.onCompleted: mainCameraView.rebindMainCameraVideoSink()
                             }
 
                             Connections {
-                                // Connections.target 绑定到 mainCameraView.streamClient（Qt 响应式绑定）：
-                                // Qt QML 官方文档：target 为 null 时不建立连接，非 null 时自动建立。
-                                // 不使用 `|| null`（JavaScript 表达式求值后固化，不响应后续变化）
                                 target: mainCameraView.streamClient
                                 ignoreUnknownSignals: true
 
-                                // ── 诊断：Connections.target 绑定状态 ─────────────────────────────────
-                                // Connections.target 在函数内通过 this.target 访问
                                 function onTargetChanged() {
                                     var targetObj = this && this.target !== undefined ? this.target : null
                                     var targetInfo = (targetObj !== null && targetObj !== undefined)
                                         ? ("ptr=" + targetObj + " type=" + (targetObj.metaObject ? targetObj.metaObject().className() : "N/A"))
                                         : "null/undefined"
-                                    console.warn("[Client][UI][Video] mainCameraView Connections.target changed: "
-                                                + " target=" + targetInfo
-                                                + " streamClient=" + (mainCameraView.streamClient !== null && mainCameraView.streamClient !== undefined ? ("ptr=" + mainCameraView.streamClient + " type=" + (mainCameraView.streamClient.metaObject ? mainCameraView.streamClient.metaObject().className() : "N/A")) : "null/undefined")
-                                                + " ★ 若 target=null 且 streamClient!=null → Connections.target 绑定失败")
-                                    if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) {
-                                        var rcFront = webrtcStreamManager.getFrontSignalReceiverCount ? webrtcStreamManager.getFrontSignalReceiverCount() : -1
-                                        var rcRear = webrtcStreamManager.getRearSignalReceiverCount ? webrtcStreamManager.getRearSignalReceiverCount() : -1
-                                        var rcLeft = webrtcStreamManager.getLeftSignalReceiverCount ? webrtcStreamManager.getLeftSignalReceiverCount() : -1
-                                        var rcRight = webrtcStreamManager.getRightSignalReceiverCount ? webrtcStreamManager.getRightSignalReceiverCount() : -1
-                                        console.warn("[Client][UI][Video] mainCameraView target 变化后 rc: front=" + rcFront + " rear=" + rcRear + " left=" + rcLeft + " right=" + rcRight)
-                                    }
+                                    console.warn("[Client][UI][Video] mainCameraView Connections.target changed: " + " target=" + targetInfo)
                                 }
 
-                                // 注意：优先绑定 onVideoFrameReady(size) 四参数信号，
-                                // 该信号由 C++ WebRtcClient 在 emit 时显式传入宽高+frameId，
-                                // 解决了 QImage 跨线程 QueuedConnection 到 QML 时，
-                                // QVariant 包装导致 image.width/height/isNull 方法返回异常的问题。
-                                // frameWidth > 0 是唯一可靠的图像有效性判断（显式 C++ 参数，无 Qt 元对象边界问题）。
                                 function onVideoFrameReady(image, frameWidth, frameHeight, frameId) {
-                                    var handlerStartTime = Date.now()
                                     frontFrameClearTimer.stop()
-                                    // 图像有效性判断：只使用 frameWidth/frameHeight（显式参数，无 QVariant 边界问题）。
-                                    // 不要调用 image.isNull() / image.width() / image.height()——image 在 QML 中是 QVariant，
-                                    // 这些方法在 QVariant 上不存在，会 TypeError（实际日志中已观察到大量 TypeError）。
                                     var hasValidSize = (frameWidth > 0 && frameHeight > 0)
-                                    if (hasValidSize && frontVideoRenderer) {
-                                        // ★★★ QML→C++ 跨语言调用确认 ★★★
-                                        // 对比 C++ 日志中 frameId 确认 emit→setFrame→updatePaintNode 链路完整
-                                        console.log("[Client][UI][Video] ★★★ mainCameraView calling setFrame frameId=" + frameId
-                                                    + " frame=" + frameWidth + "x" + frameHeight + " renderer=" + frontVideoRenderer)
-                                        frontVideoRenderer.setFrame(image, frameId)  // 传递 frameId 给 C++
+                                    if (hasValidSize)
                                         mainCameraView.hasVideoFrame = true
-                                        console.log("[Client][UI][Video] ★★★ mainCameraView setFrame done frameId=" + frameId
-                                                    + " ★ 对比 C++ ★ updatePaintNode 日志确认渲染链路")
-                                    } else {
-                                        console.warn("[Client][UI][Video] 主视图 尺寸无效或渲染器缺失 "
-                                                    + "frame=" + frameWidth + "x" + frameHeight + " frameId=" + frameId
-                                                    + " renderer=" + frontVideoRenderer)
+                                    else
                                         mainCameraView.hasVideoFrame = false
-                                    }
-                                    // 零延迟回调：handler 返回后立即调度（相当于 setTimeout(fn, 0)）。
-                                    // 不影响主线程，不累积定时器资源。
-                                    // 注意：QML/V4 不支持 Timer.createSingleShotTimer，改用 Qt.callLater。
                                     if (_mainCameraHandlerLogCount < 10) {
                                         var capturedFrameWidth = frameWidth
                                         var capturedFrameHeight = frameHeight
                                         var capturedFrameId = frameId
                                         var capturedHasVideo = mainCameraView.hasVideoFrame
-                                        var capturedHandlerCost = Date.now() - handlerStartTime
                                         Qt.callLater(function() {
                                             console.log("[Client][UI][Video] 主视图 handlerDone frame="
                                                         + (capturedFrameWidth > 0 && capturedFrameHeight > 0 ? (capturedFrameWidth + "x" + capturedFrameHeight) : "invalid")
-                                                        + " handlerCost=" + capturedHandlerCost + "ms"
                                                         + " hasVideo=" + capturedHasVideo
                                                         + " frameId=" + capturedFrameId)
                                         })
@@ -1870,7 +1579,7 @@ Rectangle {
                                     }
                                 }
                             }
-                            
+
                             // 前进/倒车视图绘制（无视频时显示）
                             Canvas {
                                 anchors.fill: parent
@@ -1947,12 +1656,14 @@ Rectangle {
                                 Text {
                                     id: statusText
                                     anchors.centerIn: parent
-                                    text: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.frontClient) ? 
-                                          (webrtcStreamManager.frontClient.isConnected ? 
+                                    property var _frontClient: AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager.frontClient : null
+                                    property bool _isConnected: _frontClient ? _frontClient.isConnected : false
+                                    text: _frontClient ? 
+                                          (_isConnected ? 
                                            (mainCameraView.hasVideoFrame ? "视频已连接" : "等待视频流...") : 
-                                           webrtcStreamManager.frontClient.statusText) : 
+                                           _frontClient.statusText) : 
                                           "等待连接"
-                                    color: (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.frontClient && webrtcStreamManager.frontClient.isConnected && mainCameraView.hasVideoFrame) ? 
+                                    color: (_frontClient && _isConnected && mainCameraView.hasVideoFrame) ? 
                                            colorAccent : colorTextSecondary
                                     font.pixelSize: 12
                                     font.family: chineseFont || font.family
@@ -2086,7 +1797,7 @@ Rectangle {
                                 rowSpacing: 16
                                 columnSpacing: 16
                                 
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "刹车灯"
                                     active: brakeLightActive
                                     onClicked: {
@@ -2094,7 +1805,7 @@ Rectangle {
                                         sendControlCommand("light", { name: "brakeLight", active: brakeLightActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "工作灯"
                                     active: workLightActive
                                     onClicked: {
@@ -2102,7 +1813,7 @@ Rectangle {
                                         sendControlCommand("light", { name: "workLight", active: workLightActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "左转灯"
                                     active: leftTurnActive
                                     onClicked: {
@@ -2111,7 +1822,7 @@ Rectangle {
                                         sendControlCommand("light", { name: "leftTurn", active: leftTurnActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "右转灯"
                                     active: rightTurnActive
                                     onClicked: {
@@ -2120,7 +1831,7 @@ Rectangle {
                                         sendControlCommand("light", { name: "rightTurn", active: rightTurnActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "近光"
                                     active: headlightActive
                                     onClicked: {
@@ -2128,7 +1839,7 @@ Rectangle {
                                         sendControlCommand("light", { name: "headlight", active: headlightActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "警示"
                                     active: warningLightActive
                                     onClicked: {
@@ -2307,13 +2018,13 @@ Rectangle {
                                 rowSpacing: 4
                                 columnSpacing: 4
                                 
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "清扫"
                                     active: sweepActive
                                     onClicked: {
                                         // ★ 检查远驾接管状态
                                         var remoteControlEnabled = false;
-                                        if (typeof vehicleStatus !== "undefined" && vehicleStatus) {
+                                        if (AppContext.vehicleStatus) {
                                             remoteControlEnabled = (vehicleStatus.drivingMode === "远驾");
                                         }
                                         if (!remoteControlEnabled) {
@@ -2329,7 +2040,7 @@ Rectangle {
                                         sweepCommandSent("sweep", sweepActive)
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "洒水"
                                     active: waterSprayActive
                                     onClicked: {
@@ -2337,7 +2048,7 @@ Rectangle {
                                         sendControlCommand("sweep", { name: "waterSpray", active: waterSprayActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "吸污"
                                     active: suctionActive
                                     onClicked: {
@@ -2345,7 +2056,7 @@ Rectangle {
                                         sendControlCommand("sweep", { name: "suction", active: suctionActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "卸料"
                                     active: dumpActive
                                     onClicked: {
@@ -2353,7 +2064,7 @@ Rectangle {
                                         sendControlCommand("sweep", { name: "dump", active: dumpActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "喇叭"
                                     active: hornActive
                                     onClicked: {
@@ -2361,7 +2072,7 @@ Rectangle {
                                         sendControlCommand("sweep", { name: "horn", active: hornActive })
                                     }
                                 }
-                                ControlButton {
+                                Components.ControlButton {
                                     label: "灯光"
                                     active: workLampActive
                                     onClicked: {
@@ -2417,7 +2128,7 @@ Rectangle {
                             Layout.preferredWidth: dashboardGearWidth
                             Layout.fillHeight: true
                             
-                            DashboardCard {
+                            Components.DashboardCard {
                                 anchors.centerIn: parent
                                 width: parent.width - 4
                                 height: centerDashboardRect.cardHeight
@@ -2731,7 +2442,7 @@ Rectangle {
                             Layout.preferredWidth: dashboardSpeedWidth
                             Layout.fillHeight: true
                             
-                            DashboardCard {
+                            Components.DashboardCard {
                                 anchors.centerIn: parent
                                 width: Math.max(0, parent.width - 2)
                                 height: centerDashboardRect.cardHeight
@@ -2826,7 +2537,7 @@ Rectangle {
                                                 // Plan 4.1: E-Stop is highest priority. Send regardless of remoteControlEnabled state check.
                                                 // However, we keep the logging.
                                                 var remoteControlEnabled = false;
-                                                if (typeof vehicleStatus !== "undefined" && vehicleStatus) {
+                                                if (AppContext.vehicleStatus) {
                                                     remoteControlEnabled = (vehicleStatus.drivingMode === "远驾");
                                                 }
                                                 
@@ -2843,9 +2554,9 @@ Rectangle {
                                                     emergencyStopPressed = true
                                                     emergencyStopButton.enabled = false;
 
-                                                    if (typeof systemStateMachine !== "undefined" && systemStateMachine && typeof systemStateMachine.fireByName === "function")
+                                                    if (AppContext.systemStateMachine && typeof systemStateMachine.fireByName === "function")
                                                         systemStateMachine.fireByName("EMERGENCY_STOP")
-                                                    if (typeof vehicleControl !== "undefined" && vehicleControl && typeof vehicleControl.requestEmergencyStop === "function")
+                                                    if (AppContext.vehicleControl && typeof vehicleControl.requestEmergencyStop === "function")
                                                         vehicleControl.requestEmergencyStop()
                                                     else {
                                                         sendControlCommand("brake", { value: 1.0 })
@@ -2926,12 +2637,12 @@ Rectangle {
                                                 }
                                                 
                                                 var remoteControlEnabled = false;
-                                                if (typeof vehicleStatus !== "undefined" && vehicleStatus) {
+                                                if (AppContext.vehicleStatus) {
                                                     remoteControlEnabled = (vehicleStatus.drivingMode === "远驾");
                                                 }
                                                 if (!remoteControlEnabled) {
                                                     console.log("[Client][UI][Speed] ⚠ 远驾接管未启用，无法发送速度命令")
-                                                    console.log("[Client][UI][Speed] 当前驾驶模式: " + (typeof vehicleStatus !== "undefined" && vehicleStatus ? vehicleStatus.drivingMode : "未知"))
+                                                    console.log("[Client][UI][Speed] 当前驾驶模式: " + (AppContext.vehicleStatus ? vehicleStatus.drivingMode : "未知"))
                                                     return;
                                                 }
                                                 
@@ -3081,7 +2792,7 @@ Rectangle {
                             Layout.preferredWidth: dashboardProgressWidth
                             Layout.fillHeight: true
                             
-                            DashboardCard {
+                            Components.DashboardCard {
                                 anchors.centerIn: parent
                                 width: parent.width - 2
                                 height: centerDashboardRect.cardHeight
@@ -3218,7 +2929,7 @@ Rectangle {
                             Layout.preferredWidth: dashboardGearSelectWidth
                             Layout.fillHeight: true
                             
-                            DashboardCard {
+                            Components.DashboardCard {
                                 anchors.centerIn: parent
                                 width: parent.width - 2
                                 height: centerDashboardRect.cardHeight
@@ -3347,7 +3058,7 @@ Rectangle {
                     Layout.preferredHeight: mainRowAvailH * leftVideoRatio
                     Layout.minimumHeight: sideColTopMinHeight
                     title: "右视图"
-                    streamClient: typeof webrtcStreamManager !== "undefined" && webrtcStreamManager ? webrtcStreamManager.rightClient : null
+                    streamClient: AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager.rightClient : null
 
                     // ★★★ 诊断：VideoPanel 实例化后（streamClient 已有值时）立即检查信号接收者 ★★★
                     Component.onCompleted: {
@@ -3356,11 +3067,12 @@ Rectangle {
                                     + " streamClient=" + sc
                                     + " title=" + title
                                     + " ★ 若 streamClient!=null 但 rc=0 → Connections.target 绑定失败")
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) {
-                            var rcFront = webrtcStreamManager.getFrontSignalReceiverCount ? webrtcStreamManager.getFrontSignalReceiverCount() : -1
-                            var rcRear = webrtcStreamManager.getRearSignalReceiverCount ? webrtcStreamManager.getRearSignalReceiverCount() : -1
-                            var rcLeft = webrtcStreamManager.getLeftSignalReceiverCount ? webrtcStreamManager.getLeftSignalReceiverCount() : -1
-                            var rcRight = webrtcStreamManager.getRightSignalReceiverCount ? webrtcStreamManager.getRightSignalReceiverCount() : -1
+                        var _wsm = AppContext.webrtcStreamManager
+                        if (_wsm) {
+                            var rcFront = _wsm.getFrontSignalReceiverCount ? _wsm.getFrontSignalReceiverCount() : -1
+                            var rcRear = _wsm.getRearSignalReceiverCount ? _wsm.getRearSignalReceiverCount() : -1
+                            var rcLeft = _wsm.getLeftSignalReceiverCount ? _wsm.getLeftSignalReceiverCount() : -1
+                            var rcRight = _wsm.getRightSignalReceiverCount ? _wsm.getRightSignalReceiverCount() : -1
                             console.warn("[Client][UI][Video] ★★★ rightViewVideo onCompleted: 各路 rc: front=" + rcFront + " rear=" + rcRear + " left=" + rcLeft + " right=" + rcRight + " ★★★")
                         }
                         if (streamClient !== null && streamClient !== undefined && streamClient.getQmlSignalReceiverCount) {
@@ -3368,8 +3080,8 @@ Rectangle {
                             console.warn("[Client][UI][Video] rightViewVideo streamClient.getQmlSignalReceiverCount()=" + rc)
                         }
                         // ★★★ 诊断：打印完整信号元数据 ★★★
-                        if (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager && webrtcStreamManager.getStreamSignalMetaInfo) {
-                            console.log("[Client][UI][Video] rightViewVideo onCompleted 信号元数据:\n" + webrtcStreamManager.getStreamSignalMetaInfo())
+                        if (_wsm && _wsm.getStreamSignalMetaInfo) {
+                            console.log("[Client][UI][Video] rightViewVideo onCompleted 信号元数据:\n" + _wsm.getStreamSignalMetaInfo())
                         }
                     }
                     onWidthChanged: if (width > 0) console.log("[Client][UI][Layout] 右视图 width=" + Math.round(width))
@@ -3483,7 +3195,7 @@ Rectangle {
                                     // ★ 基于车端实时 GPS 坐标 (假设 vehicleStatus 提供 mapX, mapY 归一化坐标 0.0-1.0)
                                     var vx = width * 0.5;
                                     var vy = height * 0.5;
-                                    if (typeof vehicleStatus !== "undefined" && vehicleStatus && 
+                                    if (AppContext.vehicleStatus && 
                                         typeof vehicleStatus.mapX === "number" && typeof vehicleStatus.mapY === "number") {
                                         vx = width * Math.max(0, Math.min(1, vehicleStatus.mapX));
                                         vy = height * Math.max(0, Math.min(1, vehicleStatus.mapY));
@@ -3520,7 +3232,7 @@ Rectangle {
     // ==================== 键盘快捷键支持 ====================
     focus: true
     Keys.onPressed: function(event) {
-        if (typeof safetyMonitor !== "undefined" && safetyMonitor && typeof safetyMonitor.notifyOperatorActivity === "function")
+        if (AppContext.safetyMonitor && typeof safetyMonitor.notifyOperatorActivity === "function")
             safetyMonitor.notifyOperatorActivity()
         switch (event.key) {
             case Qt.Key_P: currentGear = "P"; break

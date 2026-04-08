@@ -3,123 +3,93 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import QtQuick.Window 2.15
 import RemoteDriving 1.0
+import "styles" as ThemeModule
 
 ApplicationWindow {
     id: window
-    // 自适应窗口大小：使用屏幕尺寸的 90%，最小 1280x720，最大 1920x1080
+    // 自适应窗口大小
     width: Math.min(Math.max(1280, Screen.width * 0.9), 1920)
     height: Math.min(Math.max(720, Screen.height * 0.9), 1080)
     minimumWidth: 1280
     minimumHeight: 720
     visible: true
-    flags: Qt.FramelessWindowHint  // 移除窗口标题栏（最小化/最大化/关闭按钮所在的白条）
+    flags: Qt.FramelessWindowHint
     title: windowTitleText
-    color: "#1E1E2E"  //  fallback 背景，避免 Docker/无 GPU 下黑屏
-    x: (Screen.width - width) / 2  // 居中显示
+    color: ThemeModule.Theme.colorBackground
+    x: (Screen.width - width) / 2
     y: (Screen.height - height) / 2
     
-    // 现代化配色方案
-    readonly property color primaryColor: "#4A90E2"      // 主色调：蓝色
-    readonly property color secondaryColor: "#50C878"    // 辅助色：绿色
-    readonly property color accentColor: "#FF6B6B"       // 强调色：红色
-    readonly property color bgDark: "#1E1E2E"           // 深色背景
-    readonly property color bgMedium: "#2A2A3E"          // 中等背景
-    readonly property color bgLight: "#3A3A4E"          // 浅色背景
-    readonly property color textPrimary: "#FFFFFF"      // 主文本色
-    readonly property color textSecondary: "#B0B0B0"   // 次要文本色
-    
-    // 背景渐变
+    // ── 背景渐变 ────────────────────────────────────────────────────────────
     Rectangle {
         anchors.fill: parent
         z: -1
         gradient: Gradient {
-            GradientStop { position: 0.0; color: "#1E1E2E" }
-            GradientStop { position: 1.0; color: "#0F0F1A" }
+            GradientStop { position: 0.0; color: ThemeModule.Theme.colorBackground }
+            GradientStop { position: 1.0; color: ThemeModule.Theme.colorSurface }
         }
     }
     
-    // 延迟计算标题，避免在 ApplicationWindow 创建时立即访问 vehicleManager
+    // ── 窗口标题 ─────────────────────────────────────────────────────
     property string windowTitleText: "远程驾驶客户端"
     
     function updateTitle() {
-        if (typeof vehicleManager !== "undefined" && vehicleManager) {
-            windowTitleText = "远程驾驶客户端 - " + (vehicleManager.currentVehicleName || "未选择车辆")
+        var vm = AppContext.vehicleManager
+        if (vm) {
+            windowTitleText = "远程驾驶客户端 - " + (vm.currentVehicleName || "未选择车辆")
         } else {
             windowTitleText = "远程驾驶客户端"
         }
     }
-    
-    // 监听车辆变化，更新标题
+
     Connections {
-        target: vehicleManager
-        ignoreUnknownSignals: true  // 如果 vehicleManager 未定义，忽略信号
+        target: AppContext.vehicleManager
+        ignoreUnknownSignals: true
         function onCurrentVehicleChanged() {
-            if (typeof vehicleManager !== "undefined" && vehicleManager) {
+            var vm = AppContext.vehicleManager
+            if (vm) {
                 window.updateTitle()
             }
         }
     }
     
-    // 设置默认字体（支持中文）
-    property string chineseFont: {
-        var fonts = ["WenQuanYi Zen Hei", "WenQuanYi Micro Hei", "Noto Sans CJK SC", 
-                     "Noto Sans CJK TC", "Source Han Sans SC", "Droid Sans Fallback",
-                     "SimHei", "Microsoft YaHei"]
-        var availableFonts = Qt.fontFamilies()
-        for (var i = 0; i < fonts.length; i++) {
-            if (availableFonts.indexOf(fonts[i]) !== -1) {
-                console.log("Using Chinese font:", fonts[i])
-                return fonts[i]
-            }
-        }
-        console.warn("No Chinese font found, Chinese text may not display correctly")
-        console.log("Available fonts:", availableFonts)
-        return ""  // 使用系统默认字体
-    }
-    
-    // 全局字体设置（ApplicationWindow 的 font 属性会影响所有子组件）
+    // ── 中文字体 ─────────────────────────────────────────────────────
+    // 优先使用 AppContext.chineseFont（统一字体来源）
+    readonly property string chineseFont: AppContext.chineseFont
     font.family: chineseFont || "DejaVu Sans"
     font.pixelSize: 12
 
-
-    // 主布局：仅在选择车辆并确认后才显示（流程：登录 → 选择车辆 → 远程驾驶主页面）
+    // ── 主布局 ────────────────────────────────────────────────────────
     property bool componentsReady: false
     
-    // 登录页面（嵌入主窗口）
+    // 登录页面
     LoginPage {
         id: loginPage
         anchors.fill: parent
         visible: {
-            // 如果主界面已就绪，不显示登录页面
             if (componentsReady) return false
-            // 如果未登录，显示登录页面
-            if (typeof authManager === "undefined" || !authManager || !authManager.isLoggedIn) {
+            var am = AppContext.authManager
+            if (!am || !am.isLoggedIn) {
                 return true
             }
-            // 如果已登录但未选择车辆，也不显示登录页面（会显示车辆选择对话框）
             return false
         }
-        z: 1000  // 提高 z-index，确保在最上层
+        z: 1000
         
         Component.onCompleted: {
-            console.log("LoginPage loaded, visible:", loginPage.visible)
-            console.log("componentsReady:", componentsReady)
-            if (typeof authManager !== "undefined" && authManager) {
-                console.log("authManager.isLoggedIn:", authManager.isLoggedIn)
-            }
+            console.log("[Client][UI] LoginPage loaded, visible:", loginPage.visible)
+            console.log("[Client][UI] componentsReady:", componentsReady)
         }
     }
     
-    // 主驾驶界面（登录并选择车辆后显示）
+    // 主驾驶界面
     ColumnLayout {
         anchors.fill: parent
-        anchors.topMargin: 60  // 为状态栏留出空间
+        anchors.topMargin: 60
         opacity: componentsReady ? 1.0 : 0.0
         visible: componentsReady
         Behavior on opacity { NumberAnimation { duration: 300 } }
         spacing: 0
         
-        // 新的驾驶界面（包含前进模式、倒车模式、多视频视图等）
         DrivingInterface {
             id: drivingInterface
             Layout.fillWidth: true
@@ -140,95 +110,71 @@ ApplicationWindow {
         Behavior on opacity { NumberAnimation { duration: 300 } }
     }
 
-    // ── 方案 C：渲染线程直接刷新 ──────────────────────────────────────────
-    // VehicleSelectionDialog 打开期间主线程被阻塞，window()->update() 的 UpdateRequest
-    // 堆积在主线程队列中无法处理，导致 Scene Graph 停止调用 updatePaintNode。
-    // 解决方案：
-    // 1. 对话框打开时立即调用 forceRefreshAllRenderers()，触发方案 C 的渲染线程直接刷新
-    //    （QMetaMethod::invoke + Qt::QueuedConnection → 投递到渲染线程事件队列 → 绕过主线程阻塞）
-    // 2. 对话框打开期间每 16ms 持续调用（轮询），确保渲染线程持续被驱动
-    // 3. 对话框关闭后再调用一次 forceRefreshAllRenderers()，作为最后兜底
+    // ── 渲染刷新管理器 ─────────────────────────────────────────────────
+    QtObject {
+        id: renderRefreshManager
 
-    // 跟踪对话框打开状态（必须在 VehicleSelectionDialog 之前定义，避免 forward-reference）
+        property int refreshCount: 0
+        property bool isRefreshing: false
+
+        function refresh() {
+            if (isRefreshing) return
+            isRefreshing = true
+            refreshCount++
+            if (AppContext.forceRefreshAllRenderers()) {
+                console.log("[Client][UI][Render] refresh() success")
+            }
+            Qt.callLater(function() { isRefreshing = false })
+        }
+    }
+
     QtObject {
         id: dialogState
         property bool isOpen: false
     }
 
-    // 对话框打开时，立即触发渲染线程直接刷新
     Timer {
         id: dialogOpenRefreshTimer
-        interval: 50  // 50ms 后触发（确保对话框已开始显示）
+        interval: 50
         repeat: false
         onTriggered: {
-            var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
-            if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
-                console.log("[Client][UI] ★★★ VehicleSelectionDialog opened（50ms后）→ 调用 forceRefreshAllRenderers ★★★")
-                wsm.forceRefreshAllRenderers()
-            }
+            console.log("[Client][UI] VehicleSelectionDialog opened (50ms后) → forceRefreshAllRenderers")
+            AppContext.forceRefreshAllRenderers()
         }
     }
 
-    // 对话框打开期间，每 16ms 持续调用 forceRefreshAllRenderers()
-    // 这是方案 C 的核心：在主线程被阻塞的情况下，持续向渲染线程投递刷新请求
-    // running = dialogState.isOpen（跟踪对话框状态，不直接引用 vehicleSelectionDialog.visible）
     Timer {
         id: dialogOpenPollingTimer
-        interval: 16  // ~60fps，持续驱动渲染线程
+        interval: 500
         repeat: true
-        running: dialogState.isOpen
+        running: dialogState && dialogState.isOpen
         onTriggered: {
-            // 双重检查：对话框必须真的打开才刷新
-            if (!dialogState.isOpen) return
-            var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
-            if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
-                wsm.forceRefreshAllRenderers()
-            }
+            if (!dialogState || !dialogState.isOpen) return
+            AppContext.forceRefreshAllRenderers()
         }
     }
 
-    // 车辆选择对话框（保持弹窗形式）
+    // 车辆选择对话框
     VehicleSelectionDialog {
         id: vehicleSelectionDialog
         
         Component.onCompleted: {
-            console.log("VehicleSelectionDialog loaded")
+            console.log("[Client][UI] VehicleSelectionDialog loaded")
         }
         
         onOpened: {
             dialogState.isOpen = true
-            console.log("[Client][UI] ★★★ VehicleSelectionDialog opened ★★★ modal=" + modal + " isOpen=" + dialogState.isOpen)
-            // 立即触发一次渲染线程直接刷新
-            var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
-            if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
-                console.log("[Client][UI] ★★★ VehicleSelectionDialog opened（立即）→ 调用 forceRefreshAllRenderers ★★★")
-                wsm.forceRefreshAllRenderers()
-            }
-            // 50ms 后再触发一次（确保对话框已完成初始化动画）
+            console.log("[Client][UI] VehicleSelectionDialog opened")
+            AppContext.forceRefreshAllRenderers()
             dialogOpenRefreshTimer.restart()
         }
         
         onClosed: {
             dialogState.isOpen = false
-            console.log("[Client][UI] ★★★ VehicleSelectionDialog closed ★★★")
-            // ── 方案 C：对话框关闭后，立即调用 forceRefreshAllRenderers ────────
-            // 对话框关闭后，主线程恢复，UpdateRequest 开始被处理。
-            // 此时立即触发渲染线程直接刷新，确保 updatePaintNode 尽快被调用。
-            // 注意：dialogOpenPollingTimer.running 会在 isOpen=false 时自动变为 false，
-            // 所以不需要手动停止它。
+            console.log("[Client][UI] VehicleSelectionDialog closed")
             Qt.callLater(function() {
-                var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
-                if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
-                    console.log("[Client][UI] ★★★ VehicleSelectionDialog closed → componentsReady=true → 调用 forceRefreshAllRenderers ★★★")
-                    wsm.forceRefreshAllRenderers()
-                } else {
-                    console.warn("[Client][UI] forceRefreshAllRenderers 不可用，渲染可能仍有问题")
-                    if (wsm) {
-                        console.warn("[Client][UI]   wsm=" + (wsm ? "ok" : "NULL"))
-                        console.warn("[Client][UI]   forceRefreshAllRenderers=" + (typeof wsm.forceRefreshAllRenderers))
-                    } else {
-                        console.warn("[Client][UI]   webrtcStreamManager 不可用")
-                    }
+                if (AppContext.forceRefreshAllRenderers()) {
+                    console.log("[Client][UI] VehicleSelectionDialog closed → forceRefreshAllRenderers")
                 }
             })
         }
@@ -239,148 +185,141 @@ ApplicationWindow {
         id: connectionsDialog
     }
 
-
-    // 自动化测试模式：仅当 CLIENT_AUTO_CONNECT_VIDEO=1（如 scripts/verify-connect-feature.sh）时跳过登录，直接进入主界面并触发拉流；正常运行请勿设置该变量
+    // ── 测试模式自动连接 ───────────────────────────────────────────────
     Timer {
         id: testModeEnterDrivingTimer
         interval: 2000
         repeat: false
         onTriggered: {
             if (typeof autoConnectVideo === "undefined" || !autoConnectVideo) return
-            if (typeof vehicleManager === "undefined" || !vehicleManager) return
-            console.log(" [TEST] autoConnectVideo: entering driving interface and triggering connect")
-            vehicleManager.addTestVehicle("123456789", "测试车辆")
-            vehicleManager.currentVin = "123456789"
+            var vm = AppContext.vehicleManager
+            if (!vm) return
+            console.log("[Client][UI][TEST] autoConnectVideo: entering driving interface")
+            vm.addTestVehicle("123456789", "测试车辆")
+            vm.currentVin = "123456789"
             componentsReady = true
             updateTitle()
             autoConnectTriggerTimer.start()
         }
     }
+    
     Timer {
         id: autoConnectTriggerTimer
         interval: 1500
         repeat: false
         onTriggered: {
             if (typeof autoConnectVideo === "undefined" || !autoConnectVideo) return
-            if (typeof webrtcStreamManager === "undefined" || !webrtcStreamManager) return
-            console.log(" [TEST] autoConnectVideo: triggering connectFourStreams" + (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected ? " and requestStreamStart" : " (MQTT not connected, skip requestStreamStart)"))
-            if (typeof mqttController !== "undefined" && mqttController && mqttController.isConnected)
-                mqttController.requestStreamStart()
-            var whep = (typeof vehicleManager !== "undefined" && vehicleManager) ? vehicleManager.lastWhepUrl : ""
-            webrtcStreamManager.connectFourStreams(whep || "")
+            var wsm = AppContext.webrtcStreamManager
+            if (!wsm) return
+            var mqtt = AppContext.mqttController
+            var vm = AppContext.vehicleManager
+            console.log("[Client][UI][TEST] autoConnectVideo: triggering connectFourStreams")
+            if (mqtt && mqtt.isConnected) {
+                mqtt.requestStreamStart()
+            }
+            var whep = vm ? vm.lastWhepUrl : ""
+            wsm.connectFourStreams(whep || "")
         }
     }
 
-    // 窗口就绪
+    // ── 生命周期 ────────────────────────────────────────────────────────
     Component.onCompleted: {
         updateTitle()
-        console.log("Main window completed")
-        console.log("componentsReady:", componentsReady)
-        console.log("LoginPage visible:", loginPage.visible)
+        console.log("[Client][UI] Main window completed")
+        console.log("[Client][UI] componentsReady:", componentsReady)
+        console.log("[Client][UI] LoginPage visible:", loginPage.visible)
+        
         if (typeof autoConnectVideo !== "undefined" && autoConnectVideo) {
-            console.log("[Client][UI][TEST] CLIENT_AUTO_CONNECT_VIDEO=1：跳过登录页，立即进入驾驶壳层；约 2s 后注入测试车辆并触发 connectFourStreams")
+            console.log("[Client][UI][TEST] CLIENT_AUTO_CONNECT_VIDEO=1：跳过登录页")
             componentsReady = true
             updateTitle()
             testModeEnterDrivingTimer.start()
         }
-        if (typeof authManager !== "undefined" && authManager) {
-            console.log("authManager exists, isLoggedIn:", authManager.isLoggedIn)
-            console.log("authManager.username:", authManager.username)
-            
-            // 如果启动时已登录，检查是否已选择车辆
-            if (authManager.isLoggedIn) {
-                if (typeof vehicleManager !== "undefined" && vehicleManager) {
-                    console.log("vehicleManager.currentVin:", vehicleManager.currentVin)
-                    console.log("vehicleManager.vehicleList:", vehicleManager.vehicleList)
-                    
-                    if (vehicleManager.currentVin.length > 0) {
-                        console.log("Already logged in and vehicle selected, showing main interface")
+        
+        var am = AppContext.authManager
+        var vm = AppContext.vehicleManager
+        if (am) {
+            console.log("[Client][UI] authManager exists, isLoggedIn:", am.isLoggedIn)
+            if (am.isLoggedIn) {
+                if (vm) {
+                    console.log("[Client][UI] vehicleManager.currentVin:", vm.currentVin)
+                    if (vm.currentVin && vm.currentVin.length > 0) {
+                        console.log("[Client][UI] Already logged in and vehicle selected")
                         componentsReady = true
                     } else {
-                        console.log("Already logged in but no vehicle selected, opening vehicle selection dialog")
-                        // 延迟打开车辆选择对话框，确保 UI 已完全加载
+                        console.log("[Client][UI] Already logged in but no vehicle selected")
                         Qt.callLater(function() {
-                            console.log("Calling vehicleSelectionDialog.open()")
                             vehicleSelectionDialog.open()
                         })
                     }
-                } else {
-                    console.log("vehicleManager not available")
                 }
             } else {
-                console.log("Not logged in, LoginPage should be visible")
+                console.log("[Client][UI] Not logged in, LoginPage should be visible")
             }
         } else {
-            console.log("authManager not available")
+            console.warn("[Client][UI] authManager not available")
         }
     }
     
-    // 登录成功后，打开车辆选择对话框
+    // ── 登录状态监听 ────────────────────────────────────────────────────
     Connections {
-        target: authManager
+        target: AppContext.authManager
         ignoreUnknownSignals: true
         function onLoginSucceeded(token, userInfo) {
-            console.log("[Client][UI] onLoginSucceeded tokenLen=" + (token ? token.length : 0) + " username=" + (userInfo && userInfo.username ? userInfo.username : ""))
+            console.log("[Client][UI] onLoginSucceeded username=" + (userInfo && userInfo.username ? userInfo.username : ""))
             openVehicleSelectionTimer.start()
         }
         function onLoginFailed(error) {
             console.log("[Client][UI] onLoginFailed error=" + (error || ""))
         }
     }
+    
     Timer {
         id: openVehicleSelectionTimer
         interval: 500
         onTriggered: {
-            console.log("[Client][UI] openVehicleSelectionTimer: isLoggedIn=" + (typeof authManager !== "undefined" && authManager ? authManager.isLoggedIn : false))
-            if (typeof authManager !== "undefined" && authManager && authManager.isLoggedIn) {
-                console.log("[Client][UI] 打开车辆选择对话框 vehicleSelectionDialog.open()")
+            var am = AppContext.authManager
+            if (am && am.isLoggedIn) {
+                console.log("[Client][UI] 打开车辆选择对话框")
                 vehicleSelectionDialog.open()
             } else {
-                console.log("[Client][UI] 未打开对话框: authManager 不可用或未登录")
+                console.log("[Client][UI] 未打开对话框: 未登录")
             }
         }
     }
     
-    // 车辆选择对话框关闭且已选车辆时，进入远程驾驶主页面（连接车端由主界面「连接车端」按钮触发，使用 VIN 会话配置）
     Connections {
         target: vehicleSelectionDialog
         ignoreUnknownSignals: true
         function onClosed() {
-            if (typeof vehicleManager !== "undefined" && vehicleManager && vehicleManager.currentVin.length > 0) {
+            var vm = AppContext.vehicleManager
+            if (vm && vm.currentVin && vm.currentVin.length > 0) {
                 componentsReady = true
                 updateTitle()
-                // ── 方案1：强制刷新机制（增强版）─────────────────────────────────
-                // 根因：Qt Scene Graph 在 VehicleSelectionDialog 显示期间可能阻塞渲染线程，
-                // 导致 deliverFrame 收到帧但 updatePaintNode 不被调用。
-                // 修复：在对话框关闭且组件就绪时强制刷新所有 VideoRenderer。
                 Qt.callLater(function() {
-                    var wsm = (typeof webrtcStreamManager !== "undefined" && webrtcStreamManager) ? webrtcStreamManager : null
-                    if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
-                        console.log("[Client][UI] ★★★ onClosed → componentsReady=true → 调用 forceRefreshAllRenderers ★★★")
-                        wsm.forceRefreshAllRenderers()
-                    } else {
-                        console.warn("[Client][UI] forceRefreshAllRenderers 不可用")
-                    }
+                    AppContext.forceRefreshAllRenderers()
+                    console.log("[Client][UI] Vehicle selected → componentsReady=true")
                 })
             }
         }
     }
-    // 仅当无 VIN 绑定 MQTT 配置时，主界面「连接车端」会请求打开连接设置
+
     Connections {
         target: drivingInterface
         ignoreUnknownSignals: true
         function onOpenMqttDialogRequested() {
-            connectionsDialog.mqttBroker = (typeof mqttController !== "undefined" && mqttController) ? mqttController.brokerUrl : "mqtt://localhost:1883"
+            var mqtt = AppContext.mqttController
+            connectionsDialog.mqttBroker = mqtt ? mqtt.brokerUrl : "mqtt://localhost:1883"
             connectionsDialog.open()
         }
     }
 
     Connections {
-        target: authManager
+        target: AppContext.authManager
         ignoreUnknownSignals: true
         function onLoginStatusChanged(loggedIn) {
             if (!loggedIn) {
-                console.log("[Client][UI] 登录状态变为未登录，返回登录页并关闭车辆选择弹窗")
+                console.log("[Client][UI] 登录状态变为未登录，返回登录页")
                 componentsReady = false
                 vehicleSelectionDialog.close()
             }

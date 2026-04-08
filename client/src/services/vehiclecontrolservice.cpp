@@ -6,6 +6,7 @@
 #include "../infrastructure/itransportmanager.h"
 #include "../utils/TimeUtils.h"
 #include "../core/eventbus.h"
+#include "../core/tracing.h"
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -122,11 +123,11 @@ void VehicleControlService::controlTick()
     m_lastCommand = cmd;
 
     // 6. 每秒统计
-    ++m_ticksThisSecond;
+    m_ticksThisSecond.fetch_add(1, std::memory_order_relaxed);
     const int64_t now = TimeUtils::nowMs();
     if (now - m_secondStart >= 1000) {
-        m_commandsPerSec.store(m_ticksThisSecond);
-        m_ticksThisSecond = 0;
+        m_commandsPerSec.store(m_ticksThisSecond.load(std::memory_order_relaxed));
+        m_ticksThisSecond.store(0, std::memory_order_relaxed);
         m_secondStart = now;
     }
 
@@ -157,11 +158,23 @@ void VehicleControlService::setSessionCredentials(const QString& vin,
     m_currentVin = vin;
     m_sessionId  = sessionId;
     m_signer.setCredentials(vin, sessionId, token);
-    qInfo() << "[Client][VehicleControlService] session credentials set vin=" << vin;
+    qInfo().noquote() << "[Client][VehicleControlService] session credentials set vin=" << vin
+                      << "sessionId=" << sessionId.left(12) << " tokenLen=" << token.size();
+}
+
+void VehicleControlService::clearSessionCredentials()
+{
+    m_currentVin.clear();
+    m_sessionId.clear();
+    m_signer.clearCredentials();
+    qInfo() << "[Client][VehicleControlService] session credentials cleared";
 }
 
 void VehicleControlService::sendCommand(const ControlCommand& cmd)
 {
+    if (Tracing::instance().currentTraceId().isEmpty()) {
+        Tracing::instance().setCurrentTraceId(Tracing::generateTraceId());
+    }
     auto buildJson = [&]() -> QJsonObject {
         QJsonObject json;
         json["steering"]       = cmd.steeringAngle;
@@ -174,6 +187,7 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd)
         // 会话上下文（参与签名，服务端可验证归属）
         if (!m_currentVin.isEmpty())  json["vin"]        = m_currentVin;
         if (!m_sessionId.isEmpty())   json["session_id"] = m_sessionId;
+        json[QStringLiteral("trace_id")] = Tracing::instance().currentTraceId();
         if (m_config.enablePrediction) {
             json["predicted_steering"]     = cmd.predictedSteeringAngle;
             json["prediction_horizon_ms"]  = cmd.predictionHorizonMs;
@@ -190,7 +204,12 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd)
         const QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Compact);
         m_transport->sendControlJson(payload);
     } else if (m_mqtt) {
+#ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
         m_mqtt->sendControlCommand(buildJson());
+#else
+        // 单测目标不链接 MqttController.cpp；此处仅在 m_mqtt!=nullptr 时需要完整客户端
+        Q_UNUSED(m_mqtt);
+#endif
     }
 
     emit commandSent(cmd);
@@ -209,15 +228,37 @@ void VehicleControlService::sendNeutralCommand()
 
 void VehicleControlService::sendUiCommand(const QString& type, const QVariantMap& payload)
 {
-    qDebug() << "[Client][VehicleControlService] UI command type=" << type;
-    if (type == "emergency_stop") {
+    if (Tracing::instance().currentTraceId().isEmpty()) {
+        Tracing::instance().setCurrentTraceId(Tracing::generateTraceId());
+    }
+    const QString traceId = Tracing::instance().currentTraceId();
+
+    qInfo().noquote() << "[Client][Control][UI] type=" << type
+                      << "traceId=" << traceId.left(16)
+                      << "vin=" << (m_currentVin.isEmpty() && m_vehicles ? m_vehicles->currentVin()
+                                                                          : m_currentVin)
+                      << "sessionId=" << m_sessionId.left(12);
+
+    if (type == QLatin1String("emergency_stop")) {
         requestEmergencyStop();
         return;
     }
 
-    QJsonObject json = QJsonObject::fromVariantMap(payload);
-    json["type"] = type;
-    json["timestamp"] = static_cast<qint64>(TimeUtils::wallClockMs());
+    QString vin = m_currentVin;
+    if (vin.isEmpty() && m_vehicles) {
+        vin = m_vehicles->currentVin();
+    }
+
+    QJsonObject json;
+    json[QStringLiteral("schemaVersion")] = QStringLiteral("1.0");
+    json[QStringLiteral("type")] = type;
+    json[QStringLiteral("payload")] = QJsonObject::fromVariantMap(payload);
+    json[QStringLiteral("vin")] = vin;
+    json[QStringLiteral("sessionId")] = m_sessionId;
+    json[QStringLiteral("timestampMs")] = static_cast<qint64>(TimeUtils::wallClockMs());
+    json[QStringLiteral("seq")] =
+        static_cast<qint64>(m_seqCounter.fetch_add(1, std::memory_order_relaxed));
+    json[QStringLiteral("trace_id")] = traceId;
     sendRawControlJson(json);
 }
 
@@ -257,7 +298,11 @@ void VehicleControlService::sendRawControlJson(const QJsonObject& obj)
     if (m_transport) {
         m_transport->sendControlJson(payload);
     } else if (m_mqtt) {
+#ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
         m_mqtt->sendControlCommand(obj);
+#else
+        Q_UNUSED(m_mqtt);
+#endif
     }
     pingSafety();
 }

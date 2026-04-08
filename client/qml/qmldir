@@ -1,2 +1,9 @@
 module RemoteDriving
-# C++ 类型由 main.cpp 中 qmlRegisterType 注册，此处不引用 QML 文件避免加载缺失文件导致崩溃
+# AppContext 和 Theme 使用 pragma Singleton + qmldir 单例声明（Qt 6 QML 单例标准用法）
+# 使用方式：import RemoteDriving 1.0 → AppContext.xxx（推荐，与 main.qml 一致）
+#           import "." as Q         → Q.AppContext.xxx（同目录限定名备选）
+#           import "styles" as S    → S.Theme.xxx
+singleton AppContext 1.0 AppContext.qml
+singleton Theme 1.0 styles/Theme.qml
+
+# C++ 类型由 main.cpp 中 qmlRegisterType 注册

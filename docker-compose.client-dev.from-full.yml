@@ -1,0 +1,22 @@
+# 在已有 remote-driving-client-dev:full（或 CLIENT_DEV_EXTEND_FROM）上增量构建 client-dev。
+# 适合：只改少量系统依赖 / 脚本，不想重跑 Dockerfile.client-dev 里 libdatachannel + 完整 Qt aqt。
+#
+# 用法：
+#   docker compose -f docker-compose.yml -f docker-compose.client-dev.from-full.yml build client-dev
+#
+# 可选环境变量：
+#   CLIENT_DEV_EXTEND_FROM=remote-driving-client-dev:full   # 基底镜像
+#   CLIENT_DEV_EXTEND_TAG=remote-driving-client-dev:patched # 产出 tag（默认 patched）
+#
+# 全链路若固定写死 image: remote-driving-client-dev:full，可二选一：
+#   - 构建后 docker tag remote-driving-client-dev:patched remote-driving-client-dev:full
+#   - 或设 CLIENT_DEV_EXTEND_TAG=remote-driving-client-dev:full 直接覆盖同名（慎用）
+
+services:
+  client-dev:
+    build:
+      context: ./client
+      dockerfile: Dockerfile.client-dev.from-full
+      args:
+        EXTEND_BASE_IMAGE: ${CLIENT_DEV_EXTEND_FROM:-remote-driving-client-dev:full}
+    image: ${CLIENT_DEV_EXTEND_TAG:-remote-driving-client-dev:patched}

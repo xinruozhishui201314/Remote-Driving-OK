@@ -10,6 +10,12 @@ UDPChannel::UDPChannel(QObject* parent)
     connect(&m_heartbeatTimer, &QTimer::timeout, this, &UDPChannel::onHeartbeatTimer);
     m_heartbeatTimer.setTimerType(Qt::PreciseTimer);
     m_heartbeatTimer.setInterval(kHeartbeatIntervalMs);
+
+    // ★★★ 修复：启动 RTT 超时检测定时器 ★★★
+    // onRttTimer() 用于检测 PONG 响应超时（超过 500ms 未收到响应）
+    connect(&m_rttTimer, &QTimer::timeout, this, &UDPChannel::onRttTimer);
+    m_rttTimer.setTimerType(Qt::PreciseTimer);
+    m_rttTimer.setInterval(kHeartbeatIntervalMs * 5); // 500ms 检测间隔
 }
 
 UDPChannel::~UDPChannel()
@@ -33,6 +39,7 @@ bool UDPChannel::initialize(const TransportConfig& config)
 void UDPChannel::shutdown()
 {
     m_heartbeatTimer.stop();
+    m_rttTimer.stop();  // ★★★ 停止 RTT 检测定时器 ★★★
     if (m_socket) {
         m_socket->close();
     }
@@ -52,6 +59,7 @@ void UDPChannel::connectAsync(const EndpointInfo& endpoint)
         emit connectionStateChanged(m_state);
         emit connected();
         m_heartbeatTimer.start();
+        m_rttTimer.start();  // ★★★ 启动 RTT 检测定时器 ★★★
         qInfo() << "[Client][UDPChannel] connected to" << endpoint.host << ":" << m_config.control.port;
     } else {
         m_state = ConnectionState::ERROR;
@@ -64,6 +72,7 @@ void UDPChannel::connectAsync(const EndpointInfo& endpoint)
 void UDPChannel::disconnect()
 {
     m_heartbeatTimer.stop();
+    m_rttTimer.stop();  // ★★★ 停止 RTT 检测定时器 ★★★
     if (m_socket) m_socket->close();
     m_state = ConnectionState::DISCONNECTED;
     emit connectionStateChanged(m_state);
@@ -133,9 +142,19 @@ void UDPChannel::onReadyRead()
         m_socket->readDatagram(data.data(), data.size(), &sender, &senderPort);
 
         // Pong 检测（简单4字节心跳响应）
-        if (data.size() == 4 && data.startsWith("PONG")) {
-            const int64_t rttUs = (TimeUtils::nowUs() - m_lastPingTimestamp);
-            updateRTT(rttUs);
+        // ★★★ 修复：添加长度检查，防止短数据误判 ★★★
+        if (data.size() >= 5 && data.startsWith("PONG")) {
+            // 解析 RTT 值（格式：PONG<rtt_value>）
+            QString rttStr = QString::fromLatin1(data.mid(5)).trimmed();
+            bool ok = false;
+            double rtt = rttStr.toDouble(&ok);
+            if (ok) {
+                updateRTT(static_cast<int64_t>(rtt * 1000));  // 转换为微秒
+            } else {
+                // 传统格式：仅 PONG，使用本地时间戳计算
+                const int64_t rttUs = (TimeUtils::nowUs() - m_lastPingTimestamp);
+                updateRTT(rttUs);
+            }
             continue;
         }
 
@@ -195,8 +214,15 @@ void UDPChannel::updateRTT(int64_t rttUs)
 
 QByteArray UDPChannel::applyFEC(const QByteArray& data)
 {
-    // 简单 XOR 奇偶校验块（生产中应替换为 Reed-Solomon 或 LDPC）
-    // 格式：[原始数据][1字节奇偶校验]
+    // ═══════════════════════════════════════════════════════════════════
+    // 注意：当前实现使用简单 XOR 奇偶校验，仅能检测单比特翻转错误。
+    // 生产环境应替换为 Reed-Solomon (RS-255-223) 或 LDPC 码以获得纠错能力。
+    // 配置项: m_config.control.enableFEC (默认关闭)
+    // ═══════════════════════════════════════════════════════════════════
+    if (data.isEmpty()) {
+        return data;
+    }
+    
     uint8_t parity = 0;
     for (char c : data) parity ^= static_cast<uint8_t>(c);
     QByteArray result = data;
@@ -207,13 +233,21 @@ QByteArray UDPChannel::applyFEC(const QByteArray& data)
 QByteArray UDPChannel::stripFEC(const QByteArray& data)
 {
     if (data.size() < 2) return data;
+    
     // 验证奇偶校验
     uint8_t parity = 0;
     for (int i = 0; i < data.size() - 1; ++i) {
         parity ^= static_cast<uint8_t>(data[i]);
     }
+    
     if (parity != static_cast<uint8_t>(data.back())) {
-        qWarning() << "[Client][UDPChannel] FEC parity check failed, packet may be corrupt";
+        m_fecFailed.fetch_add(1);
+        qWarning() << "[Client][UDPChannel] FEC parity check failed, packet may be corrupt"
+                   << " totalFailed=" << m_fecFailed.load();
+        // 注意：这里只记录错误，不丢弃数据，因为 UDP 本身不保证可靠性
+        // 呼叫方应该根据上层协议判断是否需要重传
+    } else {
+        // 校验成功（数据未被破坏）
     }
     return data.left(data.size() - 1);
 }

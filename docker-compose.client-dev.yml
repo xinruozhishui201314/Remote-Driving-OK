@@ -1,12 +1,21 @@
 # 可选 override：从 Dockerfile 构建 client-dev 镜像（需在构建时从 GitHub 拉取 libdatachannel，网络需畅通）
 # 若构建时 git clone 失败，请改用宿主机安装并 commit 打 tag 方式：bash scripts/build-client-dev-full-image.sh
 #
-# 使用：docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
-#       docker compose -f docker-compose.yml -f docker-compose.client-dev.yml up -d client-dev
+# 使用（默认走层缓存，非 --no-cache 全量）：
+#   docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
+#   docker compose -f docker-compose.yml -f docker-compose.client-dev.yml up -d client-dev
+#
+# Qt 下载镜像加速（可选，读自宿主机环境变量或 .env）：
+#   export AQT_BASE=https://mirrors.tuna.tsinghua.edu.cn/qt/
+# 强制无缓存重建：CLIENT_DEV_BUILD_NO_CACHE=1 docker compose ... build --no-cache client-dev
 
 services:
   client-dev:
     build:
       context: ./client
       dockerfile: Dockerfile.client-dev
+      args:
+        AQT_BASE: ${AQT_BASE:-}
+        QT_DESKTOP_VERSION: ${QT_DESKTOP_VERSION:-6.8.0}
+        QT_DESKTOP_ARCH: ${QT_DESKTOP_ARCH:-linux_gcc_64}
     image: remote-driving-client-dev:full

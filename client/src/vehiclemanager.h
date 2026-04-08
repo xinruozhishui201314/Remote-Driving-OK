@@ -78,6 +78,11 @@ private:
     void updateVehicleList(const QJsonArray &vehicles);
     VehicleInfo parseVehicleInfo(const QJsonObject &json) const;
 
+    /** 带超时的 GET 请求 */
+    QNetworkReply* getWithTimeout(QNetworkAccessManager* nam, const QNetworkRequest& request, int timeoutMs = 10000);
+    /** 带超时和请求体的 POST 请求 */
+    QNetworkReply* postWithTimeout(QNetworkAccessManager* nam, const QNetworkRequest& request, const QByteArray& data, int timeoutMs = 10000);
+
     QStringList m_vehicleList;
     QMap<QString, VehicleInfo> m_vehicles;
     QString m_currentVin;

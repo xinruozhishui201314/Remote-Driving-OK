@@ -62,8 +62,8 @@ void SafetyMonitorService::stop()
 
 void SafetyMonitorService::updateLatency(double oneWayMs, double rttMs)
 {
-    m_currentOneWayMs = oneWayMs;
-    m_currentRTTMs    = rttMs;
+    m_currentOneWayMs.store(oneWayMs);
+    m_currentRTTMs.store(rttMs);
 }
 
 void SafetyMonitorService::onHeartbeatReceived()
@@ -90,22 +90,23 @@ void SafetyMonitorService::runSafetyChecks()
 
 void SafetyMonitorService::checkLatency()
 {
-    if (m_currentOneWayMs <= 0) return; // 无数据
+    const double currentOneWay = m_currentOneWayMs.load();
+    if (currentOneWay <= 0) return; // 无数据
 
-    if (m_currentOneWayMs > m_config.maxOneWayLatencyMs) {
+    if (currentOneWay > m_config.maxOneWayLatencyMs) {
         ++m_latencyViolationCount;
         const QString msg = QString("[Client][SafetyMonitorService] latency violation #%1: %2ms > %3ms")
                                 .arg(m_latencyViolationCount)
-                                .arg(m_currentOneWayMs, 0, 'f', 1)
+                                .arg(currentOneWay, 0, 'f', 1)
                                 .arg(m_config.maxOneWayLatencyMs);
         qWarning().noquote() << msg;
 
         if (m_latencyViolationCount >= m_config.emergencyTriggerCount) {
             triggerEmergencyStop(QString("Latency too high: %1ms for %2 consecutive checks")
-                                     .arg(m_currentOneWayMs, 0, 'f', 1)
+                                     .arg(currentOneWay, 0, 'f', 1)
                                      .arg(m_latencyViolationCount));
             m_latencyViolationCount = 0;
-        } else if (m_currentOneWayMs > m_config.warningLatencyMs) {
+        } else if (currentOneWay > m_config.warningLatencyMs) {
             emit safetyWarning(msg);
         }
     } else {

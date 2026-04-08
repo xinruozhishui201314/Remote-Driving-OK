@@ -28,6 +28,25 @@ void SystemStateMachine::addTransition(SystemState from, Trigger trig, SystemSta
     m_transitions[{from, trig}] = Transition{to, std::move(guard), std::move(action)};
 }
 
+// ★★★ 状态动作注册方法实现 ★★★
+void SystemStateMachine::registerEntryAction(SystemState state, std::function<void()> action)
+{
+    QMutexLocker lock(&m_mutex);
+    m_entryActions[state] = std::move(action);
+}
+
+void SystemStateMachine::registerExitAction(SystemState state, std::function<void()> action)
+{
+    QMutexLocker lock(&m_mutex);
+    m_exitActions[state] = std::move(action);
+}
+
+void SystemStateMachine::registerTransitionAction(Trigger trigger, std::function<void()> action)
+{
+    QMutexLocker lock(&m_mutex);
+    m_transitionActions[trigger] = std::move(action);
+}
+
 void SystemStateMachine::setupTransitions()
 {
     using S = SystemState;
@@ -145,8 +164,19 @@ bool SystemStateMachine::fire(Trigger trigger)
     // 退出动作
     onExitState(oldS);
 
-    // 转换动作
-    if (tr.action) tr.action();
+    // 转换动作：先执行 Transition 中定义的 action，再执行 m_transitionActions 中注册的同名触发器动作
+    if (tr.action) {
+        tr.action();
+    }
+
+    // 执行已注册的转换动作（如果有）
+    {
+        QMutexLocker lock(&m_mutex);
+        auto it = m_transitionActions.find(trigger);
+        if (it != m_transitionActions.end() && it->second) {
+            it->second();
+        }
+    }
 
     // 进入动作
     onEnterState(newS);
@@ -161,32 +191,22 @@ bool SystemStateMachine::fire(Trigger trigger)
 
 bool SystemStateMachine::fireByName(const QString& triggerName)
 {
-    auto it = stringToTrigger(triggerName.trimmed().toUpper());
-    // stringToTrigger returns a sentinel via optional-like approach; use exception approach
-    const QString t = triggerName.trimmed().toUpper();
-    static const QMap<QString, Trigger> kMap{
-        {"CONNECT",         Trigger::CONNECT},
-        {"CONNECTED",       Trigger::CONNECTED},
-        {"AUTH_SUCCESS",    Trigger::AUTH_SUCCESS},
-        {"AUTH_FAILURE",    Trigger::AUTH_FAILURE},
-        {"LOGOUT",          Trigger::LOGOUT},
-        {"START_SESSION",   Trigger::START_SESSION},
-        {"PREFLIGHT_OK",    Trigger::PREFLIGHT_OK},
-        {"PREFLIGHT_FAIL",  Trigger::PREFLIGHT_FAIL},
-        {"EMERGENCY_STOP",  Trigger::EMERGENCY_STOP},
-        {"NETWORK_DEGRADE", Trigger::NETWORK_DEGRADE},
-        {"NETWORK_RECOVER", Trigger::NETWORK_RECOVER},
-        {"STOP_SESSION",    Trigger::STOP_SESSION},
-        {"CONNECTION_LOST", Trigger::CONNECTION_LOST},
-        {"TIMEOUT",         Trigger::TIMEOUT},
-        {"RESET",           Trigger::RESET},
-    };
-    auto jt = kMap.constFind(t);
-    if (jt == kMap.constEnd()) {
-        qWarning().noquote() << "[Client][FSM] unknown trigger name:" << triggerName;
-        return false;
+    Trigger t = stringToTrigger(triggerName.trimmed().toUpper());
+    if (t == Trigger::RESET && triggerName.trimmed().toUpper() != QStringLiteral("RESET")) {
+        // stringToTrigger returns RESET as sentinel; check if it was actually RESET
+        // or an unknown trigger that defaulted to RESET
+        static const QSet<QString> knownTriggers = {
+            "CONNECT", "CONNECTED", "AUTH_SUCCESS", "AUTH_FAILURE", "LOGOUT",
+            "START_SESSION", "PREFLIGHT_OK", "PREFLIGHT_FAIL", "EMERGENCY_STOP",
+            "NETWORK_DEGRADE", "NETWORK_RECOVER", "STOP_SESSION",
+            "CONNECTION_LOST", "TIMEOUT", "RESET"
+        };
+        if (!knownTriggers.contains(triggerName.trimmed().toUpper())) {
+            qWarning().noquote() << "[Client][FSM] unknown trigger name:" << triggerName;
+            return false;
+        }
     }
-    return fire(jt.value());
+    return fire(t);
 }
 
 void SystemStateMachine::onEnterState(SystemState state)
@@ -253,12 +273,53 @@ QString SystemStateMachine::triggerToString(Trigger t)
     return QStringLiteral("?");
 }
 
-SystemStateMachine::Trigger SystemStateMachine::stringToTrigger(const QString&)
+SystemStateMachine::Trigger SystemStateMachine::stringToTrigger(const QString& name)
 {
-    return Trigger::RESET; // placeholder; actual logic in fireByName
+    // Future-use: maps trigger name string to Trigger enum.
+    // Currently used by fireByName() for QML-friendly trigger firing.
+    static const QMap<QString, Trigger> kMap{
+        {"CONNECT",         Trigger::CONNECT},
+        {"CONNECTED",       Trigger::CONNECTED},
+        {"AUTH_SUCCESS",    Trigger::AUTH_SUCCESS},
+        {"AUTH_FAILURE",    Trigger::AUTH_FAILURE},
+        {"LOGOUT",          Trigger::LOGOUT},
+        {"START_SESSION",   Trigger::START_SESSION},
+        {"PREFLIGHT_OK",    Trigger::PREFLIGHT_OK},
+        {"PREFLIGHT_FAIL",  Trigger::PREFLIGHT_FAIL},
+        {"EMERGENCY_STOP",  Trigger::EMERGENCY_STOP},
+        {"NETWORK_DEGRADE", Trigger::NETWORK_DEGRADE},
+        {"NETWORK_RECOVER", Trigger::NETWORK_RECOVER},
+        {"STOP_SESSION",    Trigger::STOP_SESSION},
+        {"CONNECTION_LOST", Trigger::CONNECTION_LOST},
+        {"TIMEOUT",         Trigger::TIMEOUT},
+        {"RESET",           Trigger::RESET},
+    };
+    auto it = kMap.constFind(name.toUpper());
+    if (it != kMap.constEnd()) {
+        return it.value();
+    }
+    return Trigger::RESET; // sentinel value for unknown triggers
 }
 
-SystemStateMachine::SystemState SystemStateMachine::stringToState(const QString&)
+SystemStateMachine::SystemState SystemStateMachine::stringToState(const QString& name)
 {
-    return SystemState::IDLE;
+    // Future-use: maps state name string to SystemState enum.
+    // Reserved for future QML-friendly state inspection/manipulation.
+    static const QMap<QString, SystemState> kMap{
+        {"IDLE",            SystemState::IDLE},
+        {"CONNECTING",      SystemState::CONNECTING},
+        {"AUTHENTICATING",  SystemState::AUTHENTICATING},
+        {"READY",           SystemState::READY},
+        {"PRE_FLIGHT",      SystemState::PRE_FLIGHT},
+        {"DRIVING",         SystemState::DRIVING},
+        {"DEGRADED",        SystemState::DEGRADED},
+        {"EMERGENCY",       SystemState::EMERGENCY},
+        {"STOPPING",        SystemState::STOPPING},
+        {"ERROR",           SystemState::ERROR},
+    };
+    auto it = kMap.constFind(name.toUpper());
+    if (it != kMap.constEnd()) {
+        return it.value();
+    }
+    return SystemState::IDLE; // sentinel value for unknown states
 }

@@ -276,6 +276,15 @@ else
 fi
 
 echo ""
+log_section "客户端契约静态检查 (verify-client-contract.sh)"
+if bash "$SCRIPT_DIR/verify-client-contract.sh" 2>&1; then
+  log_ok "客户端 QML 控制路径契约检查通过"
+else
+  log_fail "客户端契约检查失败"
+  FAILED=1
+fi
+
+echo ""
 if [ $FAILED -eq 0 ]; then
   echo -e "${GREEN}========== 编译与自动化验证全部通过 ==========${NC}"
   echo "  修改代码后请始终执行: ./scripts/build-and-verify.sh"

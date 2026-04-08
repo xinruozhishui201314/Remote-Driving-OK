@@ -11,9 +11,11 @@
 
 ## 仍须实车/压测验证
 
-- **ControlPanel** 仍直接调用 `mqttController.sendDriveCommand`，未经过 `VehicleControlService`（与 DataChannel 统一封装存在双路径）；后续可改为 C++ 统一入口。
+- **ControlPanel**：默认路径仅 `VehicleControlService::sendDriveCommand`；`CLIENT_LEGACY_CONTROL_ONLY=1` 时仍走 `mqttController.sendDriveCommand`（应急回退）。
+- **QML UI 指令**：默认 `vehicleControl.sendUiCommand`；LEGACY 下 `mqttController.sendUiEnvelopeJson`（C++ 统一信封 + DataChannel/MQTT 自动选择）。`scripts/verify-client-contract.sh` 禁止 QML 直接 `publish("vehicle/control",…)`。
 - **EventBus** 与 **DegradationManager** 与 UI 同线程时，`score` 抖动可能频繁触发降级；已通过滞回与连续采样缓解，仍需线上调参。
 - **ControlLoopTicker** 默认关闭；`CLIENT_ENABLE_CONTROL_TICKER=1` 仅为同线程定时占位，非独立 RT 线程。
+- **插件**：`CLIENT_PLUGIN_DIR` 指向含 `IPlugin` 的 `.so` 目录；示例：`cmake -DCLIENT_BUILD_EXAMPLE_PLUGIN=ON` 后加载 `build/plugins/`。`PluginContext::eventBus()` 与 `main` / FSM 使用同一 `EventBus::instance()`（不再存在第二套总线实例）。
 
 ## 建议监控日志关键字
 

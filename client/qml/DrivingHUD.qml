@@ -1,69 +1,91 @@
 /**
- * 完整驾驶 HUD（《客户端架构设计》§3.4.2）。
- * 布局：主视频 + 速度表 + 方向盘指示 + 挡位 + 网络条 + 安全叠层。
- * 绑定 MVVM 模型：TelemetryModel / NetworkStatusModel / SafetyStatusModel。
+ * 完整驾驶 HUD
+ * 布局：主视频 + 速度表 + 方向盘指示 + 挡位 + 网络条 + 安全叠层
+ * 绑定 MVVM 模型：TelemetryModel / NetworkStatusModel / SafetyStatusModel
+ * 统一使用 Theme
  */
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
+import QtMultimedia
+import RemoteDriving 1.0
 import "components"
-import "styles"
+import "styles" as ThemeModule
 
 Item {
     id: root
 
-    // 外部绑定（由 main.qml 注入）
+    // 外部绑定
     required property var telemetryModel
     required property var networkStatusModel
     required property var safetyStatusModel
-    required property var videoRenderer
+    /** WebRtcClient*：主路视频，经 bindVideoOutput 输出到 VideoOutput 内置 sink */
+    required property var videoStreamClient
+    property var _prevHudVideoBindClient: null
 
-    // 控制信号（发往 VehicleControlService）
+    function rebindHudVideoOutput() {
+        if (_prevHudVideoBindClient && _prevHudVideoBindClient !== videoStreamClient) {
+            _prevHudVideoBindClient.bindVideoOutput(null)
+            _prevHudVideoBindClient = null
+        }
+        if (videoStreamClient && hudVideoOut) {
+            videoStreamClient.bindVideoOutput(hudVideoOut)
+            _prevHudVideoBindClient = videoStreamClient
+        }
+    }
+
+    onVideoStreamClientChanged: rebindHudVideoOutput()
+
+    // 控制信号
     signal emergencyStopRequested()
     signal keyPressed(int key)
     signal keyReleased(int key)
 
     focus: true
+    
+    // ── 便捷属性 ─────────────────────────────────────────────────────
+    readonly property string chineseFont: AppContext ? AppContext.chineseFont : ""
+    readonly property var theme: ThemeModule.Theme
 
-    // ─── 背景（透明叠加）───────────────────────────────────────────────────────
+    // 背景
     Rectangle {
         anchors.fill: parent
         color: "transparent"
     }
 
-    // ─── 主视频区 ───────────────────────────────────────────────────────────────
-    Loader {
-        id: videoArea
+    // 主视频区（Qt Multimedia）
+    VideoOutput {
+        id: hudVideoOut
         anchors.fill: parent
-        sourceComponent: videoRenderer
+        fillMode: VideoOutput.PreserveAspectCrop
+        Component.onCompleted: root.rebindHudVideoOutput()
     }
 
-    // ─── 顶部状态栏 ─────────────────────────────────────────────────────────────
+    // 顶部状态栏
     Rectangle {
         id: topBar
         anchors.top:    parent.top
         anchors.left:   parent.left
         anchors.right:  parent.right
-        height:  Theme.topBarHeight
+        height:  theme.topBarHeight
         color:   Qt.rgba(0, 0, 0, 0.6)
         radius:  4
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin:  Theme.marginLarge
-            anchors.rightMargin: Theme.marginLarge
+            anchors.leftMargin:  theme.marginLarge
+            anchors.rightMargin: theme.marginLarge
 
-            // 系统状态
             Text {
                 text:  "状态: " + safetyStatusModel.systemState
-                color: safetyStatusModel.allSafe ? Theme.colorGood : Theme.colorWarn
-                font.pixelSize: Theme.fontNormal
+                color: safetyStatusModel.allSafe ? theme.colorGood : theme.colorWarn
+                font.pixelSize: theme.fontNormal
                 font.bold: true
+                font.family: root.chineseFont || font.family
             }
 
             Item { Layout.fillWidth: true }
 
-            // 网络质量条
             NetworkStatusBar {
                 networkModel: networkStatusModel
                 height: 24
@@ -72,19 +94,19 @@ Item {
 
             Item { Layout.fillWidth: true }
 
-            // 延迟数值
             Text {
                 text:  "RTT: " + networkStatusModel.rttMs.toFixed(0) + " ms"
-                color: networkStatusModel.rttMs > 150 ? Theme.colorWarn :
-                       networkStatusModel.rttMs > 80  ? Theme.colorCaution : Theme.colorGood
-                font.pixelSize: Theme.fontNormal
+                color: networkStatusModel.rttMs > 150 ? theme.colorWarn :
+                       networkStatusModel.rttMs > 80  ? theme.colorCaution : theme.colorGood
+                font.pixelSize: theme.fontNormal
+                font.family: root.chineseFont || font.family
             }
 
-            // 时间
             Text {
                 id: clockText
-                color: Theme.colorText
-                font.pixelSize: Theme.fontSmall
+                color: theme.colorText
+                font.pixelSize: theme.fontSmall
+                font.family: root.chineseFont || font.family
 
                 Timer {
                     interval: 1000; running: true; repeat: true
@@ -94,98 +116,111 @@ Item {
         }
     }
 
-    // ─── 底部 HUD 面板 ──────────────────────────────────────────────────────────
+    // 底部 HUD 面板
     Rectangle {
         id: bottomHUD
         anchors.bottom: parent.bottom
         anchors.left:   parent.left
         anchors.right:  parent.right
-        height:  Theme.bottomHudHeight
+        height:  theme.bottomHudHeight
         color:   Qt.rgba(0, 0, 0, 0.65)
 
         RowLayout {
             anchors.fill: parent
-            anchors.leftMargin:  Theme.marginLarge
-            anchors.rightMargin: Theme.marginLarge
-            spacing: Theme.marginLarge
+            anchors.leftMargin:  theme.marginLarge
+            anchors.rightMargin: theme.marginLarge
+            spacing: theme.marginLarge
 
-            // 速度表
             SpeedGauge {
                 speed: telemetryModel.speed
                 maxSpeed: 120
-                height: Theme.gaugeSize
-                width:  Theme.gaugeSize
+                height: theme.gaugeSize
+                width:  theme.gaugeSize
                 Layout.alignment: Qt.AlignVCenter
             }
 
-            // 油门/刹车进度条
             ColumnLayout {
                 Layout.alignment: Qt.AlignVCenter
                 spacing: 4
 
-                Text { text: "油门"; color: Theme.colorText; font.pixelSize: Theme.fontSmall }
+                Text { 
+                    text: "油门"; 
+                    color: theme.colorText; 
+                    font.pixelSize: theme.fontSmall
+                    font.family: root.chineseFont || font.family
+                }
                 ProgressBar {
                     value: telemetryModel.throttle
                     width: 120; height: 10
-                    contentItem: Rectangle { color: "#4CAF50"; radius: 4; width: parent.width * parent.value }
+                    contentItem: Rectangle { color: theme.colorGood; radius: 4; width: parent.width * parent.value }
                 }
-                Text { text: "刹车"; color: Theme.colorText; font.pixelSize: Theme.fontSmall }
+                Text { 
+                    text: "刹车"; 
+                    color: theme.colorText; 
+                    font.pixelSize: theme.fontSmall
+                    font.family: root.chineseFont || font.family
+                }
                 ProgressBar {
                     value: telemetryModel.brake
                     width: 120; height: 10
-                    contentItem: Rectangle { color: "#F44336"; radius: 4; width: parent.width * parent.value }
+                    contentItem: Rectangle { color: theme.colorDanger; radius: 4; width: parent.width * parent.value }
                 }
             }
 
-            // 方向盘指示
             SteeringIndicator {
                 steeringAngle: telemetryModel.steering
-                height: Theme.gaugeSize
-                width:  Theme.gaugeSize
+                height: theme.gaugeSize
+                width:  theme.gaugeSize
                 Layout.alignment: Qt.AlignVCenter
             }
 
-            // 挡位
             GearIndicator {
                 gear: telemetryModel.gear
-                height: Theme.gaugeSize
-                width:  Theme.gaugeSize * 0.6
+                height: theme.gaugeSize
+                width:  theme.gaugeSize * 0.6
                 Layout.alignment: Qt.AlignVCenter
             }
 
             Item { Layout.fillWidth: true }
 
-            // 电量
             Column {
                 Layout.alignment: Qt.AlignVCenter
                 Text {
                     text:  "🔋 " + telemetryModel.battery.toFixed(0) + "%"
-                    color: telemetryModel.battery < 20 ? Theme.colorWarn : Theme.colorText
-                    font.pixelSize: Theme.fontNormal
+                    color: telemetryModel.battery < 20 ? theme.colorWarn : theme.colorText
+                    font.pixelSize: theme.fontNormal
+                    font.family: root.chineseFont || font.family
                 }
             }
         }
     }
 
-    // ─── 安全警告叠层 ─────────────────────────────────────────────────────────
+    // 安全警告叠层
     SafetyWarningOverlay {
         anchors.fill: parent
         safetyModel: safetyStatusModel
         visible: !safetyStatusModel.allSafe || safetyStatusModel.emergencyStop
     }
 
-    // ─── 急停按钮 ────────────────────────────────────────────────────────────
+    // 急停按钮
     Rectangle {
         anchors.right:  parent.right
         anchors.bottom: bottomHUD.top
-        anchors.rightMargin:  Theme.marginLarge
-        anchors.bottomMargin: Theme.marginSmall
+        anchors.rightMargin:  theme.marginLarge
+        anchors.bottomMargin: theme.marginSmall
         width:  80; height: 80
         radius: 40
         color:  emergencyArea.containsMouse ? "#CC0000" : "#FF0000"
         border.color: "white"; border.width: 3
 
-        Text { anchors.centerIn: parent; text: "急停"; color: "white"; font.bold: true; font.pixelSize: 16 }
+        Text { 
+            anchors.centerIn: parent; 
+            text: "急停"; 
+            color: "white"; 
+            font.bold: true; 
+            font.pixelSize: 16
+            font.family: root.chineseFont || font.family
+        }
 
         MouseArea {
             id: emergencyArea
@@ -195,7 +230,7 @@ Item {
         }
     }
 
-    // ─── 键盘事件 ─────────────────────────────────────────────────────────────
+    // 键盘事件
     Keys.onPressed: (event) => {
         root.keyPressed(event.key)
         if (event.key === Qt.Key_Escape) root.emergencyStopRequested()

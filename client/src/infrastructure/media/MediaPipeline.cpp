@@ -72,7 +72,10 @@ void MediaPipeline::onVideoPacketReceived(const uint8_t* data, size_t size, int6
     nalu.data = QByteArray(reinterpret_cast<const char*>(data), static_cast<int>(size));
     nalu.pts  = pts;
     if (!m_decodeQueue.push(std::move(nalu))) {
-        m_stats.framesDropped++;
+        {
+            QMutexLocker lock(&m_statsMutex);
+            m_stats.framesDropped++;
+        }
         qWarning() << "[Client][MediaPipeline] decode queue full, dropping frame cam="
                    << m_config.cameraId;
     }
@@ -84,7 +87,12 @@ void MediaPipeline::onVideoPacketReceived(const QByteArray& data, int64_t pts)
     nalu.data = data;
     nalu.pts  = pts;
     if (!m_decodeQueue.push(std::move(nalu))) {
-        m_stats.framesDropped++;
+        {
+            QMutexLocker lock(&m_statsMutex);
+            m_stats.framesDropped++;
+        }
+        qWarning() << "[Client][MediaPipeline] decode queue full, dropping frame cam="
+                   << m_config.cameraId;
     }
 }
 
@@ -94,13 +102,47 @@ void MediaPipeline::reconfigure(const PipelineConfig& config)
     initialize(config);
 }
 
+void MediaPipeline::setFramePoolCapacity(int capacity)
+{
+    if (capacity <= 0) {
+        qWarning() << "[Client][MediaPipeline] Invalid frame pool capacity:" << capacity;
+        return;
+    }
+
+    if (m_framePool) {
+        const int currentSize = static_cast<int>(m_framePool->size());
+        if (currentSize == capacity) {
+            return;
+        }
+        qInfo() << "[Client][MediaPipeline] Resizing frame pool from" << currentSize
+                << "to" << capacity << "cam=" << m_config.cameraId;
+    }
+
+    // 重建帧池以新容量
+    m_framePool = std::make_shared<FramePool>(
+        static_cast<size_t>(capacity),
+        m_config.maxWidth,
+        m_config.maxHeight,
+        m_config.gpuMemoryType);
+
+    {
+        QMutexLocker lock(&m_statsMutex);
+        m_config.framePoolSize = static_cast<size_t>(capacity);
+    }
+}
+
 void MediaPipeline::decodeLoop()
 {
     NALUnit nalu;
+    bool continueDecodedFrames = false;
     while (m_running) {
         if (!m_decodeQueue.pop(nalu)) {
-            QThread::usleep(100); // 100µs 空转等待
-            continue;
+            if (continueDecodedFrames) {
+                // flush后继续处理已解码的帧
+            } else {
+                QThread::usleep(100); // 100µs 空转等待
+                continue;
+            }
         }
 
         const int64_t decodeStart = TimeUtils::nowUs();
@@ -112,18 +154,26 @@ void MediaPipeline::decodeLoop()
             nalu.pts, nalu.pts);
 
         if (res == DecodeResult::Error) {
-            m_stats.decodeErrors++;
+            {
+                QMutexLocker lock(&m_statsMutex);
+                m_stats.decodeErrors++;
+            }
             qWarning() << "[Client][MediaPipeline] decode error cam=" << m_config.cameraId;
             m_decoder->flush();
-            continue;
+            // flush 后继续处理解码器内部残留的帧，不丢失
+            continueDecodedFrames = true;
         }
 
         // 取出解码帧
         VideoFrame rawFrame;
         while (m_decoder->receiveFrame(rawFrame) == DecodeResult::Ok) {
+            continueDecodedFrames = false; // 正常解码帧后重置标志
             auto poolFrame = m_framePool->acquire();
             if (!poolFrame) {
-                m_stats.framesDropped++;
+                {
+                    QMutexLocker lock(&m_statsMutex);
+                    m_stats.framesDropped++;
+                }
                 continue;
             }
             // 复制帧元数据（CPU路径下数据已在 decoder 内部，通过指针传递）
@@ -149,7 +199,10 @@ void MediaPipeline::decodeLoop()
                 }
             }
 
-            m_stats.framesDecoded++;
+            {
+                QMutexLocker lock(&m_statsMutex);
+                m_stats.framesDecoded++;
+            }
             updateStats(TimeUtils::nowUs() - decodeStart);
 
             // 发送到渲染线程（Qt::QueuedConnection 或 DirectConnection 由接收者决定）
@@ -160,6 +213,7 @@ void MediaPipeline::decodeLoop()
 
 void MediaPipeline::updateStats(int64_t decodeUs)
 {
+    QMutexLocker lock(&m_statsMutex);
     const double decodeMs = decodeUs / 1000.0;
     m_stats.avgDecodeTimeMs = m_stats.avgDecodeTimeMs * 0.95 + decodeMs * 0.05;
 }

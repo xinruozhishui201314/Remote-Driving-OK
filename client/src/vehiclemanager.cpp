@@ -2,6 +2,7 @@
 #include <QJsonDocument>
 #include <QDebug>
 #include <QString>
+#include <QTimer>
 
 VehicleManager::VehicleManager(QObject *parent)
     : QObject(parent)
@@ -11,6 +12,40 @@ VehicleManager::VehicleManager(QObject *parent)
 
 VehicleManager::~VehicleManager()
 {
+}
+
+QNetworkReply* VehicleManager::getWithTimeout(QNetworkAccessManager* nam, const QNetworkRequest& request, int timeoutMs)
+{
+    QNetworkReply* reply = nam->get(request);
+
+    QTimer* timeoutTimer = new QTimer(reply);
+    timeoutTimer->setSingleShot(true);
+    timeoutTimer->setInterval(timeoutMs);
+
+    QObject::connect(timeoutTimer, &QTimer::timeout, reply, [reply]() {
+        qWarning() << "[Client][VehicleManager] GET request timeout, aborting";
+        reply->abort();
+    });
+    timeoutTimer->start();
+
+    return reply;
+}
+
+QNetworkReply* VehicleManager::postWithTimeout(QNetworkAccessManager* nam, const QNetworkRequest& request, const QByteArray& data, int timeoutMs)
+{
+    QNetworkReply* reply = nam->post(request, data);
+
+    QTimer* timeoutTimer = new QTimer(reply);
+    timeoutTimer->setSingleShot(true);
+    timeoutTimer->setInterval(timeoutMs);
+
+    QObject::connect(timeoutTimer, &QTimer::timeout, reply, [reply]() {
+        qWarning() << "[Client][VehicleManager] POST request timeout, aborting";
+        reply->abort();
+    });
+    timeoutTimer->start();
+
+    return reply;
 }
 
 void VehicleManager::setCurrentVin(const QString &vin)
@@ -77,7 +112,7 @@ void VehicleManager::refreshVehicleList(const QString &serverUrl, const QString 
         request.setRawHeader("Authorization", ("Bearer " + authToken).toUtf8());
     }
 
-    m_currentReply = m_networkManager->get(request);
+    m_currentReply = getWithTimeout(m_networkManager, request);
     QNetworkReply *reply = m_currentReply;
 
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {
@@ -233,7 +268,7 @@ void VehicleManager::startSessionForCurrentVin(const QString &serverUrl, const Q
         request.setRawHeader("Authorization", ("Bearer " + authToken).toUtf8());
     }
     
-    m_sessionReply = m_networkManager->post(request, QByteArray());
+    m_sessionReply = postWithTimeout(m_networkManager, request, QByteArray());
     QNetworkReply *reply = m_sessionReply;
     
     connect(reply, &QNetworkReply::finished, this, [this, reply]() {

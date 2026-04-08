@@ -16,4 +16,9 @@ public:
 
     // 查询可用解码器（用于日志/诊断）
     static QStringList availableDecoders();
+
+    // 运行时硬件检测
+    static bool isVaapiAvailable();
+    static bool isNvdecAvailable();
+    static bool isHardwareDecodeAvailable(const QString& type);
 };

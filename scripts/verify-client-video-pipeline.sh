@@ -68,30 +68,20 @@ check_grep() {
 
 check_file "$CLIENT_DIR/src/h264decoder.h"
 check_file "$CLIENT_DIR/src/h264decoder.cpp"
-check_file "$CLIENT_DIR/src/presentation/renderers/VideoRenderer.h"
-check_file "$CLIENT_DIR/src/presentation/renderers/VideoRenderer.cpp"
-check_file "$CLIENT_DIR/src/presentation/renderers/VideoSGNode.cpp"
-check_file "$CLIENT_DIR/src/presentation/renderers/VideoMaterial.cpp"
 check_file "$CLIENT_DIR/Dockerfile.client-dev"
 check_file "$PROJECT_ROOT/docker-compose.client-dev.yml"
 
 check_grep "$CLIENT_DIR/CMakeLists.txt" "pkg_check_modules(FFMPEG" "FFmpeg 查找"
 check_grep "$CLIENT_DIR/CMakeLists.txt" "h264decoder.cpp" "h264decoder 源文件"
-check_grep "$CLIENT_DIR/CMakeLists.txt" "presentation/renderers/VideoRenderer.cpp" "VideoRenderer 源文件（GPU）"
+check_grep "$CLIENT_DIR/CMakeLists.txt" "Qt6::Multimedia" "Qt Multimedia 链接"
+check_grep "$CLIENT_DIR/CMakeLists.txt" "MultimediaQuick" "Qt MultimediaQuick 依赖"
+check_grep "$CLIENT_DIR/src/webrtcclient.h" "QVideoSink" "QVideoSink 属性"
 check_grep "$CLIENT_DIR/src/webrtcclient.h" "videoFrameReady" "videoFrameReady 信号"
 check_grep "$CLIENT_DIR/src/webrtcclient.cpp" "setupVideoDecoder" "setupVideoDecoder"
 check_grep "$CLIENT_DIR/src/webrtcclient.cpp" "feedRtp" "onMessage feedRtp"
-check_grep "$CLIENT_DIR/src/main.cpp" "VideoRenderer" "VideoRenderer 注册"
 check_grep "$CLIENT_DIR/src/main.cpp" "QImage" "QImage 注册"
-check_grep "$CLIENT_DIR/qml/DrivingInterface.qml" "VideoRenderer" "VideoRenderer 组件"
+check_grep "$CLIENT_DIR/qml/DrivingInterface.qml" "VideoOutput" "QML VideoOutput"
 check_grep "$CLIENT_DIR/qml/DrivingInterface.qml" "onVideoFrameReady" "onVideoFrameReady 绑定"
-
-# 着色器文件存在性检查（源码层面）
-check_file "$CLIENT_DIR/shaders/video.vert"
-check_file "$CLIENT_DIR/shaders/video.frag"
-check_file "$CLIENT_DIR/shaders.qrc.in"
-check_grep "$CLIENT_DIR/CMakeLists.txt" "shader_compilation" "shader_compilation target"
-check_grep "$CLIENT_DIR/CMakeLists.txt" "qsb" "qsb ShaderTools 配置"
 
 echo "  结构检查: $PASS 通过, $FAIL 失败"
 echo ""
@@ -134,23 +124,7 @@ if [ "$CMAKE_OK" = "1" ] && [ "$DO_BUILD" = true ]; then
             echo "  FAIL 编译完成但未找到可执行文件"; ((FAIL++)) || true
         fi
 
-        # ── 着色器 .qsb 文件验证（构建后必检）─────────────────────────────────
-        # .qsb 缺失 → 着色器未编译 → GPU 渲染失效 → 视频黑屏
-        echo "  检查 .qsb 着色器文件..."
-        SHADER_PASS=true
-        for f in "$BUILD_VERIFY_DIR/shaders_gen/video.vert.qsb" "$BUILD_VERIFY_DIR/shaders_gen/video.frag.qsb"; do
-            if [ -f "$f" ] && [ -s "$f" ]; then
-                echo "    OK  $(basename $f) ($(wc -c <"$f") bytes)"
-            else
-                echo "    FAIL $(basename $f) 缺失或为空 — GPU 渲染将黑屏!"
-                echo "         修复: bash scripts/build-client-dev-full-image.sh"
-                SHADER_PASS=false
-                ((FAIL++)) || true
-            fi
-        done
-        if [ "$SHADER_PASS" = true ]; then
-            echo "    OK  着色器验证通过 ✓"
-        fi
+        echo "  视频显示路径: Qt Multimedia（无需 .qsb 自定义着色器）"
     else
         echo "  FAIL 编译失败"; ((FAIL++)) || true
     fi

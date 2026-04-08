@@ -12,9 +12,11 @@ DiagnosticsService::DiagnosticsService(PerformanceMonitor* perf, QObject* parent
 
 void DiagnosticsService::start(int intervalMs)
 {
-    m_timer.setInterval(intervalMs);
+    // 限制最小间隔为1秒，防止过于频繁的诊断收集
+    int effectiveInterval = qMax(intervalMs, 1000);
+    m_timer.setInterval(effectiveInterval);
     m_timer.start();
-    qInfo() << "[Client][DiagnosticsService] started interval=" << intervalMs << "ms";
+    qInfo() << "[Client][DiagnosticsService] started interval=" << effectiveInterval << "ms (requested=" << intervalMs << "ms)";
 }
 
 void DiagnosticsService::stop()
@@ -25,6 +27,8 @@ void DiagnosticsService::stop()
 QJsonObject DiagnosticsService::buildSnapshot() const
 {
     QJsonObject snap;
+    snap["version"] = "1.0.0";
+    snap["format_version"] = 1;
     snap["timestamp"] = static_cast<qint64>(TimeUtils::wallClockMs());
 
     if (m_perfMonitor) {
@@ -53,6 +57,13 @@ QJsonObject DiagnosticsService::buildSnapshot() const
     sysInfo["kernel"]   = QSysInfo::kernelType() + " " + QSysInfo::kernelVersion();
     sysInfo["cpu_arch"] = QSysInfo::currentCpuArchitecture();
     snap["system"] = sysInfo;
+
+    // Safety monitor info
+    if (m_safety) {
+        QJsonObject safety;
+        safety["available"] = true;
+        snap["safety"] = safety;
+    }
 
     return snap;
 }

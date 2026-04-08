@@ -4,12 +4,14 @@
 #include <QObject>
 #include <QString>
 #include <QJsonObject>
+#include <QAtomicInt>
 
 class AuthManager;
 class VehicleManager;
 class MqttController;
 class WebRtcStreamManager;
 class SystemStateMachine;
+class VehicleControlService;
 
 /**
  * 会话编排：登录后加载车辆、VIN 切换、与状态机联动（对应架构文档 SessionManager）。
@@ -17,6 +19,8 @@ class SystemStateMachine;
 class SessionManager : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(bool hasError READ hasError NOTIFY errorOccurred)
+    Q_PROPERTY(QString lastError READ lastError NOTIFY errorOccurred)
 
 public:
     explicit SessionManager(AuthManager *auth,
@@ -28,6 +32,14 @@ public:
 
     AuthManager *authManager() const { return m_auth; }
     VehicleManager *vehicleManager() const { return m_vehicles; }
+
+    void setVehicleControl(VehicleControlService *vcs);
+
+    bool hasError() const { return m_hasError.loadRelaxed(); }
+    QString lastError() const { return m_lastError; }
+
+signals:
+    void errorOccurred(const QString &error);
 
 public slots:
     void onLoginSucceeded(const QString &token, const QJsonObject &userInfo);
@@ -48,13 +60,18 @@ public slots:
                           const QString &whepUrl, const QJsonObject &controlConfig);
 
 private:
+    void setError(const QString &error);
+
     AuthManager *m_auth = nullptr;
     VehicleManager *m_vehicles = nullptr;
     MqttController *m_mqtt = nullptr;
     WebRtcStreamManager *m_webrtc = nullptr;
     SystemStateMachine *m_fsm = nullptr;
+    VehicleControlService *m_vehicleControl = nullptr;
     bool m_hadSuccessfulLogin = false;
     QString m_selectedVin;  // onVinSelected 缓存，供 onSessionCreated 使用
+    QAtomicInt m_hasError{0};
+    QString m_lastError;
 };
 
 #endif // CLIENT_SERVICES_SESSIONMANAGER_H

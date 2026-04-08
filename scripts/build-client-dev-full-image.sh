@@ -6,6 +6,9 @@
 # 默认 tag：remote-driving-client-dev:full
 #
 # 依赖：宿主机 cmake、g++、git、libssl-dev；Docker 可拉取 docker.1ms.run/stateoftheartio/qt6:6.8-gcc-aqt
+#
+# 可选：加速 Qt 模块下载（aqtinstall -b），与 Dockerfile AQT_BASE 一致：
+#   export AQT_BASE=https://mirrors.tuna.tsinghua.edu.cn/qt/
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -87,6 +90,8 @@ docker exec "$CONTAINER_NAME" bash -c "
         libxcb-xinerama0 \
         libxcb-cursor0 \
         libxkbcommon-x11-0 \
+        libpulse0 \
+        libpulse-dev \
         # 其他
         git \
     && rm -rf /var/lib/apt/lists/* \
@@ -99,23 +104,31 @@ docker exec "$CONTAINER_NAME" bash -c "
 
 # 4b. 安装 qsb（Qt ShaderTools 编译器），用于将 GLSL 着色器编译为 .qsb 二进制
 #     qsb 是 GPU 视频渲染管线的必要组件；无 qsb → 无 .qsb → 无视频画面（黑屏）
-#     策略：检查 qsb 是否已存在，存在则跳过；否则通过 pip3 + aqtinstall 安装（使用清华镜像）
-echo "  检查 / 安装 qsb (Qt ShaderTools)..."
-docker exec "$CONTAINER_NAME" bash -c "
+#     策略：qsb + Qt Multimedia 齐全则跳过；否则 aqt 安装 qtshadertools + qtmultimedia（与 Dockerfile.client-dev 一致）
+echo "  检查 / 安装 qsb + Qt Multimedia..."
+docker exec -e AQT_BASE="${AQT_BASE:-}" "$CONTAINER_NAME" bash -c "
     set -e
     export DEBIAN_FRONTEND=noninteractive
 
-    # ── 步骤 1：检查 qsb 是否已存在 ───────────────────────────────────────
-    # 注意：qsb 可能已被前一次构建安装到 /opt/Qt/6.8.0/gcc_64/bin/qsb
-    if [ -x /opt/Qt/6.8.0/gcc_64/bin/qsb ]; then
-        echo '✓ qsb 已存在于镜像，跳过安装'
+    # ── 步骤 1：检查 qsb + Qt Multimedia（与 Dockerfile.client-dev / start-full-chain 一致）──
+    _QSB_OK=0
+    [ -x /opt/Qt/6.8.0/gcc_64/bin/qsb ] && _QSB_OK=1
+    _MM_OK=0
+    if [ -f /opt/Qt/6.8.0/gcc_64/lib/cmake/Qt6Multimedia/Qt6MultimediaConfig.cmake ] \\
+        && { [ -f /opt/Qt/6.8.0/gcc_64/lib/cmake/Qt6MultimediaQuick/Qt6MultimediaQuickConfig.cmake ] \\
+            || [ -f /opt/Qt/6.8.0/gcc_64/lib/libQt6MultimediaQuick.so ]; }; then
+        _MM_OK=1
+    fi
+    if [ \"\$_QSB_OK\" -eq 1 ] && [ \"\$_MM_OK\" -eq 1 ]; then
+        echo '✓ qsb 与 Qt Multimedia 已齐全，跳过 aqt 安装'
         exit 0
     fi
-    if command -v qsb &>/dev/null; then
-        echo '✓ qsb 已在 PATH 中，跳过安装'
-        exit 0
+    if [ \"\$_QSB_OK\" -eq 0 ]; then
+        echo '  qsb 未找到，将通过 aqt 安装 qtshadertools...'
     fi
-    echo '  qsb 未找到，开始安装...'
+    if [ \"\$_MM_OK\" -eq 0 ]; then
+        echo '  Qt Multimedia 未齐全，将通过 aqt 安装 qtmultimedia...'
+    fi
 
     # ── 步骤 2：确保有 root 权限（apt-get 需要） ─────────────────────────
     if ! id | grep -q 'uid=0'; then
@@ -138,28 +151,38 @@ docker exec "$CONTAINER_NAME" bash -c "
         pip3 install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple aqtinstall 2>&1 | tail -2
     fi
 
-    # ── 步骤 5：通过 aqt 安装 qsb ──────────────────────────────────────────
-    # 正确方式：aqt install-qt -m qtshadertools 安装 qtshadertools 模块
-    # 关键参数：
-    #   - 目标平台：linux desktop
-    #   - 架构名：linux_gcc_64（非 gcc_64，也非 gcc_64）
-    #   - 模块名：qtshadertools（非 qt.tools.qsb，后者不存在）
-    # 安装后 qsb 位于 /opt/Qt/6.8.0/gcc_64/bin/qsb
-    echo '  通过 aqt 安装 qtshadertools 模块（包含 qsb）...'
-    aqt install-qt \
-        -O /opt/Qt \
-        linux desktop 6.8.0 linux_gcc_64 \
-        -m qtshadertools 2>&1 | tail -5
-
-    # ── 步骤 6：验证 qsb 已安装 ─────────────────────────────────────────────
-    if [ -x /opt/Qt/6.8.0/gcc_64/bin/qsb ]; then
-        echo "✓ qsb 安装成功: /opt/Qt/6.8.0/gcc_64/bin/qsb"
-        /opt/Qt/6.8.0/gcc_64/bin/qsb --version 2>&1 | grep -v "Detected locale" | head -1
+    # ── 步骤 5：通过 aqt 安装 qtshadertools + qtmultimedia（与 Dockerfile 一致）────────
+    echo '  通过 aqt 安装 qtshadertools + qtmultimedia...'
+    if [ -n \"\${AQT_BASE:-}\" ]; then
+        echo \"  使用 Qt 下载镜像: \${AQT_BASE}\"
+        aqt install-qt -b \"\${AQT_BASE}\" -O /opt/Qt \
+            linux desktop 6.8.0 linux_gcc_64 \
+            -m qtshadertools -m qtmultimedia 2>&1 | tail -12
     else
-        echo "✗ 错误: qsb 安装失败，请检查 Qt 版本" >&2
+        aqt install-qt -O /opt/Qt \
+            linux desktop 6.8.0 linux_gcc_64 \
+            -m qtshadertools -m qtmultimedia 2>&1 | tail -12
+    fi
+
+    # ── 步骤 6：验证 qsb 与 Multimedia ─────────────────────────────────────
+    if [ -x /opt/Qt/6.8.0/gcc_64/bin/qsb ]; then
+        echo '✓ qsb: /opt/Qt/6.8.0/gcc_64/bin/qsb'
+        /opt/Qt/6.8.0/gcc_64/bin/qsb --version 2>&1 | grep -v 'Detected locale' | head -1
+    else
+        echo '✗ 错误: qsb 安装失败' >&2
         ls /opt/Qt/6.8.0/gcc_64/bin/ 2>&1 | head -10 || true
         exit 1
     fi
+    if [ ! -f /opt/Qt/6.8.0/gcc_64/lib/cmake/Qt6Multimedia/Qt6MultimediaConfig.cmake ]; then
+        echo '✗ 错误: Qt6Multimedia CMake 未安装' >&2
+        exit 1
+    fi
+    if [ ! -f /opt/Qt/6.8.0/gcc_64/lib/cmake/Qt6MultimediaQuick/Qt6MultimediaQuickConfig.cmake ] \\
+        && [ ! -f /opt/Qt/6.8.0/gcc_64/lib/libQt6MultimediaQuick.so ]; then
+        echo '✗ 错误: Qt MultimediaQuick 库/CMake 未安装' >&2
+        exit 1
+    fi
+    echo '✓ Qt Multimedia 模块已就绪（CMake + libQt6MultimediaQuick 或 Config）'
 " || {
     echo "错误: qsb 安装流程失败，GPU 视频渲染将失效（黑屏）" >&2
     echo "提示: 可手动检查: docker exec $CONTAINER_NAME bash -c 'ls /opt/Qt/6.8.0/gcc_64/bin/qsb'" >&2
@@ -211,19 +234,19 @@ if [ -d "$PROJECT_ROOT/client/src" ] && [ -f "$PROJECT_ROOT/client/CMakeLists.tx
     " 2>&1 | grep -E "(✓|⚠|error|Error|WARNING|Shader|shader|begin|编译|配置|预编译)" || true
 
     # 验证 .qsb 着色器文件已生成（缺失则 GPU 渲染失败，界面黑屏）
-    _QSB_CHECK=\$(docker exec "$CONTAINER_NAME" bash -c "ls /tmp/client-build/shaders_gen/video.vert.qsb /tmp/client-build/shaders_gen/video.frag.qsb 2>&1")
-    if echo "\$_QSB_CHECK" | grep -q "No such file"; then
+    _QSB_CHECK=$(docker exec "$CONTAINER_NAME" bash -c 'ls /tmp/client-build/shaders_gen/video.vert.qsb /tmp/client-build/shaders_gen/video.frag.qsb 2>&1')
+    if echo "$_QSB_CHECK" | grep -q 'No such file'; then
         echo "⚠ 警告: .qsb 着色器文件未生成，GPU 视频渲染将失败（黑屏）"
         echo "  提示: 确保 qsb 工具已安装（见上方 qsb 安装步骤）"
     else
-        echo "✓ .qsb 着色器文件已生成: \$_QSB_CHECK"
+        echo "✓ .qsb 着色器文件已生成: $_QSB_CHECK"
     fi
     
-    # 创建启动脚本
-    cat <<EOF | docker exec -i "$CONTAINER_NAME" bash -c 'cat > /usr/local/bin/start-client.sh <<INNER_EOF
+    # 创建启动脚本（stdin 写入容器内文件，避免嵌套 heredoc 引号错误）
+    docker exec -i "$CONTAINER_NAME" bash -c 'cat > /usr/local/bin/start-client.sh' <<'STARTCLIENT'
 #!/bin/bash
 set -e
-export DISPLAY=\${DISPLAY:-:0}
+export DISPLAY=${DISPLAY:-:0}
 export QT_QPA_PLATFORM=xcb
 export ZLM_VIDEO_URL=http://zlmediakit:80
 export MQTT_BROKER_URL=mqtt://mosquitto:1883
@@ -231,17 +254,17 @@ export MQTT_BROKER_URL=mqtt://mosquitto:1883
 cd /tmp/client-build
 if [ -x ./RemoteDrivingClient ]; then
     echo '启动预编译的客户端...'
-    ./RemoteDrivingClient "\$@"
+    ./RemoteDrivingClient "$@"
 else
     echo '未找到预编译客户端，正在重新编译...'
     mkdir -p /tmp/client-build
     cd /tmp/client-build
     cmake /workspace/client -DCMAKE_PREFIX_PATH=/opt/Qt/6.8.0/gcc_64:/opt/libdatachannel -DCMAKE_BUILD_TYPE=Debug
     make -j4
-    ./RemoteDrivingClient "\$@"
+    ./RemoteDrivingClient "$@"
 fi
-INNER_EOF'
-    
+STARTCLIENT
+
     docker exec "$CONTAINER_NAME" chmod +x /usr/local/bin/start-client.sh
     echo "✓ 已创建客户端启动脚本: /usr/local/bin/start-client.sh"
 else

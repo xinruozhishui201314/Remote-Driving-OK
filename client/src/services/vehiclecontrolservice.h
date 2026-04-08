@@ -74,6 +74,8 @@ public:
      */
     void setSessionCredentials(const QString& vin, const QString& sessionId,
                                 const QString& token);
+    /** 登出或会话结束时清除签名与 VIN/会话上下文 */
+    void clearSessionCredentials();
 
     bool initialize();
     void start();
@@ -123,7 +125,7 @@ private:
     QTimer m_controlTimer;
     std::atomic<uint32_t> m_seqCounter{0};
     std::atomic<uint32_t> m_commandsPerSec{0};
-    uint32_t m_ticksThisSecond = 0;
+    std::atomic<uint32_t> m_ticksThisSecond{0};
     int64_t m_secondStart = 0;
     std::atomic<double> m_currentRTTMs{50.0};
 

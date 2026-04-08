@@ -5,15 +5,19 @@
 #include <memory>
 #include <map>
 
+class EventBus;
+
 /**
  * 插件执行上下文（《客户端架构设计》§3.2.3）。
  * 提供服务注册/发现、配置访问和 QML 类型注册。
+ *
+ * eventBus 必须与主程序、FSM、VehicleControlService 等使用的总线实例一致（通常为 EventBus::instance()）。
  */
 class PluginContext : public QObject {
     Q_OBJECT
 
 public:
-    explicit PluginContext(QQmlEngine* engine = nullptr, QObject* parent = nullptr);
+    explicit PluginContext(QQmlEngine* engine, EventBus* eventBus, QObject* parent = nullptr);
 
     // 服务注册/发现（IOC 容器）
     template <typename T>
@@ -38,13 +42,13 @@ public:
     // 配置访问（代理到 Configuration::instance()）
     QVariant config(const QString& key, const QVariant& defaultValue = {}) const;
 
-    // 事件总线访问
-    class EventBus* eventBus() const;
+    EventBus* eventBus() const { return m_eventBus; }
 
 signals:
     void serviceRegistered(const QString& name);
 
 private:
     QQmlEngine* m_engine = nullptr;
+    EventBus* m_eventBus = nullptr;
     std::map<QString, std::shared_ptr<void>> m_services;
 };

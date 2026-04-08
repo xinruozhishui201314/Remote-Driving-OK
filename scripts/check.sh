@@ -62,6 +62,18 @@ check_lint() {
     echo -e "${GREEN}✓${NC}"
     PASSED=$((PASSED + 1))
 
+    # 1.1b 客户端 QML 控制契约（无需 Docker）
+    if [ -f "${PROJECT_ROOT}/scripts/verify-client-contract.sh" ]; then
+        echo -n "客户端 QML 控制契约..."
+        if bash "${PROJECT_ROOT}/scripts/verify-client-contract.sh" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+            PASSED=$((PASSED + 1))
+        else
+            echo -e "${RED}✗${NC} 运行 scripts/verify-client-contract.sh 查看详情"
+            FAILED=$((FAILED + 1))
+        fi
+    fi
+
     # 1.2 检查 Clang-Format (如果 .clang-format 存在)
     if [ -f "${PROJECT_ROOT}/.clang-format" ]; then
         echo -n "检查代码格式... "

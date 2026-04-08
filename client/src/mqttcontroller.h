@@ -4,6 +4,7 @@
 #include <QObject>
 #include <QString>
 #include <QJsonObject>
+#include <QVariantMap>
 #include <QTimer>
 #include <QPointer>
 
@@ -77,6 +78,12 @@ public slots:
     void sendSweepCommand(const QString &sweepType, bool active);
     void sendLightCommand(const QString &lightType, bool active);
     void sendControlCommand(const QJsonObject &command);
+
+    /**
+     * LEGACY / QML 回退：构建与历史 QML 一致的 UI 控制信封并通过 sendControlCommand 发送
+     *（走 DataChannel/MQTT 自动选择）。默认路径应使用 VehicleControlService::sendUiCommand。
+     */
+    Q_INVOKABLE void sendUiEnvelopeJson(const QString &type, const QVariantMap &payload);
     
     // 组合控制指令（常用）
     void sendDriveCommand(double steering, double throttle, double brake, int gear = 1);
@@ -106,15 +113,17 @@ private slots:
     void onDisconnected();
     void onMessageReceived(const QByteArray &topic, const QByteArray &payload);
     void onError(const QString &error);
+    void onReconnectTimer();
 
 private:
     void publishMessage(const QString &topic, const QJsonObject &payload);
     void updateConnectionStatus(bool connected);
-    
+    void scheduleReconnect();
+
     // 多通道发送控制指令
     void sendControlCommandViaDataChannel(const QJsonObject &command);
     void sendControlCommandViaMqtt(const QJsonObject &command);
-    
+
     // 自动选择通道发送控制指令
     void sendControlCommandAuto(const QJsonObject &command);
 
@@ -125,7 +134,15 @@ private:
     QString m_currentVin;  // 当前车辆 VIN
     bool m_isConnected = false;
     uint32_t m_seq = 0;  // 控制指令序列号（防重放）
-    
+
+    // 重连增强
+    QTimer *m_reconnectTimer = nullptr;
+    int m_reconnectAttempts = 0;
+    int m_maxReconnectAttempts = 10;
+    int m_baseReconnectDelayMs = 1000;
+    int m_maxReconnectDelayMs = 30000;
+    bool m_reconnectScheduled = false;
+
     // 多通道支持
     QPointer<WebRtcClient> m_webrtcClient;  // WebRTC DataChannel
     enum class ChannelType {

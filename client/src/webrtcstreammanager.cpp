@@ -245,7 +245,7 @@ void WebRtcStreamManager::forceRefreshAllRenderers()
     // 完全阻塞主事件循环，导致 window()->update() 投递的 QEvent::UpdateRequest
     // 堆积在主线程队列中无法处理，Scene Graph 停止调用 updatePaintNode。
     //
-    // Qt 6 修复：VideoRenderer::forceRefresh() 使用 QQuickWindow::scheduleRenderJob()
+    // 显示已改为 QVideoSink + VideoOutput；forceRefresh 为兼容保留（空操作）
     // 向渲染线程事件队列投递刷新任务，绕过主线程阻塞。
     // 对话框打开期间每 16ms 持续调用（dialogOpenPollingTimer），持续驱动渲染线程。
     const int64_t now = QDateTime::currentMSecsSinceEpoch();

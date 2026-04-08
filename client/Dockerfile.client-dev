@@ -1,6 +1,18 @@
 # client-dev 完备镜像：Qt6 + 镜像内安装 libdatachannel（+ FFmpeg），启动容器即可编译/运行客户端并接收视频
-# 构建：docker build -f client/Dockerfile.client-dev -t remote-driving-client-dev:full client/
-# 或：docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
+#
+# 构建（默认用 BuildKit 层缓存，避免无谓全量重编）：
+#   docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
+#
+# 国内 Qt 二进制镜像加速（可选，与 aqtinstall -b 一致，末尾保留 /qt/）：
+#   export AQT_BASE=https://mirrors.tuna.tsinghua.edu.cn/qt/
+#   docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
+#
+# 或 docker build：
+#   docker build -f client/Dockerfile.client-dev -t remote-driving-client-dev:full \
+#     --build-arg AQT_BASE=https://mirrors.tuna.tsinghua.edu.cn/qt/ client/
+#
+# 若本地已有 remote-driving-client-dev:full，只需在其上叠小改动（不重编 libdatachannel / 完整 Qt）：
+#   见 Dockerfile.client-dev.from-full + docker-compose.client-dev.from-full.yml
 #
 # 多阶段：在 Ubuntu 中编译 libdatachannel 再复制到 Qt 镜像，避免在 Qt 基础镜像中 apt 权限问题
 
@@ -39,8 +51,8 @@ FROM docker.1ms.run/stateoftheartio/qt6:6.8-gcc-aqt
 # 从阶段 1 拷贝已安装的 libdatachannel（无需在 Qt 镜像内 apt 编译工具）
 COPY --from=libdatachannel-builder /opt/libdatachannel /opt/libdatachannel
 
-# 安装 python3-pip（用于 aqtinstall）和 qsb（Qt ShaderTools 工具，用于编译 .qsb shader）
-# qsb 工具是 QSGMaterialShader 渲染管线的必要组件；无 qsb 则着色器无法编译，视频无法渲染
+# 系统依赖与 Qt 模块分两层：仅调整 aqt 参数/版本时不必重跑 apt（利用 Docker 缓存）
+# qsb：QSGMaterialShader 必需；qtmultimedia：QVideoSink / VideoOutput
 USER root
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -57,30 +69,41 @@ RUN apt-get update \
         libxcb-cursor0 \
         libxcb-xfixes0 \
         libgl1-mesa-dev \
+        libpulse0 \
+        libpulse-dev \
         python3-pip \
         curl \
         unzip \
     && rm -rf /var/lib/apt/lists/* \
-    && fc-cache -fv \
-    # 正确方式：aqt install-qt -m qtshadertools 安装 qtshadertools 模块（包含 qsb）
-    # 关键参数：
-    #   - 目标平台：linux desktop
-    #   - 架构名：linux_gcc_64（非 gcc_64）
-    #   - 模块名：qtshadertools（非 qt.tools.qsb，后者不存在）
-    # 安装后 qsb 位于 /opt/Qt/6.8.0/gcc_64/bin/qsb
-    && aqt install-qt -O /opt/Qt \
-        linux desktop 6.8.0 linux_gcc_64 \
-        -m qtshadertools 2>&1 | tail -5 \
-    && echo "✓ qsb 工具已安装到 /opt/Qt/6.8.0/gcc_64/bin/qsb" \
-    && /opt/Qt/6.8.0/gcc_64/bin/qsb --version 2>&1 | grep -v "Detected locale" | head -1 \
-    && pip3 uninstall -y aqtinstall pyzstd brotli py7zr pybcj psutil 2>/dev/null || true \
-    && apt-get purge -y python3-dev build-essential python3-pip 2>/dev/null || true \
-    && echo "✓ ShaderTools + FFmpeg + 中文字体已安装"
+    && fc-cache -fv
 
-# 编译时默认能找到 Qt + libdatachannel（FFmpeg 若安装成功则自动启用解码）
-ENV CMAKE_PREFIX_PATH=/opt/Qt/6.8.0/gcc_64:/opt/libdatachannel
-ENV LD_LIBRARY_PATH=/opt/Qt/6.8.0/gcc_64/lib:${LD_LIBRARY_PATH:-}
-ENV PATH=/opt/Qt/6.8.0/gcc_64/bin:${PATH:-}
+# AQT_BASE：Qt 官方下载镜像（可选），见文件头示例
+ARG AQT_BASE=
+ARG QT_DESKTOP_VERSION=6.8.0
+ARG QT_DESKTOP_ARCH=linux_gcc_64
+RUN set -eux; \
+    if [ -n "${AQT_BASE}" ]; then \
+        aqt install-qt -b "${AQT_BASE}" -O /opt/Qt \
+            linux desktop "${QT_DESKTOP_VERSION}" "${QT_DESKTOP_ARCH}" \
+            -m qtshadertools -m qtmultimedia; \
+    else \
+        aqt install-qt -O /opt/Qt \
+            linux desktop "${QT_DESKTOP_VERSION}" "${QT_DESKTOP_ARCH}" \
+            -m qtshadertools -m qtmultimedia; \
+    fi; \
+    test -x "/opt/Qt/${QT_DESKTOP_VERSION}/gcc_64/bin/qsb"; \
+    echo "✓ qsb + Qt Multimedia -> /opt/Qt/${QT_DESKTOP_VERSION}/gcc_64"; \
+    "/opt/Qt/${QT_DESKTOP_VERSION}/gcc_64/bin/qsb" --version 2>&1 | grep -v "Detected locale" | head -1; \
+    pip3 uninstall -y aqtinstall pyzstd brotli py7zr pybcj psutil 2>/dev/null || true; \
+    apt-get update -qq \
+    && apt-get purge -y python3-dev build-essential python3-pip 2>/dev/null || true \
+    && rm -rf /var/lib/apt/lists/* \
+    && echo "✓ ShaderTools + Multimedia 安装完成"
+
+# 编译时默认能找到 Qt + libdatachannel（与 QT_DESKTOP_VERSION 一致）
+ENV CMAKE_PREFIX_PATH=/opt/Qt/${QT_DESKTOP_VERSION}/gcc_64:/opt/libdatachannel
+ENV LD_LIBRARY_PATH=/opt/Qt/${QT_DESKTOP_VERSION}/gcc_64/lib:${LD_LIBRARY_PATH:-}
+ENV PATH=/opt/Qt/${QT_DESKTOP_VERSION}/gcc_64/bin:${PATH:-}
 
 WORKDIR /workspace
 ENV DISPLAY=:0

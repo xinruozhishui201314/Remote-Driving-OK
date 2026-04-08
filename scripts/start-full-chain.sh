@@ -21,6 +21,15 @@
 #   CARLA_MAP=Town02      仿真地图
 #   CARLA_IMAGE_TAR=...   预导出镜像 tar（默认 deploy/carla/carla-with-bridge-latest.tar）
 #
+# 环境变量（Qt / client-dev 容器内补装）：
+#   CLIENT_QT_VERSION=6.8.0       Qt 版本（与镜像 /opt/Qt 路径一致）
+#   CLIENT_QT_AQT_ARCH=linux_gcc_64  aqt install-qt 架构名（与 ensure_qsb 一致；list-qt 仍先试 gcc_64）
+#
+# 重建 client-dev 镜像（利用 Docker 层缓存 + 可选 Qt 镜像源，避免每次 --no-cache 全量）：
+#   export AQT_BASE=https://mirrors.tuna.tsinghua.edu.cn/qt/   # 可选，加速 aqt 下载
+#   docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
+#   仅当缓存异常时再：CLIENT_DEV_BUILD_NO_CACHE=1 docker compose ... build --no-cache client-dev
+#
 # 四路流 E2E（2b）：
 #   默认后台运行，不阻塞客户端窗口；同步阻塞旧行为：STREAM_E2E_SYNC=1
 #   缩短等待：STREAM_E2E_WAIT_MAX=30（传给 verify-stream-e2e.sh）
@@ -416,6 +425,19 @@ verify_chain() {
         echo -e "${RED}✗${NC}"; failed=1
     fi
 
+    # 2.4b ZLM_SECRET 验证（API 调用需要）
+    echo -n "  [2.4b] ZLM API 认证 ... "
+    if [ -n "${ZLM_SECRET:-}" ]; then
+        local zlm_secret_check=$(curl -sf "${ZLM_URL}/index/api/getServerConfig?secret=${ZLM_SECRET}" 2>/dev/null || echo "")
+        if [ -n "$zlm_secret_check" ]; then
+            echo -e "${GREEN}✓${NC} (ZLM_SECRET 验证通过)"
+        else
+            echo -e "${YELLOW}⚠${NC} (ZLM_SECRET 已配置但 API 调用失败，可能是权限问题)"
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC} (ZLM_SECRET 未设置，部分 API 可能受限)"
+    fi
+
     # 2.5 MQTT Broker 验证（使用独立验证脚本）
     echo -n "  [2.5] MQTT Broker ... "
     if bash "$SCRIPT_DIR/verify-mosquitto.sh" >/dev/null 2>&1; then
@@ -559,6 +581,732 @@ ensure_client_libgl_mesa_dev() {
     return 1
 }
 
+# ---------- 增强环境检查：X11 / WSLg / Qt 平台插件兼容性 ----------
+# 这些检查确保 Qt 应用能稳定运行在当前图形环境中
+
+# ---------- 检查 WSLg 状态（WSL 环境下运行） ----------
+check_wslg_status() {
+    echo -e "${CYAN}========== X11 环境：WSLg 状态检查 ==========${NC}"
+    
+    # 检测是否在 WSL 环境下运行
+    if [ -f /proc/version ] && grep -qi "microsoft\|wsl" /proc/version 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} 检测到 WSL 环境"
+        
+        # 检查 WSL 版本
+        if command -v wsl.exe &>/dev/null || command -v wsl &>/dev/null; then
+            local wsl_version=""
+            if command -v wsl.exe &>/dev/null; then
+                wsl_version=$(wsl.exe --version 2>/dev/null | head -1 || echo "未知")
+            else
+                wsl_version=$(wsl --version 2>/dev/null | head -1 || echo "未知")
+            fi
+            echo -e "  ${GREEN}WSL 版本:${NC} $wsl_version"
+        fi
+        
+        # 检查 WSLg 是否运行
+        if [ -d /mnt/wslg ]; then
+            echo -e "${GREEN}✓${NC} WSLg 目录存在（/mnt/wslg）"
+        elif pgrep -x "wslg" >/dev/null 2>&1 || pgrep -f "systemd" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC} WSLg 进程正在运行"
+        else
+            echo -e "${YELLOW}⚠${NC} 未检测到 WSLg，可能使用传统 X11 模式"
+        fi
+        
+        # 检查 Wayland 兼容性
+        if [ -S "/mnt/wslg/wayland-0" ]; then
+            echo -e "${GREEN}✓${NC} Wayland socket 存在（/mnt/wslg/wayland-0）"
+        else
+            echo -e "${YELLOW}⚠${NC} 未检测到 Wayland socket"
+        fi
+        
+        echo -e "${GREEN}WSLg 环境检测完成${NC}"
+        echo ""
+        return 0
+    else
+        echo -e "${GREEN}✓${NC} 非 WSL 环境，跳过 WSLg 检查"
+        echo ""
+        return 0
+    fi
+}
+
+# ---------- X11 socket 可用性验证（基础检查） ----------
+check_x11_socket() {
+    echo -e "${CYAN}========== X11 环境：Socket 可用性验证 ==========${NC}"
+    local failed=0
+    
+    # 检查标准 X11 socket
+    if [ -S /tmp/.X11-unix/X0 ]; then
+        echo -e "${GREEN}✓${NC} X11 socket :0 存在"
+        local x0_info=$(stat -c "权限: %a 所有者: %U:%G" /tmp/.X11-unix/X0 2>/dev/null || echo "未知")
+        echo -e "  $x0_info"
+    elif [ -S /tmp/.X11-unix/X1 ]; then
+        echo -e "${GREEN}✓${NC} X11 socket :1 存在"
+        local x1_info=$(stat -c "权限: %a 所有者: %U:%G" /tmp/.X11-unix/X1 2>/dev/null || echo "未知")
+        echo -e "  $x1_info"
+    else
+        echo -e "${RED}✗${NC} 未找到 X11 socket（:0 或 :1）"
+        failed=1
+    fi
+    
+    # 检查 DISPLAY 环境变量
+    if [ -n "${DISPLAY:-}" ]; then
+        echo -e "${GREEN}✓${NC} DISPLAY 环境变量: $DISPLAY"
+    else
+        echo -e "${YELLOW}⚠${NC} DISPLAY 环境变量未设置"
+    fi
+    
+    # 检查 X11 授权文件
+    if [ -n "${XAUTHORITY:-}" ] && [ -f "$XAUTHORITY" ]; then
+        echo -e "${GREEN}✓${NC} X11 授权文件存在: $XAUTHORITY"
+    elif [ -f ~/.Xauthority ]; then
+        echo -e "${GREEN}✓${NC} X11 授权文件存在于 ~/.Xauthority"
+    else
+        echo -e "${YELLOW}⚠${NC} 未找到 X11 授权文件（可能无需授权）"
+    fi
+    
+    if [ $failed -eq 1 ]; then
+        echo -e "${RED}✗ X11 socket 不可用${NC}"
+    else
+        echo -e "${GREEN}✓ X11 socket 可用性验证通过${NC}"
+    fi
+    echo ""
+    return $failed
+}
+
+# ---------- X11 连接稳定性测试（主���探测） ----------
+test_x11_connection() {
+    echo -e "${CYAN}========== X11 环境：连接稳定性测试 ==========${NC}"
+    local failed=0
+    
+    # 方法 1：使用 xdpyinfo 测试 X11 连接
+    if command -v xdpyinfo &>/dev/null; then
+        echo -n "  [测试 1] xdpyinfo 连接测试 ... "
+        if timeout 5 xdpyinfo -display "${DISPLAY:-:0}" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${YELLOW}⚠${NC} xdpyinfo 测试失败（Xdpyinfo 可能未安装）"
+        fi
+    else
+        echo -e "${YELLOW}  [测试 1] xdpyinfo 未安装，跳过${NC}"
+    fi
+    
+    # 方法 2：使用 xauth 测试 X11 连接
+    if command -v xauth &>/dev/null; then
+        echo -n "  [测试 2] xauth 读取测试 ... "
+        if timeout 5 xauth list "${DISPLAY:-:0}" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${YELLOW}⚠${NC} xauth 测试失败"
+        fi
+    else
+        echo -e "${YELLOW}  [测试 2] xauth 未安装，跳过${NC}"
+    fi
+    
+    # 方法 3：使用 xset 测试 X11 连接
+    if command -v xset &>/dev/null; then
+        echo -n "  [测试 3] xset 查询测试 ... "
+        if timeout 5 xset -q >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${YELLOW}⚠${NC} xset 测试失败"
+        fi
+    else
+        echo -e "${YELLOW}  [测试 3] xset 未安装，跳过${NC}"
+    fi
+    
+    # 方法 4：使用 xwininfo 测试 X11 连接
+    if command -v xwininfo &>/dev/null; then
+        echo -n "  [测试 4] xwininfo 测试 ... "
+        if timeout 5 xwininfo -root -stats "${DISPLAY:-:0}" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${YELLOW}⚠${NC} xwininfo 测试失败"
+        fi
+    else
+        echo -e "${YELLOW}  [测试 4] xwininfo 未安装，跳过${NC}"
+    fi
+    
+    # 方法 5：TCP socket 直接测试
+    echo -n "  [测试 5] X11 TCP 端口探测 ... "
+    local display_num="${DISPLAY#*:}"
+    display_num="${display_num%%.*}"
+    if [ -n "$display_num" ] && [ "$display_num" -ge 0 ] 2>/dev/null; then
+        local x_port=$((6000 + display_num))
+        if timeout 2 bash -c "echo >/dev/tcp/localhost/$x_port" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} X11 端口 :$display_num ($x_port) 可达"
+        else
+            echo -e "${YELLOW}⚠${NC} X11 端口 :$display_num ($x_port) 不可达（可能仅使用 Unix socket）"
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC} 无法解析 DISPLAY 端口"
+    fi
+    
+    echo -e "${GREEN}✓ X11 连接稳定性测试完成${NC}"
+    echo ""
+    return 0
+}
+
+# ---------- Qt 平台插件兼容性测试 ----------
+test_qt_platform_plugins() {
+    echo -e "${CYAN}========== X11 环境：Qt 平台插件兼容性测试 ==========${NC}"
+    local platform="${QT_QPA_PLATFORM:-xcb}"
+    echo "测试 Qt 平台插件: $platform"
+    
+    # 检查 Qt QPA 平台插件
+    local qt_plugin_path=""
+    
+    # 尝试在容器中检查 Qt 平台插件
+    if docker ps --format '{{.Names}}' | grep -q '^teleop-client-dev$' 2>/dev/null; then
+        qt_plugin_path=$(dc_main exec -T client-dev bash -c '
+            if [ -d "/opt/Qt/6.8.0/gcc_64/plugins/platforms" ]; then
+                echo "/opt/Qt/6.8.0/gcc_64/plugins/platforms"
+            elif [ -d "$QT_ROOT/plugins/platforms" ]; then
+                echo "$QT_ROOT/plugins/platforms"
+            fi
+        ' 2>/dev/null || echo "")
+    fi
+    
+    if [ -n "$qt_plugin_path" ]; then
+        echo -e "  Qt 平台插件目录: $qt_plugin_path"
+        
+        # 检查 xcb 插件
+        if [ -f "$qt_plugin_path/libqxcb.so" ] 2>/dev/null || dc_main exec -T client-dev bash -c "test -f $qt_plugin_path/libqxcb.so" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} libqxcb.so 存在（XCB 平台插件）"
+        else
+            echo -e "${YELLOW}⚠${NC} libqxcb.so 不存在"
+        fi
+        
+        # 检查 wayland 插件
+        if dc_main exec -T client-dev bash -c "test -f $qt_plugin_path/libqwayland-generic.so" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} libqwayland-generic.so 存在（Wayland 平台插件）"
+        fi
+        
+        # 检查 offscreen 插件
+        if dc_main exec -T client-dev bash -c "test -f $qt_plugin_path/libqoffscreen.so" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} libqoffscreen.so 存在（Offscreen 平台插件）"
+        fi
+    else
+        echo -e "${YELLOW}⚠${NC} 未找到 Qt 平台插件目录（容器可能未运行）"
+    fi
+    
+    # 检查 Qt 平台插件所需的库依赖
+    echo -e "${CYAN}检查 Qt 平台插件依赖：${NC}"
+    
+    local required_libs=("libxcb" "libxcb-glx" "libxkbcommon" "libx11")
+    for lib in "${required_libs[@]}"; do
+        if ldconfig -p 2>/dev/null | grep -q "$lib"; then
+            echo -e "${GREEN}✓${NC} $lib 已安装"
+        else
+            echo -e "${YELLOW}⚠${NC} $lib 未找到（可能不影响运行）"
+        fi
+    done
+    
+    # 测试不同平台插件的适用性
+    echo -e "${CYAN}平台插件适用性分析：${NC}"
+    
+    # 检测 Wayland 环境
+    if [ -n "$WAYLAND_DISPLAY" ] || [ -S "/run/user/$(id -u)/wayland-0" ]; then
+        echo -e "${GREEN}✓${NC} Wayland 环境检测到"
+        echo -e "  建议: 使用 QT_QPA_PLATFORM=wayland"
+    fi
+    
+    # 检测 WSLg 环境
+    if [ -d /mnt/wslg ]; then
+        echo -e "${GREEN}✓${NC} WSLg 环境检测到"
+        echo -e "  建议: 可尝试 QT_QPA_PLATFORM=wayland 或 xcb"
+    fi
+    
+    # 检测虚拟化环境
+    if [ -d /dev/dri ] && ls /dev/dri/* 2>/dev/null | grep -q "render"; then
+        echo -e "${GREEN}✓${NC} GPU 加速可用（/dev/dri）"
+        echo -e "  建议: 可尝试取消 LIBGL_ALWAYS_SOFTWARE=1"
+    else
+        echo -e "${YELLOW}⚠${NC} 未检测到 GPU 加速（软件渲染模式）"
+    fi
+    
+    echo -e "${GREEN}✓ Qt 平台插件兼容性测试完成${NC}"
+    echo ""
+    return 0
+}
+
+# ---------- 综合 X11 环境健康检查（启动前必须通过） ----------
+check_x11_environment() {
+    echo -e "${CYAN}======================================================================"
+    echo "                     X11 环境综合健康检查"
+    echo -e "======================================================================${NC}"
+    echo ""
+    
+    local check_failed=0
+    
+    # 1. WSLg 状态检查
+    if ! check_wslg_status; then
+        check_failed=1
+    fi
+    
+    # 2. X11 socket 可用性验证
+    if ! check_x11_socket; then
+        check_failed=1
+    fi
+    
+    # 3. X11 连接稳定性测试
+    if ! test_x11_connection; then
+        check_failed=1
+    fi
+    
+    # 4. Qt 平台插件兼容性测试
+    if ! test_qt_platform_plugins; then
+        check_failed=1
+    fi
+    
+    echo -e "${CYAN}======================================================================"
+    echo "                     X11 环境检查汇总"
+    echo -e "======================================================================${NC}"
+    
+    if [ $check_failed -eq 1 ]; then
+        echo -e "${RED}✗ X11 环境存在严重问题，客户端可能无法正常运行${NC}"
+        echo ""
+        echo -e "${YELLOW}建议：${NC}"
+        echo "  1. 检查 WSL 版本：wsl --version"
+        echo "  2. 更新 WSL：wsl --update"
+        echo "  3. 重启 WSL：wsl --shutdown"
+        echo "  4. 尝试使用不同的 Qt 平台插件（如 wayland 或 offscreen）"
+        echo "  5. 在独立终端中运行客户端"
+        echo ""
+        return 1
+    else
+        echo -e "${GREEN}✓ X11 环境检查通过，图形环境可用${NC}"
+        echo ""
+        return 0
+    fi
+}
+
+# ---------- 环境变量完整性检查 ----------
+verify_environment_config() {
+    echo -e "${CYAN}========== 环境变量完整性检查 ==========${NC}"
+    local failed=0
+    local warnings=0
+    
+    # 核心环境变量（缺少会导致功能失效）
+    echo -e "${CYAN}核心环境变量：${NC}"
+    
+    if [ -n "${BACKEND_URL:-}" ]; then
+        echo -e "${GREEN}✓${NC} BACKEND_URL=${BACKEND_URL}"
+    else
+        echo -e "${RED}✗${NC} BACKEND_URL 未设置（将使用默认值 http://127.0.0.1:8081）"
+        failed=1
+    fi
+    
+    if [ -n "${ZLM_URL:-}" ]; then
+        echo -e "${GREEN}✓${NC} ZLM_URL=${ZLM_URL}"
+    else
+        echo -e "${YELLOW}⚠${NC} ZLM_URL 未设置（将使用默认值 http://127.0.0.1:80）"
+        warnings=$((warnings + 1))
+    fi
+    
+    if [ -n "${ZLM_SECRET:-}" ]; then
+        echo -e "${GREEN}✓${NC} ZLM_SECRET 已配置（已设置）"
+    else
+        echo -e "${YELLOW}⚠${NC} ZLM_SECRET 未设置（ZLM API 可能调用失败）"
+        warnings=$((warnings + 1))
+    fi
+    
+    if [ -n "${CARLA_VIN:-}" ]; then
+        echo -e "${GREEN}✓${NC} CARLA_VIN=${CARLA_VIN}"
+    else
+        echo -e "${YELLOW}⚠${NC} CARLA_VIN 未设置（将使用默认值 carla-sim-001）"
+    fi
+    
+    if [ -n "${DISPLAY:-}" ]; then
+        echo -e "${GREEN}✓${NC} DISPLAY=${DISPLAY}"
+    else
+        echo -e "${YELLOW}⚠${NC} DISPLAY 未设置（Qt 应用可能无法显示）"
+        warnings=$((warnings + 1))
+    fi
+    
+    if [ -n "${MQTT_BROKER_URL:-}" ]; then
+        echo -e "${GREEN}✓${NC} MQTT_BROKER_URL=${MQTT_BROKER_URL}"
+    else
+        echo -e "${YELLOW}⚠${NC} MQTT_BROKER_URL 未设置（将使用默认值 mqtt://teleop-mosquitto:1883）"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}Qt 运行时环境变量：${NC}"
+    
+    local qt_vars=("QT_QPA_PLATFORM" "LIBGL_ALWAYS_SOFTWARE" "QT_XCB_GL_INTEGRATION" "QT_LOGGING_RULES")
+    for var in "${qt_vars[@]}"; do
+        local val="${!var}"
+        if [ -n "$val" ]; then
+            echo -e "${GREEN}✓${NC} $var=${val}"
+        else
+            echo -e "${YELLOW}⚠${NC} $var 未设置（将使用 Qt 默认值）"
+        fi
+    done
+    
+    echo ""
+    echo -e "${CYAN}客户端特定环境变量：${NC}"
+    
+    if [ -n "${CLIENT_LOG_FILE:-}" ]; then
+        echo -e "${GREEN}✓${NC} CLIENT_LOG_FILE=${CLIENT_LOG_FILE}"
+    else
+        echo -e "${YELLOW}⚠${NC} CLIENT_LOG_FILE 未设置（日志将写入默认位置）"
+    fi
+    
+    if [ -n "${CLIENT_RESET_LOGIN:-}" ]; then
+        echo -e "${GREEN}✓${NC} CLIENT_RESET_LOGIN=${CLIENT_RESET_LOGIN}"
+    else
+        echo -e "${YELLOW}⚠${NC} CLIENT_RESET_LOGIN 未设置（将使用默认行为）"
+    fi
+    
+    echo ""
+    if [ $failed -eq 1 ]; then
+        echo -e "${RED}✗ 核心环境变量缺失，客户端可能无法正常运行${NC}"
+        return 1
+    elif [ $warnings -gt 0 ]; then
+        echo -e "${YELLOW}⚠ 环境变量配置不完整，存在 $warnings 个警告${NC}"
+        echo -e "${YELLOW}  部分功能可能受影响，但不影响基本运行${NC}"
+        return 0
+    else
+        echo -e "${GREEN}✓ 环境变量配置完整${NC}"
+        return 0
+    fi
+}
+
+# ---------- 宿主机 glxinfo（OpenGL 渲染器探测；缺则尝试安装 mesa-utils 等）----------
+ensure_host_glxinfo() {
+    if command -v glxinfo &>/dev/null; then
+        return 0
+    fi
+    echo -e "${YELLOW}宿主机未检测到 glxinfo，尝试安装（用于 OpenGL 渲染器测试）...${NC}"
+    local installed=0
+    if command -v apt-get &>/dev/null; then
+        if [ "$(id -u)" -eq 0 ]; then
+            DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
+                DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends mesa-utils &&
+                installed=1 || true
+        elif command -v sudo &>/dev/null; then
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
+                sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends mesa-utils &&
+                installed=1 || true
+        fi
+    elif command -v dnf &>/dev/null; then
+        if [ "$(id -u)" -eq 0 ]; then
+            dnf install -y glx-utils && installed=1 || true
+        elif command -v sudo &>/dev/null; then
+            sudo dnf install -y glx-utils && installed=1 || true
+        fi
+    elif command -v yum &>/dev/null; then
+        if [ "$(id -u)" -eq 0 ]; then
+            yum install -y glx-utils && installed=1 || true
+        elif command -v sudo &>/dev/null; then
+            sudo yum install -y glx-utils && installed=1 || true
+        fi
+    elif command -v pacman &>/dev/null; then
+        if [ "$(id -u)" -eq 0 ]; then
+            pacman -Sy --noconfirm mesa-utils && installed=1 || true
+        elif command -v sudo &>/dev/null; then
+            sudo pacman -Sy --noconfirm mesa-utils && installed=1 || true
+        fi
+    fi
+    if command -v glxinfo &>/dev/null; then
+        echo -e "${GREEN}✓${NC} glxinfo 已可用"
+        return 0
+    fi
+    if [ "$installed" -eq 1 ]; then
+        echo -e "${YELLOW}已尝试安装包，但 glxinfo 仍不可用，跳过 OpenGL 渲染器测试${NC}"
+    else
+        echo -e "${YELLOW}无法自动安装（需 root/sudo 或未识别包管理器）；Debian/Ubuntu: ${CYAN}sudo apt-get install -y mesa-utils${NC}；跳过 OpenGL 渲染器测试${NC}"
+    fi
+    return 0
+}
+
+# ---------- 验证 Qt + OpenGL + Mesa 完整可用 ----------
+verify_client_rendering_stack() {
+    echo -e "${CYAN}========== 客户端渲染栈验证（Qt + OpenGL + Mesa）==========${NC}"
+    local failed=0
+    
+    # 检查容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q '^teleop-client-dev$' 2>/dev/null; then
+        echo -e "${YELLOW}⚠${NC} teleop-client-dev 容器未运行，跳过渲染栈验证"
+        return 0
+    fi
+    
+    echo -e "${CYAN}1. Qt 运行时验证：${NC}"
+    
+    # 检查 Qt 版本
+    local qt_version=$(dc_main exec -T client-dev bash -c '/opt/Qt/6.8.0/gcc_64/bin/qmake --version 2>/dev/null | head -1' 2>/dev/null || echo "")
+    if [ -n "$qt_version" ]; then
+        echo -e "${GREEN}✓${NC} Qt 版本: $qt_version"
+    else
+        echo -e "${RED}✗${NC} Qt qmake 不可用"
+        failed=1
+    fi
+    
+    # 检查 Qt 核心库（Qt 库安装在 /opt/Qt 下，需要直接检查文件）
+    local qt_lib_path="/opt/Qt/6.8.0/gcc_64/lib"
+    local qt_libs=("libQt6Core.so.6" "libQt6Gui.so.6" "libQt6Quick.so.6" "libQt6Qml.so.6")
+    echo -e "${CYAN}  检查 Qt 库目录: $qt_lib_path${NC}"
+    
+    for lib in "${qt_libs[@]}"; do
+        # 使用通配符匹配，因为 Qt 库可能有版本后缀
+        if dc_main exec -T client-dev bash -c "ls ${qt_lib_path}/${lib}* 2>/dev/null | head -1 | grep -q '.'" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} $lib*"
+        else
+            echo -e "${RED}✗${NC} $lib 缺失"
+            failed=1
+        fi
+    done
+    
+    # 检查 Qt 插件目录
+    echo -e "${CYAN}  检查 Qt 插件目录:${NC}"
+    if dc_main exec -T client-dev bash -c 'test -d /opt/Qt/6.8.0/gcc_64/plugins' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} 插件目录存在"
+        local plugin_count=$(dc_main exec -T client-dev bash -c 'ls /opt/Qt/6.8.0/gcc_64/plugins/*/ 2>/dev/null | wc -l' 2>/dev/null || echo "0")
+        echo -e "  插件数量: $plugin_count"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}2. OpenGL 验证：${NC}"
+    
+    ensure_host_glxinfo
+    
+    # 检查 OpenGL 库
+    if dc_main exec -T client-dev bash -c 'ldconfig -p 2>/dev/null | grep -q "libOpenGL"' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} libOpenGL 可用"
+    else
+        echo -e "${YELLOW}⚠${NC} libOpenGL 未找到（可能使用 Mesa 软件渲染）"
+    fi
+    
+    # 检查 libGL
+    if dc_main exec -T client-dev bash -c 'ldconfig -p 2>/dev/null | grep -q "libGL"' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} libGL 可用"
+    else
+        echo -e "${YELLOW}⚠${NC} libGL 未找到"
+    fi
+    
+    # 检查 OpenGL 上下文能力（使用 glxinfo）
+    if command -v glxinfo &>/dev/null; then
+        echo -n "  OpenGL 渲染器测试 ... "
+        local gl_renderer=$(glxinfo 2>/dev/null | grep "OpenGL renderer" | head -1 || echo "")
+        if [ -n "$gl_renderer" ]; then
+            echo -e "${GREEN}✓${NC}"
+            echo -e "    $gl_renderer"
+        else
+            echo -e "${YELLOW}⚠${NC} 无法获取 OpenGL 渲染器信息"
+        fi
+    else
+        echo -e "${YELLOW}  glxinfo 未安装，跳过 OpenGL 渲染器测试${NC}"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}3. Mesa 软件渲染验证：${NC}"
+    
+    # 检查 Mesa llvmpipe
+    if dc_main exec -T client-dev bash -c 'ldconfig -p 2>/dev/null | grep -q "llvmpipe\|softpipe"' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Mesa 软件渲染器（llvmpipe/softpipe）可用"
+    else
+        echo -e "${YELLOW}⚠${NC} 未检测到 Mesa 软件渲染器"
+    fi
+    
+    # 检查 Mesa DRI 驱动
+    if [ -d /usr/lib/x86_64-linux-gnu/dri ] 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Mesa DRI 驱动目录存在"
+        local dri_count=$(ls /usr/lib/x86_64-linux-gnu/dri/*.so 2>/dev/null | wc -l)
+        echo -e "  驱动数量: $dri_count"
+    fi
+    
+    # 检查 software renderer
+    if [ -f /usr/lib/x86_64-linux-gnu/dri/lavapipe_dri.so ] 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} lavapipe 软件渲染器可用"
+    fi
+    
+    echo ""
+    echo -e "${CYAN}4. Qt 平台插件验证：${NC}"
+    
+    # 检查 XCB 插件
+    if dc_main exec -T client-dev bash -c 'test -f /opt/Qt/6.8.0/gcc_64/plugins/platforms/libqxcb.so' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} libqxcb.so（XCB 平台插件）"
+    else
+        echo -e "${RED}✗${NC} libqxcb.so 缺失（XCB 平台插件）"
+        failed=1
+    fi
+    
+    # 检查 OpenGL 插件
+    if dc_main exec -T client-dev bash -c 'test -f /opt/Qt/6.8.0/gcc_64/plugins/platforms/libqeglfs.so' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} libqeglfs.so（EGL 平台插件）"
+    fi
+    
+    echo ""
+    if [ $failed -eq 1 ]; then
+        echo -e "${RED}✗ 渲染栈验证未通过，客户端可能无法正常渲染${NC}"
+        return 1
+    else
+        echo -e "${GREEN}✓ 渲染栈验证通过${NC}"
+        return 0
+    fi
+}
+
+# ---------- 验证客户端可执行文件存在 ----------
+verify_client_binary() {
+    echo -e "${CYAN}========== 客户端可执行文件验证 ==========${NC}"
+    
+    # 检查 /tmp/client-build 中的可执行文件
+    if dc_main exec -T client-dev bash -c 'test -x /tmp/client-build/RemoteDrivingClient' 2>/dev/null; then
+        local binary_size=$(dc_main exec -T client-dev bash -c 'stat -c %s /tmp/client-build/RemoteDrivingClient 2>/dev/null' 2>/dev/null || echo "0")
+        local build_time=$(dc_main exec -T client-dev bash -c 'stat -c %y /tmp/client-build/RemoteDrivingClient 2>/dev/null | cut -d"." -f1' 2>/dev/null || echo "未知")
+        echo -e "${GREEN}✓${NC} 可执行文件存在: /tmp/client-build/RemoteDrivingClient"
+        echo -e "  大小: $(numfmt --to=iec-i --suffix=B $binary_size 2>/dev/null || echo "${binary_size} bytes")"
+        echo -e "  编译时间: $build_time"
+        
+        # 检查依赖库完整性
+        echo -n "  依赖库检查 ... "
+        if dc_main exec -T client-dev bash -c 'ldd /tmp/client-build/RemoteDrivingClient 2>&1 | grep -q "not found"' 2>/dev/null; then
+            echo -e "${RED}✗${NC} 存在缺失的依赖库"
+            dc_main exec -T client-dev bash -c 'ldd /tmp/client-build/RemoteDrivingClient 2>&1 | grep "not found"' 2>/dev/null
+            return 1
+        else
+            echo -e "${GREEN}✓${NC} 所有依赖库完整"
+        fi
+        
+        return 0
+    else
+        echo -e "${RED}✗${NC} 可执行文件 /tmp/client-build/RemoteDrivingClient 不存在或不可执行"
+        
+        # 提示可能的原因
+        echo -e "${YELLOW}可能的原因：${NC}"
+        echo "  1. 编译失败，请检查编译日志"
+        echo "  2. 编译正在进行中"
+        echo "  3. 镜像构建问题"
+        
+        return 1
+    fi
+}
+
+# ---------- 容器健康检查（等待进程启动） ----------
+verify_client_container_health() {
+    echo -e "${CYAN}========== 客户端容器健康检查 ==========${NC}"
+    
+    # 检查容器是否运行
+    local container_name="teleop-client-dev"
+    if ! docker ps --format '{{.Names}}' | grep -q "^${container_name}$" 2>/dev/null; then
+        echo -e "${RED}✗${NC} 容器 $container_name 未运行"
+        return 1
+    fi
+    
+    echo -e "${GREEN}✓${NC} 容器 $container_name 正在运行"
+    
+    # 检查容器健康状态
+    local health_status=$(docker inspect --format='{{.State.Health.Status}}' "$container_name" 2>/dev/null || echo "none")
+    if [ "$health_status" != "none" ]; then
+        echo -e "  健康状态: $health_status"
+    fi
+    
+    # 检查容器启动时间
+    local started_at=$(docker inspect --format='{{.State.StartedAt}}' "$container_name" 2>/dev/null || echo "未知")
+    echo -e "  启动时间: $started_at"
+    
+    # 检查进程是否存活（容器内）
+    echo -n "  主进程存活检查 ... "
+    if dc_main exec -T client-dev bash -c 'pgrep -x RemoteDrivingClient >/dev/null 2>&1' 2>/dev/null; then
+        local pid=$(dc_main exec -T client-dev bash -c 'pgrep -x RemoteDrivingClient' 2>/dev/null || echo "")
+        echo -e "${GREEN}✓${NC} RemoteDrivingClient 正在运行 (PID: $pid)"
+    else
+        echo -e "${YELLOW}⚠${NC} RemoteDrivingClient 进程未启动（可能在等待用户操作）"
+    fi
+    
+    # 检查是否有错误日志
+    echo -n "  错误日志检查 ... "
+    local error_count=$(dc_main exec -T client-dev bash -c 'cat /workspace/logs/*.log 2>/dev/null | grep -c -i "error\|fatal\|crash\|segfault" || echo "0"' 2>/dev/null || echo "0")
+    if [ "$error_count" -gt 0 ]; then
+        echo -e "${YELLOW}⚠${NC} 发现 $error_count 条错误日志"
+    else
+        echo -e "${GREEN}✓${NC} 未发现错误日志"
+    fi
+    
+    # 等待进程启动（可选）
+    local wait_for_process="${1:-0}"
+    if [ "$wait_for_process" -eq 1 ]; then
+        echo -e "${CYAN}等待客户端进程启动（最多 30 秒）...${NC}"
+        local wait_count=0
+        while [ $wait_count -lt 30 ]; do
+            if dc_main exec -T client-dev bash -c 'pgrep -x RemoteDrivingClient >/dev/null 2>&1' 2>/dev/null; then
+                echo -e "${GREEN}✓${NC} 客户端进程已启动"
+                return 0
+            fi
+            sleep 1
+            wait_count=$((wait_count + 1))
+        done
+        echo -e "${YELLOW}⚠${NC} 等待超时，进程仍未启动"
+        return 0
+    fi
+    
+    echo ""
+    echo -e "${GREEN}✓ 容器健康检查完成${NC}"
+    return 0
+}
+
+# ---------- 确保 client-dev 内已安装 Qt6 Multimedia + MultimediaQuick（CMake find_package 必需）----------
+# 检测 Qt6MultimediaConfig.cmake；缺失时在容器内用 aqt 安装 qtmultimedia（与 ensure_qsb 相同 aqt 流程）
+ensure_qt_multimedia_in_container() {
+    local QT_VER="${CLIENT_QT_VERSION:-6.8.0}"
+    local AQT_ARCH="${CLIENT_QT_AQT_ARCH:-linux_gcc_64}"
+    local MM_CMAKE="/opt/Qt/${QT_VER}/gcc_64/lib/cmake/Qt6Multimedia/Qt6MultimediaConfig.cmake"
+    local MMQ_CMAKE="/opt/Qt/${QT_VER}/gcc_64/lib/cmake/Qt6MultimediaQuick/Qt6MultimediaQuickConfig.cmake"
+    # 与 client/CMakeLists.txt 一致：部分镜像有 libQt6MultimediaQuick.so 但无 Qt6MultimediaQuickConfig.cmake
+    local MMQ_LIB="/opt/Qt/${QT_VER}/gcc_64/lib/libQt6MultimediaQuick.so"
+
+    if dc_main exec -T client-dev bash -c "test -f \"$MM_CMAKE\" && { test -f \"$MMQ_CMAKE\" || test -f \"$MMQ_LIB\"; }" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Qt6 Multimedia 已安装（Qt6Multimedia + MultimediaQuick 库/CMake）"
+        return 0
+    fi
+
+    echo -e "${YELLOW}容器内未检测到 Qt6 Multimedia，将尝试用 aqt 在线安装 qtmultimedia（较慢）...${NC}"
+    echo -e "${YELLOW}  建议：重建镜像（默认层缓存；可选国内 Qt 源 AQT_BASE=... 见 docker-compose.client-dev.yml 头注释）:${NC}"
+    echo -e "${YELLOW}    docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev${NC}"
+    echo -e "${YELLOW}    仅缓存异常时再加: CLIENT_DEV_BUILD_NO_CACHE=1 ... build --no-cache client-dev${NC}"
+    if dc_main exec -T -u root client-dev bash -c "
+        set -e
+        export DEBIAN_FRONTEND=noninteractive
+        QT_VER='${QT_VER}'
+        AQT_ARCH='${AQT_ARCH}'
+
+        if ! command -v pip3 &>/dev/null; then
+            apt-get update -qq
+            apt-get install -y --no-install-recommends python3-pip 2>&1 | tail -1
+            rm -rf /var/lib/apt/lists/partial
+        fi
+        apt-get update -qq
+        apt-get install -y --no-install-recommends python3-dev build-essential 2>&1 | tail -1
+        rm -rf /var/lib/apt/lists/partial
+
+        pip3 install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple aqtinstall 2>&1 | tail -1
+
+        echo '========== aqt list-qt linux desktop --modules '\$QT_VER' gcc_64 =========='
+        if ! aqt list-qt linux desktop --modules \"\$QT_VER\" gcc_64 2>&1; then
+            echo '（gcc_64 列表失败，尝试 linux_gcc_64）'
+            aqt list-qt linux desktop --modules \"\$QT_VER\" linux_gcc_64 2>&1 || true
+        fi
+
+        echo '安装 qtmultimedia 模块（Multimedia + MultimediaQuick）...'
+        aqt install-qt -O /opt/Qt linux desktop \"\$QT_VER\" \"\$AQT_ARCH\" -m qtmultimedia 2>&1 | tail -8
+
+        pip3 uninstall -y aqtinstall pyzstd brotli py7zr pybcj psutil 2>/dev/null || true
+
+        test -f /opt/Qt/\$QT_VER/gcc_64/lib/cmake/Qt6Multimedia/Qt6MultimediaConfig.cmake
+        { test -f /opt/Qt/\$QT_VER/gcc_64/lib/cmake/Qt6MultimediaQuick/Qt6MultimediaQuickConfig.cmake || test -f /opt/Qt/\$QT_VER/gcc_64/lib/libQt6MultimediaQuick.so; }
+        echo '✓ Qt6 Multimedia 模块安装成功'
+    " 2>&1; then
+        if dc_main exec -T client-dev bash -c "test -f \"$MM_CMAKE\" && { test -f \"$MMQ_CMAKE\" || test -f \"$MMQ_LIB\"; }" 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} Qt6 Multimedia 安装成功，CMake 可找到 Multimedia / MultimediaQuick"
+            return 0
+        fi
+    fi
+    echo -e "${RED}✗${NC} Qt6 Multimedia 自动安装失败（缺少 Qt6Multimedia 或 Qt6MultimediaQuick）"
+    echo -e "${YELLOW}  建议：在 Qt Maintenance Tool 中安装 Multimedia，或重建镜像: bash scripts/build-client-dev-full-image.sh${NC}"
+    echo -e "${YELLOW}  可调参: CLIENT_QT_VERSION CLIENT_QT_AQT_ARCH（install-qt 架构，默认 linux_gcc_64）${NC}"
+    echo ""
+    return 1
+}
+
 # ---------- 确保 client-dev 内有 qsb（Qt ShaderTools，用于编译 .qsb 着色器；无 qsb → 视频渲染黑屏）----------
 # 容器内运行时安装：镜像构建时未装 qsb 时，通过 aqt 追加安装；已装则跳过
 ensure_qsb_in_container() {
@@ -627,6 +1375,40 @@ ensure_client_libxkbcommon_dev() {
     fi
     echo -e "${RED}✗${NC} libxkbcommon-dev 安装失败，Qt6Gui 将找不到 XKB::XKB 目标"
     echo -e "${YELLOW}  可尝试: 以 root 进入容器手动 apt-get install libxkbcommon-dev${NC}"
+    echo ""
+    return 1
+}
+
+# ---------- 确保 libpulse0 + libpulse-dev（Qt6Multimedia 依赖 libpulse；缺则链接阶段 pa_* undefined）----------
+ensure_client_libpulse() {
+    if dc_main exec -T client-dev bash -c '
+        for f in /lib/x86_64-linux-gnu/libpulse.so.0 /usr/lib/x86_64-linux-gnu/libpulse.so.0 \
+                 /lib/aarch64-linux-gnu/libpulse.so.0 /usr/lib/aarch64-linux-gnu/libpulse.so.0; do
+            [ -f "$f" ] && exit 0
+        done
+        ldconfig -p 2>/dev/null | grep -q libpulse.so.0 && exit 0
+        exit 1
+    ' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} libpulse 已存在（Qt6Multimedia 链接依赖）"
+        return 0
+    fi
+    echo -e "${YELLOW}容器内未检测到 libpulse（libpulse.so.0），正在安装 libpulse0 libpulse-dev...${NC}"
+    if dc_main exec -T -u root client-dev bash -c \
+        'apt-get update -qq && apt-get install -y -qq --no-install-recommends libpulse0 libpulse-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        if dc_main exec -T client-dev bash -c '
+            for f in /lib/x86_64-linux-gnu/libpulse.so.0 /usr/lib/x86_64-linux-gnu/libpulse.so.0 \
+                     /lib/aarch64-linux-gnu/libpulse.so.0 /usr/lib/aarch64-linux-gnu/libpulse.so.0; do
+                [ -f "$f" ] && exit 0
+            done
+            ldconfig -p 2>/dev/null | grep -q libpulse.so.0 && exit 0
+            exit 1
+        ' 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} libpulse0 / libpulse-dev 已安装"
+            return 0
+        fi
+    fi
+    echo -e "${RED}✗${NC} libpulse 安装失败，链接 RemoteDrivingClient 将出现 libpulse.so.0 not found / pa_* undefined reference"
+    echo -e "${YELLOW}  可尝试: docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev${NC}"
     echo ""
     return 1
 }
@@ -730,7 +1512,7 @@ start_client() {
         echo -e "${GREEN}所有节点已运行。请在本机有图形界面的终端执行以下命令启动远程驾驶客户端：${NC}"
         echo ""
         echo "  xhost +local:docker"
-        echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+        echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e LIBGL_ALWAYS_SOFTWARE=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
         echo ""
         return 0
     fi
@@ -743,7 +1525,7 @@ start_client() {
     echo ""
     echo -e "${CYAN}若无法打开客户端窗口（如报 Authorization required），请在本机有图形界面的终端执行：${NC}"
     echo "  xhost +local:docker"
-    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=$ZLM_VIDEO_URL -e MQTT_BROKER_URL=$MQTT_BROKER_URL client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e LIBGL_ALWAYS_SOFTWARE=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=$ZLM_VIDEO_URL -e MQTT_BROKER_URL=$MQTT_BROKER_URL client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
     echo ""
     echo -e "${GREEN}请按以下步骤在客户端界面操作验证：${NC}"
     echo "  1) 登录（如 123 / 123）"
@@ -772,9 +1554,14 @@ start_client() {
     echo ""
     # 使用 -it 以便 Ctrl+C/关闭窗口能正确结束容器内进程
     # 设置 Qt 平台插件和日志级别，避免黑屏问题
+    # LIBGL_ALWAYS_SOFTWARE=1 强制软件渲染（避免容器内加载 nvidia-drm 失败黑屏）。
+    # QT_XCB_GL_INTEGRATION=glx：与 xcb_egl+llvmpipe 组合相比，可规避 X 单包超长断连
+    # （libxcb XCB_CONN_CLOSED_REQ_LEN_EXCEED）；客户端 main 内亦会在未显式强制 xcb_egl 时纠偏为 glx。
     dc_main exec -it \
         -e DISPLAY="$DISPLAY" \
         -e QT_QPA_PLATFORM=xcb \
+        -e LIBGL_ALWAYS_SOFTWARE=1 \
+        -e QT_XCB_GL_INTEGRATION=glx \
         -e QT_LOGGING_RULES="qt.qpa.*=false" \
         -e ZLM_VIDEO_URL="$ZLM_VIDEO_URL" \
         -e MQTT_BROKER_URL="$MQTT_BROKER_URL" \
@@ -880,6 +1667,8 @@ if [ "$DO_VERIFY" -eq 1 ] || [ "$DO_CLIENT" -eq 1 ]; then
     ensure_client_mosquitto_pub
     ensure_client_libgl_mesa_dev
     ensure_client_libxkbcommon_dev
+    ensure_client_libpulse
+    ensure_qt_multimedia_in_container
     ensure_qsb_in_container
     
     # 强制编译客户端（如果设置了 no-build，则跳过编译，客户端启动时自动编译）
@@ -890,6 +1679,31 @@ if [ "$DO_VERIFY" -eq 1 ] || [ "$DO_CLIENT" -eq 1 ]; then
         echo -e "${YELLOW}⚠ 警告: 如果客户端编译失败，脚本将停止执行${NC}"
         echo ""
     fi
+fi
+
+# X11 环境综合健康检查（仅在需要启动客户端时执行）
+if [ "$DO_CLIENT" -eq 1 ]; then
+    check_x11_environment || {
+        echo -e "${RED}⚠ X11 环境检查未通过，但仍将尝试启动客户端${NC}"
+        echo -e "${YELLOW}提示：如果客户端启动失败或崩溃，请尝试以下方法：${NC}"
+        echo "  1. 更新 WSL：wsl --update && wsl --shutdown"
+        echo "  2. 使用 Wayland 平台：export QT_QPA_PLATFORM=wayland"
+        echo "  3. 使用 Offscreen 模式：export QT_QPA_PLATFORM=offscreen"
+        echo "  4. 在独立终端中运行客户端"
+        echo ""
+    }
+    
+    # 环境变量完整性检查
+    verify_environment_config
+    
+    # 渲染栈验证（Qt + OpenGL + Mesa）
+    verify_client_rendering_stack
+    
+    # 客户端可执行文件验证
+    verify_client_binary
+    
+    # 容器健康检查
+    verify_client_container_health
 fi
 
 STREAM_E2E_PID=""
@@ -972,6 +1786,6 @@ if [ "$DO_CLIENT" -eq 1 ]; then
 else
     echo -e "${CYAN}未启动客户端（no-client）。所有节点已运行。手动启动远程驾驶客户端请执行：${NC}"
     echo "  xhost +local:docker"
-    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=$(teleop_client_log_container_path) -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e LIBGL_ALWAYS_SOFTWARE=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=$(teleop_client_log_container_path) -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
     wait_stream_e2e_background
 fi

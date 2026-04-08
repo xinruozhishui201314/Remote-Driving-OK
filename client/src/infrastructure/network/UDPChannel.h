@@ -4,6 +4,7 @@
 #include <QTimer>
 #include <QMap>
 #include <memory>
+#include <atomic>
 
 /**
  * UDP 直连控制通道（《客户端架构设计》§3.1.1）。
@@ -49,10 +50,13 @@ private:
     ConnectionState m_state = ConnectionState::DISCONNECTED;
     NetworkQuality m_quality;
     ChannelStats m_stats;
-    uint32_t m_seqCounter = 0;
-
+    
+    // FEC 统计
+    std::atomic<uint64_t> m_fecRecovered{0};  // 通过奇偶校验恢复的包数
+    std::atomic<uint64_t> m_fecFailed{0};      // FEC 校验失败的包数
+    
     QMap<TransportChannel, std::function<void(const uint8_t*, size_t, const PacketMetadata&)>> m_receivers;
-
+    
     // RTT measurement
     int64_t m_lastPingTimestamp = 0;
     static constexpr int kHeartbeatIntervalMs = 100;
