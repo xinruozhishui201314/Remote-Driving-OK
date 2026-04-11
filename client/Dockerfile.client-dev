@@ -69,8 +69,12 @@ RUN apt-get update \
         libxcb-cursor0 \
         libxcb-xfixes0 \
         libgl1-mesa-dev \
+        mesa-utils \
         libpulse0 \
         libpulse-dev \
+        libva-dev \
+        libva-drm2 \
+        libdrm-dev \
         python3-pip \
         curl \
         unzip \

@@ -1,0 +1,28 @@
+# 可选叠加：为 client-dev 启用 NVIDIA GPU（Container Toolkit 注入用户态驱动）并挂载宿主 Xauthority。
+#
+# 强制预检（Xauthority 非空可读、DISPLAY、docker --gpus、compose config）：
+#   bash scripts/verify-client-nvidia-gl-prereqs.sh
+# TELEOP_CLIENT_NVIDIA_GL=1 时 start-full-chain.sh 会 eval `... --emit-export`，设置绝对路径
+# XAUTHORITY_HOST_PATH 并选用本文件或 docker-compose.client-nvidia-gl.deploy.yml。
+#
+# 手动 compose 前：
+#   eval "$(bash scripts/verify-client-nvidia-gl-prereqs.sh --emit-export)"
+#   docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml \
+#     -f "${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE}" up -d client-dev
+#
+# 前提：nvidia-container-toolkit；vehicle.dev 提供 /tmp/.X11-unix 与 DISPLAY；宿主对照：
+#   bash scripts/run-client-on-host.sh
+
+services:
+  client-dev:
+    gpus: all
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-graphics,utility,display,compute}
+      # 与下方 volume 一致；镜像内默认可 root 用户
+      XAUTHORITY: /root/.Xauthority
+    volumes:
+      - type: bind
+        source: ${XAUTHORITY_HOST_PATH:-${HOME}/.Xauthority}
+        target: /root/.Xauthority
+        read_only: true

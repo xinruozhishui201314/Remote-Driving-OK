@@ -2,7 +2,6 @@
  * 安全警告叠层（急停红边框 + 警告文本）。
  */
 import QtQuick 2.15
-import QtQuick.Controls 2.15
 import "../styles"
 
 Item {
@@ -69,12 +68,15 @@ Item {
         anchors.right:      parent.right
         anchors.topMargin:  Theme.topBarHeight + 8
         anchors.rightMargin: 8
-        padding: 8
+        width: latencyLabel.width + 16
+        height: latencyLabel.height + 16
         radius: 4
         color:   Qt.rgba(1, 0.3, 0, 0.8)
         visible: root.safetyModel.latencyWarning && !root.safetyModel.emergencyStop
 
         Text {
+            id: latencyLabel
+            anchors.centerIn: parent
             text:  "延迟过高: " + root.safetyModel.latencyMs.toFixed(0) + "ms"
             color: "white"
             font.pixelSize: Theme.fontSmall

@@ -13,6 +13,20 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def oas_path_to_contract_test_url(oas_path: str) -> str:
+    """将 OpenAPI 路径模板转为可喂给 Backend 正则路由的示例 URL（段内无正则特殊字符）。"""
+    return re.sub(r"\{[a-zA-Z0-9_.-]+\}", "contract_test_seg", oas_path)
+
+
+def handler_matches_oas_path(handler_pattern: str, oas_path: str) -> bool:
+    """判断 Backend 注册的 path 模式（可能含 ([^/]+)、.* 等）是否覆盖某条 OpenAPI 路径。"""
+    candidate = oas_path_to_contract_test_url(oas_path)
+    try:
+        return re.fullmatch(handler_pattern, candidate) is not None
+    except re.error:
+        return handler_pattern == oas_path
+
+
 @dataclass
 class ValidationIssue:
     """验证问题"""
@@ -73,27 +87,11 @@ class BackendImplementation:
     def _scan_handlers(self) -> Set[Tuple[str, str]]:
         """扫描Backend代码中注册的路由"""
         handlers = set()
-        
-        # 扫描 main.cpp
-        main_file = self.root_dir / 'src' / 'main.cpp'
-        if main_file.exists():
-            handlers.update(self._parse_cpp_handlers(main_file))
-        
-        # 扫描 api/vin_handler.cpp
-        vin_handler_file = self.root_dir / 'src' / 'api' / 'vin_handler.cpp'
-        if vin_handler_file.exists():
-            handlers.update(self._parse_cpp_handlers(vin_handler_file))
-        
-        # 扫描 api/session_handler.cpp
-        session_handler_file = self.root_dir / 'src' / 'api' / 'session_handler.cpp'
-        if session_handler_file.exists():
-            handlers.update(self._parse_cpp_handlers(session_handler_file))
-        
-        # 扫描 health_handler.cpp
-        health_handler_file = self.root_dir / 'src' / 'health_handler.cpp'
-        if health_handler_file.exists():
-            handlers.update(self._parse_cpp_handlers(health_handler_file))
-        
+        src_root = self.root_dir / "src"
+        if not src_root.is_dir():
+            return handlers
+        for cpp in src_root.rglob("*.cpp"):
+            handlers.update(self._parse_cpp_handlers(cpp))
         return handlers
     
     def _parse_cpp_handlers(self, file_path: Path) -> Set[Tuple[str, str]]:
@@ -103,8 +101,8 @@ class BackendImplementation:
         try:
             content = file_path.read_text(encoding='utf-8')
             
-            # 匹配 server.Get/Post/Put/Delete("path", ...)
-            pattern = r'server\.(Get|Post|Put|Delete)\s*\(\s*"([^"]+)"'
+            # 匹配 svr.Get / server.Post 等 httplib 路由注册（path 可为正则）
+            pattern = r'\.(Get|Post|Put|Delete)\s*\(\s*"([^"]+)"'
             matches = re.findall(pattern, content)
             
             for method, path in matches:
@@ -162,34 +160,53 @@ class APIValidator:
         print("[INFO] Checking if all OpenAPI paths are implemented...")
         
         for path, method in self.openapi.get_api_paths():
-            if (path, method) not in self.backend.registered_handlers:
-                # 跳过健康检查路径（可能在health_handler中）
-                if not (path in ['/health', '/ready']):
-                    self.issues.append(ValidationIssue(
-                        severity='ERROR',
-                        path=path,
-                        method=method,
-                        message=f'Path not implemented in Backend'
-                    ))
-                    print(f"  [ERROR] {method.upper()} {path} - NOT IMPLEMENTED")
-                else:
-                    print(f"  [OK] {method.upper()} {path} - Health endpoint (may be in health_handler)")
-            else:
+            if (path, method) in self.backend.registered_handlers:
                 print(f"  [OK] {method.upper()} {path}")
+                continue
+            if path in ['/health', '/ready']:
+                print(f"  [OK] {method.upper()} {path} - Health endpoint (may be in health_handler)")
+                continue
+            covered = any(
+                hm == method and handler_matches_oas_path(hp, path)
+                for hp, hm in self.backend.registered_handlers
+            )
+            if covered:
+                print(f"  [OK] {method.upper()} {path} (regex route)")
+            else:
+                self.issues.append(ValidationIssue(
+                    severity='ERROR',
+                    path=path,
+                    method=method,
+                    message='Path not implemented in Backend',
+                ))
+                print(f"  [ERROR] {method.upper()} {path} - NOT IMPLEMENTED")
     
     def _validate_backend_paths_in_spec(self):
         """检查Backend实现的路径是否在OpenAPI中定义"""
         print("[INFO] Checking if all Backend paths are documented in OpenAPI...")
         
+        oas_routes = self.openapi.get_api_paths()
+
+        def oas_covers_handler(handler_pattern: str, http_method: str) -> bool:
+            for op, om in oas_routes:
+                if om != http_method:
+                    continue
+                if handler_matches_oas_path(handler_pattern, op):
+                    return True
+            return False
+
         for path, method in self.backend.registered_handlers:
             # 跳过不需要文档的路径
             if path.startswith('/api/v'):
-                if not self.openapi.get_path_schema(path, method):
+                documented = self.openapi.get_path_schema(path, method) is not None
+                if not documented:
+                    documented = oas_covers_handler(path, method)
+                if not documented:
                     self.issues.append(ValidationIssue(
                         severity='WARNING',
                         path=path,
                         method=method,
-                        message='Path implemented but not documented in OpenAPI'
+                        message='Path implemented but not documented in OpenAPI',
                     ))
                     print(f"  [WARNING] {method.upper()} {path} - NOT DOCUMENTED")
     

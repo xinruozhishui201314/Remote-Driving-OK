@@ -1,0 +1,4 @@
+# 与 verify-contract-artifacts.sh 中 pip 安装版本一致（供 CI setup-python 使用）
+openapi-spec-validator>=0.7.1,<0.8
+jsonschema>=4.10
+PyYAML>=6

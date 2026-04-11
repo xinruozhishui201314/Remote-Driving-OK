@@ -1,0 +1,4 @@
+module DrivingFacade
+# 源文件仍在 client/qml/ 根目录，相对路径供运行期与 qmllint 解析 import "components/*"
+DrivingInterface 1.0 ../DrivingInterface.qml
+typeinfo driving-facade.qmltypes

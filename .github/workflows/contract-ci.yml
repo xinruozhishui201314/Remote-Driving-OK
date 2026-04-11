@@ -1,0 +1,74 @@
+# HTTP OpenAPI + MQTT JSON Schema 契约 CI（project_spec.md §12）
+name: Contract CI
+
+on:
+  push:
+    paths:
+      - 'backend/api/openapi.yaml'
+      - 'backend/src/**'
+      - 'mqtt/schemas/**'
+      - 'scripts/validate_contract_artifacts.py'
+      - 'scripts/validate_api_against_openapi.py'
+      - 'scripts/verify-contract-artifacts.sh'
+      - 'scripts/verify-contract-v1-cross-service.sh'
+      - 'scripts/verify-openapi-breaking-change.sh'
+      - 'scripts/requirements-contract.txt'
+      - 'project_spec.md'
+      - '.github/workflows/contract-ci.yml'
+  pull_request:
+    paths:
+      - 'backend/api/openapi.yaml'
+      - 'backend/src/**'
+      - 'mqtt/schemas/**'
+      - 'scripts/validate_contract_artifacts.py'
+      - 'scripts/validate_api_against_openapi.py'
+      - 'scripts/verify-contract-artifacts.sh'
+      - 'scripts/verify-contract-v1-cross-service.sh'
+      - 'scripts/verify-openapi-breaking-change.sh'
+      - 'scripts/requirements-contract.txt'
+      - 'project_spec.md'
+      - '.github/workflows/contract-ci.yml'
+
+jobs:
+  contract-artifacts:
+    name: OpenAPI + MQTT schema + golden
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'scripts/requirements-contract.txt'
+      - name: Install contract tooling
+        run: pip install -r scripts/requirements-contract.txt
+      - name: validate_contract_artifacts.py
+        run: python3 scripts/validate_contract_artifacts.py
+
+  cross-service-openapi:
+    name: OpenAPI vs Backend routes (V1)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML for validator
+        run: pip install PyYAML
+      - name: verify-contract-v1-cross-service.sh
+        run: ./scripts/verify-contract-v1-cross-service.sh
+
+  openapi-breaking:
+    name: OpenAPI breaking change vs base (V2)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fetch base ref
+        run: git fetch origin "${{ github.base_ref }}" --depth=50
+      - name: verify-openapi-breaking-change.sh
+        env:
+          CONTRACT_OPENAPI_BASE_REF: origin/${{ github.base_ref }}
+        run: ./scripts/verify-openapi-breaking-change.sh

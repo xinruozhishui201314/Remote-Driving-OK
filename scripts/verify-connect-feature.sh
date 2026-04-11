@@ -72,7 +72,7 @@ trap interrupt_verify INT TERM
 
 set +e
 (
-    timeout 18 $COMPOSE exec -it -e DISPLAY="$DISPLAY" -e CLIENT_RESET_LOGIN=1 -e CLIENT_AUTO_CONNECT_VIDEO=1 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 -e ZLM_VIDEO_URL=http://zlmediakit:80 -e "CLIENT_LOG_FILE=${CLIENT_LOG_IN_CONTAINER}" client-dev bash -c "cd /tmp/client-build && ./RemoteDrivingClient --reset-login"
+    timeout 18 $COMPOSE exec -it -e DISPLAY="$DISPLAY" -e CLIENT_RESET_LOGIN=1 -e CLIENT_AUTO_CONNECT_VIDEO=1 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 -e ZLM_VIDEO_URL=http://zlmediakit:80 -e CLIENT_STARTUP_TCP_TARGETS=mqtt,zlm -e "CLIENT_LOG_FILE=${CLIENT_LOG_IN_CONTAINER}" client-dev bash -c "cd /tmp/client-build && ./RemoteDrivingClient --reset-login"
     echo $? >"$rcfile"
 ) 2>&1 | tee "$VERIFY_CONNECT_LOG" &
 wait $! || true

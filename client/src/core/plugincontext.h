@@ -1,9 +1,10 @@
 #pragma once
 #include <QObject>
-#include <QVariant>
 #include <QQmlEngine>
-#include <memory>
+#include <QVariant>
+
 #include <map>
+#include <memory>
 
 class EventBus;
 
@@ -11,44 +12,44 @@ class EventBus;
  * 插件执行上下文（《客户端架构设计》§3.2.3）。
  * 提供服务注册/发现、配置访问和 QML 类型注册。
  *
- * eventBus 必须与主程序、FSM、VehicleControlService 等使用的总线实例一致（通常为 EventBus::instance()）。
+ * eventBus 必须与主程序、FSM、VehicleControlService 等使用的总线实例一致（通常为
+ * EventBus::instance()）。
  */
 class PluginContext : public QObject {
-    Q_OBJECT
+  Q_OBJECT
 
-public:
-    explicit PluginContext(QQmlEngine* engine, EventBus* eventBus, QObject* parent = nullptr);
+ public:
+  explicit PluginContext(QQmlEngine* engine, EventBus* eventBus, QObject* parent = nullptr);
 
-    // 服务注册/发现（IOC 容器）
-    template <typename T>
-    void registerService(const QString& name, std::shared_ptr<T> service) {
-        m_services[name] = std::static_pointer_cast<void>(service);
-    }
+  // 服务注册/发现（IOC 容器）
+  template <typename T>
+  void registerService(const QString& name, std::shared_ptr<T> service) {
+    m_services[name] = std::static_pointer_cast<void>(service);
+  }
 
-    template <typename T>
-    std::shared_ptr<T> getService(const QString& name) const {
-        auto it = m_services.find(name);
-        if (it == m_services.end()) return nullptr;
-        return std::static_pointer_cast<T>(it->second);
-    }
+  template <typename T>
+  std::shared_ptr<T> getService(const QString& name) const {
+    auto it = m_services.find(name);
+    if (it == m_services.end())
+      return nullptr;
+    return std::static_pointer_cast<T>(it->second);
+  }
 
-    bool hasService(const QString& name) const {
-        return m_services.count(name) > 0;
-    }
+  bool hasService(const QString& name) const { return m_services.count(name) > 0; }
 
-    // QML 类型注册
-    QQmlEngine* qmlEngine() const { return m_engine; }
+  // QML 类型注册
+  QQmlEngine* qmlEngine() const { return m_engine; }
 
-    // 配置访问（代理到 Configuration::instance()）
-    QVariant config(const QString& key, const QVariant& defaultValue = {}) const;
+  // 配置访问（代理到 Configuration::instance()）
+  QVariant config(const QString& key, const QVariant& defaultValue = {}) const;
 
-    EventBus* eventBus() const { return m_eventBus; }
+  EventBus* eventBus() const { return m_eventBus; }
 
-signals:
-    void serviceRegistered(const QString& name);
+ signals:
+  void serviceRegistered(const QString& name);
 
-private:
-    QQmlEngine* m_engine = nullptr;
-    EventBus* m_eventBus = nullptr;
-    std::map<QString, std::shared_ptr<void>> m_services;
+ private:
+  QQmlEngine* m_engine = nullptr;
+  EventBus* m_eventBus = nullptr;
+  std::map<QString, std::shared_ptr<void>> m_services;
 };

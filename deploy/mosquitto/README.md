@@ -89,16 +89,19 @@ mosquitto_passwd /mosquitto/config/passwd username
 - `vehicle/<VIN>/control` - 特定车辆控制指令
 - `vehicle/status` - 状态发布（车端→客户端）
 - `vehicle/<VIN>/status` - 特定车辆状态
+- `teleop/client_encoder_hint` - 客户端转发的视频编码提示（客户端→broker→车端/carla-bridge；与 DataChannel 同形 JSON）
 - `$SYS/#` - 系统主题（仅管理员）
 
 **ACL 文件格式**：
 ```
 user vehicle_side
 topic read vehicle/control
+topic read teleop/client_encoder_hint
 topic write vehicle/status
 
 user client_user
 topic write vehicle/control
+topic write teleop/client_encoder_hint
 topic read vehicle/status
 ```
 

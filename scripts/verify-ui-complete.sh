@@ -1,6 +1,8 @@
 #!/bin/bash
-# 完整UI界面验证脚本
+# 完整UI界面验证脚本（人工检查单 + 可选启动客户端）
 # 验证流程：登录界面 → 选择车辆界面 → 远程驾驶操作界面
+# 自动化分层与视频项见：docs/CLIENT_UI_FEATURE_COVERAGE_MATRIX.md
+# L1 一键：./scripts/verify-client-ui-and-video-coverage.sh
 
 set -e
 

@@ -1,3 +1,4 @@
+import ".."
 import QtQuick 2.15
 import RemoteDriving 1.0
 
@@ -117,9 +118,12 @@ Item {
         isRecovering = true
         recoveryAttempts++
         
-        console.log("[RenderMonitor] Attempting recovery, attempt=" + recoveryAttempts)
+        var pending = _getPendingFrames()
+        console.log("[RenderMonitor] Attempting recovery, attempt=" + recoveryAttempts
+                    + " totalPendingVideoHandlers=" + pending
+                    + " ★ >0 表示主线程视频处理堆积")
 
-        var success = AppContext.forceRefreshAllRenderers()
+        var success = AppContext.forceRefreshAllRenderers("RenderMonitor.tryRecover")
 
         if (success) {
             recoveryFailCount = 0

@@ -111,7 +111,7 @@ cd client
 **环境变量（节选）**:
 - `CMAKE_PREFIX_PATH`: Qt6 与 libdatachannel 等前缀路径
 - `BACKEND_URL`、`KEYCLOAK_URL`、`MQTT_BROKER_URL`、`ZLM_WHEP_URL`
-- 死手 / 排障：`CLIENT_DEADMAN_*`、`CLIENT_LEGACY_CONTROL_ONLY` 等（见 `client/README.md`）
+- 死手 / 排障：`CLIENT_DEADMAN_*` 等（见 `client/README.md`）；控车旁路 `CLIENT_LEGACY_CONTROL_ONLY` 已移除
 
 **输出**:
 - 可执行文件: `client/build/RemoteDrivingClient`（构建目录以实际 `-B` 为准）
@@ -413,32 +413,87 @@ BUILD_TYPE=Release ./build.sh
 
 ---
 
-## 10. 开发工作流
+## 10. 硬件解码支持（方案C：多硬件编译）
 
-### 10.1 本地开发
+### 10.1 构建多硬件支持（推荐）
+
+为了支持NVIDIA和Intel/AMD GPU，编译时同时启用VA-API和NVDEC：
+
+```bash
+# 方法1：使用一键选项（推荐）
+cd client && rm -rf build && mkdir build && cd build
+cmake -DENABLE_VAAPI_NVDEC_ALL=ON -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+
+# 方法2：分别指定
+cd client && rm -rf build && mkdir build && cd build
+cmake -DENABLE_VAAPI=ON -DENABLE_NVDEC=ON -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
+```
+
+### 10.2 运行时硬解器选择
+
+编译后，系统会根据硬件自动选择：
+1. VA-API（Intel/AMD GPU）- 优先级最高
+2. NVDEC（NVIDIA GPU）- 次优先级
+3. FFmpeg CPU 软解 - 备用方案（自动降级）
+
+```bash
+# 查看编译时启用的解码器
+grep "HW decode" CMakeCache.txt
+
+# 查看运行时选择的解码器
+./run.sh 2>&1 | grep -E "VAAPI|NVDEC|DecoderFactory"
+```
+
+### 10.3 硬解调试
+
+```bash
+# 禁用VA-API，强制使用NVDEC（NVIDIA环境）
+export CLIENT_DISABLE_VAAPI_PROBE=1
+./run.sh
+
+# 禁用硬解，使用CPU软解（诊断用）
+export CLIENT_MEDIA_HARDWARE_DECODE=0
+./run.sh
+
+# 强制要求硬解（用于问题诊断）
+export CLIENT_MEDIA_REQUIRE_HARDWARE_DECODE=1
+./run.sh 2>&1 | grep -E "HW-REQUIRED|CodecHealth"
+```
+
+---
+
+## 11. 开发工作流
+
+### 11.1 本地开发
 
 ```bash
 # 1. 修改代码
 vim client/src/main.cpp
 
-# 2. 编译
-make build-client
+# 2. 编译（多硬件支持）
+cd client && rm -rf build && mkdir build && cd build
+cmake -DENABLE_VAAPI_NVDEC_ALL=ON ..
+make -j$(nproc)
 
 # 3. 运行测试
-make run-client
+cd .. && ./run.sh
 
 # 4. 调试问题
-make debug-client
+./debug.sh
 ```
 
-### 10.2 远程部署
+### 11.2 远程部署
 
 ```bash
-# 1. 本地编译测试
-make build-client
+# 1. 本地编译测试（多硬件）
+cd client && rm -rf build && mkdir build && cd build
+cmake -DENABLE_VAAPI_NVDEC_ALL=ON -DCMAKE_BUILD_TYPE=Release ..
+make -j$(nproc)
 
 # 2. 部署到目标机器
-scp -r client/build/ user@target:/path/to/client/
+scp -r ../build/ user@target:/path/to/client/
 
 # 3. 在目标机器运行
 ssh user@target

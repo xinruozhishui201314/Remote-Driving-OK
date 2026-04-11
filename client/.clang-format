@@ -1,51 +1,28 @@
 ---
+# 以 Google 为基线（缩进 2、花括号与空格等遵循 LLVM Google 预设），并做 Qt/本仓库务实覆盖。
+# 参考：https://google.github.io/styleguide/cppguide.html
+# 与「纯 Google」差异：ColumnLimit=100（减少无谓换行）；保留 Qt 头文件分组。
 Language: Cpp
-BasedOnStyle: LLVM
+BasedOnStyle: Google
 Standard: c++20
-IndentWidth: 4
 ColumnLimit: 100
-ContinuationIndentWidth: 4
 
-# Braces
-BreakBeforeBraces: Attach
-AllowShortFunctionsOnASingleLine: Inline
-AllowShortIfStatementsOnASingleLine: Never
-AllowShortLoopsOnASingleLine: false
-
-# Includes
 SortIncludes: CaseSensitive
 IncludeBlocks: Regroup
 IncludeCategories:
-  - Regex:      "^<Q"
-    Priority:   2
+  - Regex: '^".*\.h"'
+    Priority: 1
+    SortPriority: 1
+  - Regex: "^<Q"
+    Priority: 2
     SortPriority: 2
-  - Regex:      "^<"
-    Priority:   3
-  - Regex:      "^\".*\\.h\""
-    Priority:   1
+  - Regex: "^<"
+    Priority: 3
+    SortPriority: 3
 
-# Spaces
-SpaceBeforeParens: ControlStatements
-SpaceInEmptyParentheses: false
-SpacesInAngles: Never
-SpacesInCStyleCastParentheses: false
+# 与 Google 默认一致：短 if/for 不挤在一行，避免 Qt/宏周边难读
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
 
-# Alignment
-AlignConsecutiveAssignments:
-  Enabled: false
-AlignConsecutiveDeclarations:
-  Enabled: false
-
-# Namespace
-NamespaceIndentation: None
-CompactNamespaces: false
-
-# Access modifiers
-AccessModifierOffset: -4
-
-# Comments
 ReflowComments: true
-
-# Trailing
 InsertTrailingCommas: None
-...

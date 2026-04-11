@@ -1,9 +1,11 @@
 #pragma once
+#include "../infrastructure/itransportmanager.h"
+#include "../infrastructure/network/AdaptiveBitrate.h"
+
 #include <QObject>
 #include <QTimer>
+
 #include <cstdint>
-#include "../infrastructure/network/AdaptiveBitrate.h"
-#include "../infrastructure/itransportmanager.h"
 
 class SystemStateMachine;
 
@@ -21,74 +23,89 @@ class SystemStateMachine;
  * 网络质量评分 → 降级判断 → 滞后过滤 → 级别变更 → 发出信号
  */
 class DegradationManager : public QObject {
-    Q_OBJECT
+  Q_OBJECT
 
-public:
-    enum class DegradationLevel : uint8_t {
-        FULL         = 0,
-        HIGH         = 1,
-        MEDIUM       = 2,
-        LOW          = 3,
-        MINIMAL      = 4,
-        SAFETY_STOP  = 5,
-    };
+ public:
+  enum class DegradationLevel : uint8_t {
+    FULL = 0,
+    HIGH = 1,
+    MEDIUM = 2,
+    LOW = 3,
+    MINIMAL = 4,
+    SAFETY_STOP = 5,
+  };
 
-    struct LevelPolicy {
-        DegradationLevel level;
-        QString name;
-        double   maxBitrateKbps;
-        uint32_t videoFps;
-        VideoResolution videoResolution;
-        bool enableAuxCameras;
-        bool enableAudio;
-        bool enableFEC;
-        double maxSpeedKmh;
-    };
+  struct LevelPolicy {
+    DegradationLevel level;
+    QString name;
+    double maxBitrateKbps;
+    uint32_t videoFps;
+    VideoResolution videoResolution;
+    bool enableAuxCameras;
+    bool enableAudio;
+    bool enableFEC;
+    double maxSpeedKmh;
+  };
 
-    struct DegradationConfig {
-        double level1ThresholdScore = 0.75;
-        double level2ThresholdScore = 0.60;
-        double level3ThresholdScore = 0.45;
-        double level4ThresholdScore = 0.30;
-        double level5ThresholdScore = 0.15;
-        int    hysteresisMs = 3000;
-        int    checkIntervalMs = 500;
-    };
+  struct DegradationConfig {
+    double level1ThresholdScore = 0.75;
+    double level2ThresholdScore = 0.60;
+    double level3ThresholdScore = 0.45;
+    double level4ThresholdScore = 0.30;
+    double level5ThresholdScore = 0.15;
+    int hysteresisMs = 3000;
+    int checkIntervalMs = 500;
+  };
 
-    explicit DegradationManager(SystemStateMachine* fsm, QObject* parent = nullptr);
+  explicit DegradationManager(SystemStateMachine* fsm, QObject* parent = nullptr);
 
-    void setConfig(const DegradationConfig& cfg);
-    bool initialize();
-    void start();
-    void stop();
+  void setConfig(const DegradationConfig& cfg);
+  bool initialize();
+  void start();
+  void stop();
 
-    void updateNetworkQuality(const NetworkQuality& quality);
-    DegradationLevel currentLevel() const { return m_currentLevel; }
-    LevelPolicy currentPolicy() const;
-    static LevelPolicy policyForLevel(DegradationLevel level);
+  /** 单测专用：注入单调时钟毫秒值；调用后 checkDegradation 使用注入时间而非
+   * steady_clock。生产代码勿调用。 */
+  static void setUnitTestNowMsForTesting(int64_t ms);
+  /** 单测 teardown：恢复使用 TimeUtils::nowMs()。 */
+  static void clearUnitTestClockForTesting();
 
-signals:
-    void levelChanged(DegradationLevel newLevel, DegradationLevel oldLevel);
-    void bitrateChanged(uint32_t targetKbps);
-    void maxSpeedChanged(double maxKmh);
-    void safetyStopRequired();
-    void auxiliaryCamerasEnabled(bool enabled);
+  void updateNetworkQuality(const NetworkQuality& quality);
+  DegradationLevel currentLevel() const { return m_currentLevel; }
+  LevelPolicy currentPolicy() const;
+  static LevelPolicy policyForLevel(DegradationLevel level);
 
-private slots:
-    void checkDegradation();
+ signals:
+  void levelChanged(DegradationLevel newLevel, DegradationLevel oldLevel);
+  void bitrateChanged(uint32_t targetKbps);
+  void maxSpeedChanged(double maxKmh);
+  void safetyStopRequired();
+  void auxiliaryCamerasEnabled(bool enabled);
 
-private:
-    DegradationLevel calculateTargetLevel(double score) const;
-    bool shouldUpgrade(DegradationLevel target) const;
-    bool shouldDowngrade(DegradationLevel target) const;
-    void applyLevel(DegradationLevel level);
+ private slots:
+  void checkDegradation();
 
-    DegradationConfig m_config;
-    SystemStateMachine* m_fsm = nullptr;
-    QTimer m_checkTimer;
+ private:
+  DegradationLevel calculateTargetLevel(double score) const;
+  bool shouldUpgrade(DegradationLevel target) const;
+  bool shouldDowngrade(DegradationLevel target) const;
+  void applyLevel(DegradationLevel level);
 
-    DegradationLevel m_currentLevel = DegradationLevel::FULL;
-    DegradationLevel m_pendingLevel = DegradationLevel::FULL;
-    int64_t m_pendingLevelSince = 0;
-    double m_currentScore = 1.0;
+  DegradationConfig m_config;
+  SystemStateMachine* m_fsm = nullptr;
+  QTimer m_checkTimer;
+
+  DegradationLevel m_currentLevel = DegradationLevel::FULL;
+  DegradationLevel m_pendingLevel = DegradationLevel::FULL;
+  int64_t m_pendingLevelSince = 0;
+  double m_currentScore = 1.0;
 };
+
+/**
+ * 纯映射：与 DegradationManager::calculateTargetLevel 中「评分→等级」规则一致（无 FSM fire
+ * 副作用）。 restrictToFullWhenIdle == (fsm != nullptr && !fsm->isDriveActive())。
+ */
+namespace DegradationMapping {
+DegradationManager::DegradationLevel targetLevelFromNetworkScore(
+    bool restrictToFullWhenIdle, double score, const DegradationManager::DegradationConfig& config);
+}

@@ -235,7 +235,7 @@ docker compose logs client-dev 2>&1 | grep "\[Client\]\[UI\]\[Layout\]"
 
 ### 解决方案
 - 就近部署 ZLM/MQTT：减少物理距离。
-- 调整视频参数：降低分辨率/帧率/码率（CAMERA_WIDTH/HEIGHT/FPS）。
+- 调整视频参数：降低分辨率/帧率/码率（carla-bridge：`CAMERA_WIDTH`/`CAMERA_HEIGHT`/`CAMERA_FPS`，以及 **`VIDEO_BITRATE_KBPS`（Python 脚本默认 2000；`docker-compose.carla.yml` 当前默认 512kbps/路、1280×720）**；可按需改 env 覆盖）。
 - 优先使用有线网络；避免公共 Wi-Fi。
 - 检查 Coturn 配置，选择就近的中继服务器。
 

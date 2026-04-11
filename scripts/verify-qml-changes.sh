@@ -63,11 +63,22 @@ docker exec teleop-client-dev bash -c "
 echo -e "${GREEN}✓ 编译成功${NC}"
 echo ""
 
+# 2b. qmltyperegistrar 生成物与 Git 一致（与 verify-qmltypes-match-generated / regenerate-client-qmltypes 联动）
+echo -e "${YELLOW}[2b] qmltypes 生成物与仓库一致（remote-driving-cpp + driving-facade）...${NC}"
+if ! git diff --quiet -- client/qml/remote-driving-cpp.qmltypes client/qml/DrivingFacade/driving-facade.qmltypes 2>/dev/null; then
+  echo -e "${RED}❌ qmltypes 与当前提交不一致（构建已改写工作树）${NC}"
+  echo "  请执行: ./scripts/regenerate-client-qmltypes.sh"
+  git diff --stat -- client/qml/remote-driving-cpp.qmltypes client/qml/DrivingFacade/driving-facade.qmltypes || true
+  exit 1
+fi
+echo -e "${GREEN}✓ qmltypes 无漂移${NC}"
+echo ""
+
 # 3. 运行客户端并验证
 echo -e "${YELLOW}[3] 运行客户端并验证修改...${NC}"
 LOG_FILE="/tmp/qml-verify-$(date +%s).log"
 
-timeout 12 docker exec teleop-client-dev bash -c "
+timeout 12 docker exec -e CLIENT_STARTUP_TCP_GATE=0 teleop-client-dev bash -c "
     cd /tmp/client-build
     ./RemoteDrivingClient --reset-login 2>&1
 " > "$LOG_FILE" 2>&1 || true

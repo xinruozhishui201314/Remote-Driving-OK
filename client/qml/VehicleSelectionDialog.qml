@@ -508,10 +508,10 @@ Popup {
             }
         }
         
-        function onSessionCreated(sessionId, whipUrl, whepUrl, controlConfig) {
+        function onSessionCreated(sessionVin, sessionId, whipUrl, whepUrl, controlConfig) {
             errorText.text = ""
             sessionState.creating = false
-            console.log("[Client][UI][VehicleSelection] 会话创建成功 sessionId=" + sessionId)
+            console.log("[Client][UI][VehicleSelection] 会话创建成功 sessionVin=" + sessionVin + " sessionId=" + sessionId)
             Qt.callLater(function() { vehicleSelectionDialog.close() })
         }
         

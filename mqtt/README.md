@@ -10,6 +10,7 @@
 
 - `schemas/vehicle_control.json`：控制消息 Schema（JSON Schema Draft 07）。
 - `schemas/vehicle_status.json`：状态消息 Schema（JSON Schema Draft 07）。
+- `schemas/client_encoder_hint.json`：客户端经 MQTT 转发的 `client_video_encoder_hint`（与 DataChannel 同形，车端/carla-bridge 订阅 `teleop/client_encoder_hint`）。
 - `schemas/vehicle_control.py`：Python 验证函数与包装类。
 - `schemas/vehicle_status.py`：Python 验证函数与包装类。
 - `schemas/__init__.py`：统一导出。

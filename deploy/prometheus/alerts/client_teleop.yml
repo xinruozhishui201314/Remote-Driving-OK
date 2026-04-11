@@ -1,0 +1,72 @@
+# 远程驾驶客户端 / 媒体 / 安全 — Prometheus 告警规则（示例）
+#
+# 用法：
+#   1. 在 prometheus.yml 中增加：
+#        rule_files:
+#          - "alerts/client_teleop.yml"
+#   2. 为客户端进程配置 scrape（默认 HttpEndpointServer 端口见 client 启动参数，常见 9080）：
+#        - job_name: teleop-client
+#          static_configs: [{ targets: ["host.docker.internal:9080"] }]
+#          metrics_path: /metrics
+#
+# 指标名使用下划线形式，与 NetworkQualityAggregator / main.cpp 写入 MetricsCollector 的名称一致
+# （见 client/docs/OBSERVABILITY_METRICS.md）。
+
+groups:
+  - name: teleop_client_media
+    rules:
+      - alert: TeleopClientPresentationDegradedBurst
+        expr: |
+          rate(client_media_presentation_degraded_total[5m]) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "客户端呈现路径频繁降级（DMA-BUF/SG→CPU 等）"
+          description: |
+            5 分钟内 client_media_presentation_degraded_total 速率持续 >0.05/s。
+            请结合日志 [Client][NetworkQuality]、[Client][WebRTC][DmaBufSG] 与槽位计数
+            client_media_presentation_degraded_slot_*_total 定位哪一路相机。
+
+      - alert: TeleopClientMainCameraPresentationDegraded
+        expr: |
+          rate(client_media_presentation_degraded_slot_cam_front_total[15m]) > 0.02
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "主路 cam_front 呈现降级过于频繁"
+          description: |
+            主路视频呈现回退速率偏高，可能影响远驾判断；检查 GPU/驱动、Qt RHI、VAAPI DMA-BUF。
+
+      - alert: TeleopClientVideoDisconnectedWhileSessions
+        expr: |
+          rate(client_webrtc_stream_disconnected_total[10m]) > 0.01
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "WebRTC 视频断连事件偏多"
+          description: "结合 ZLM/ICE/网络与 client 日志 [Client][WebRTC] 排查。"
+
+  - name: teleop_client_safety_ops
+    rules:
+      - alert: TeleopClientSafetyWarningsElevated
+        expr: |
+          rate(client_safety_warning_total[15m]) > 0.03
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "客户端安全告警计数上升"
+          description: "检查 SafetyMonitorService / 延迟 / 心跳 / Deadman 配置与车端 status 下行。"
+
+      - alert: TeleopClientDegradationLevelChurn
+        expr: |
+          rate(client_degradation_level_change_total[10m]) > 0.02
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "网络质量评分驱动的降级级别抖动频繁"
+          description: "调参 DegradationManager 阈值/滞回，或排查链路 RTT/MQTT/视频连通抖动。"

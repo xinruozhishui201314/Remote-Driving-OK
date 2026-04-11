@@ -43,7 +43,7 @@ stateDiagram-v2
 
 ## 4. 回滚
 
-- 环境变量 `CLIENT_LEGACY_CONTROL_ONLY=1` 时，QML 可回退为直接调用 `mqttController`（仅排障；默认关闭）。
+- ~~`CLIENT_LEGACY_CONTROL_ONLY`~~ 已移除；排障时仅允许在 C++ 层分析 `VehicleControlService` / `MqttController::sendControlCommand` 日志，QML 不得旁路。
 
 ## 5. 观测
 

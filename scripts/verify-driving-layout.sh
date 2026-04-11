@@ -9,6 +9,23 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 QML_FILE="$PROJECT_ROOT/client/qml/DrivingInterface.qml"
+DRIVING_QML_DIR="$PROJECT_ROOT/client/qml/components/driving"
+# 布局已拆到 components/driving；静态检查在下列文件中联合 grep
+DRIVING_SCAN=(
+  "$QML_FILE"
+  "$DRIVING_QML_DIR/DrivingLayoutShell.qml"
+  "$DRIVING_QML_DIR/DrivingTopChrome.qml"
+  "$DRIVING_QML_DIR/DrivingLeftRail.qml"
+  "$DRIVING_QML_DIR/DrivingCenterColumn.qml"
+  "$DRIVING_QML_DIR/DrivingRightRail.qml"
+  "$DRIVING_QML_DIR/internal/DrivingLayoutDiagnostics.qml"
+)
+grep_driving_qml() {
+  grep -q "$1" "${DRIVING_SCAN[@]}"
+}
+grep_driving_qml_E() {
+  grep -qE "$1" "${DRIVING_SCAN[@]}"
+}
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -92,76 +109,76 @@ if [ ! -f "$QML_FILE" ]; then
     exit 1
 fi
 
-# 2. 组件与 ID
+# 2. 组件与 ID（可分布在 DrivingInterface 与 components/driving/*）
 check '[组件] 右列' \
-    "grep -q 'id: rightColMeasurer' '$QML_FILE'" \
+    "grep_driving_qml 'id: rightColMeasurer'" \
     "右列 rightColMeasurer 存在" \
     "右列 rightColMeasurer 缺失"
 
 check '[组件] 右视图' \
-    "grep -q 'id: rightViewVideo' '$QML_FILE'" \
+    "grep_driving_qml 'id: rightViewVideo'" \
     "右视图 rightViewVideo 存在" \
     "右视图 rightViewVideo 缺失"
 
 check '[组件] 高精地图' \
-    "grep -q 'id: hdMapRect' '$QML_FILE'" \
+    "grep_driving_qml 'id: hdMapRect'" \
     "高精地图 hdMapRect 存在" \
     "高精地图 hdMapRect 缺失"
 
 check '[组件] 右视图标题' \
-    "grep -q 'title: \"右视图\"' '$QML_FILE'" \
+    "grep_driving_qml 'title: \"右视图\"'" \
     "右视图标题正确" \
     "右视图标题缺失"
 
 check '[组件] 高精地图标题' \
-    "grep -q 'text: \"高精地图\"' '$QML_FILE'" \
+    "grep_driving_qml 'text: \"高精地图\"'" \
     "高精地图标题正确" \
     "高精地图标题缺失"
 
 # 3. 布局约束
 check '[约束] 右列最小宽' \
-    "grep -qE 'Layout.minimumWidth: (220|260|sideColMinWidth)' '$QML_FILE'" \
+    "grep_driving_qml_E 'Layout.minimumWidth: (220|260|.*sideColMinWidth)'" \
     "右列有 minimumWidth" \
     "右列无 minimumWidth"
 
 check '[约束] 右视图最小高' \
-    "grep -qE 'Layout.minimumHeight: (100|sideColTopMinHeight)|Math.max\(100,' '$QML_FILE'" \
+    "grep_driving_qml_E 'Layout.minimumHeight: (100|.*sideColTopMinHeight)|Math.max\\(100,'" \
     "右视图有最小高度保护" \
     "右视图无最小高度"
 
 check '[约束] 高精地图最小高' \
-    "grep -qE 'Layout.minimumHeight: (120|sideColBottomMinHeight)|Math.max\(120,' '$QML_FILE'" \
+    "grep_driving_qml_E 'Layout.minimumHeight: (120|.*sideColBottomMinHeight)|Math.max\\(120,'" \
     "高精地图有最小高度 120" \
     "高精地图无最小高度 120"
 
 check '[约束] 右列比例' \
-    "grep -qE 'rightColWidthRatio|rightColAllocW' '$QML_FILE'" \
+    "grep_driving_qml_E 'rightColWidthRatio|rightColAllocW'" \
     "右列使用 rightColWidthRatio/rightColAllocW" \
     "右列未使用 rightColWidthRatio"
 
 check '[布局] 先分配策略' \
-    "grep -qE 'leftColAllocW|rightColAllocW|centerColAllocW' '$QML_FILE'" \
+    "grep_driving_qml_E 'leftColAllocW|rightColAllocW|centerColAllocW'" \
     "三列使用 AllocW 先分配宽度" \
     "未使用先分配策略"
 
 check '[约束] 右列 Layout.minimumHeight' \
-    "grep -qE 'Layout\.minimumHeight: (224|260|sideColMinHeight)|Layout\.minimumHeight: Math\.max' '$QML_FILE'" \
+    "grep_driving_qml_E 'Layout\\.minimumHeight: (224|260|.*sideColMinHeight)|Layout\\.minimumHeight: Math\\.max'" \
     "右列有 Layout.minimumHeight 避免 height=0" \
     "右列无 Layout.minimumHeight"
 
 check '[布局] 右列内部分配' \
-    "grep -q 'id: rightViewVideo' '$QML_FILE' && grep -q 'id: hdMapRect' '$QML_FILE'" \
+    "grep_driving_qml 'id: rightViewVideo' && grep_driving_qml 'id: hdMapRect'" \
     "右列包含右视图 VideoPanel 与高精地图 Rectangle" \
     "右列未分配右视图/高精地图"
 
 # 4. 中列不挤压右列（中列用 preferredWidth，不用 fillWidth）
 check '[约束] mainRow 垂直上限' \
-    "grep -q 'Layout.maximumHeight: mainRowAvailH' '$QML_FILE'" \
+    "grep_driving_qml_E 'Layout.maximumHeight: (facade\\.)?mainRowAvailH'" \
     "mainRow 有 Layout.maximumHeight 约束 overflow" \
     "mainRow 无垂直上限约束"
 
 check '[约束] 中列布局' \
-    "grep -q 'id: centerColLayout' '$QML_FILE' && grep -A8 '中列：主视图' '$QML_FILE' | grep -qE 'Layout\.(preferredWidth|fillWidth)'" \
+    "grep_driving_qml 'id: centerColLayout' && grep_driving_qml '组件1（同级）：主视图' && grep_driving_qml_E 'Layout\\.(preferredWidth|fillWidth)'" \
     "中列有 preferredWidth 或 fillWidth 参与布局" \
     "中列布局配置异常"
 
@@ -172,12 +189,12 @@ check '[日志] logLayout' \
     "logLayout 函数缺失"
 
 check '[日志] 布局前缀' \
-    "grep -q '\[Client\]\[UI\]\[Layout\]' '$QML_FILE'" \
+    "grep_driving_qml_E '\\[Client\\]\\[UI\\]\\[Layout\\]'" \
     "布局日志前缀 [Client][UI][Layout]" \
     "布局日志前缀缺失"
 
 check '[日志] 右列/右视图/高精地图' \
-    "grep -qE 'rightCol=|右列=' '$QML_FILE' && grep -q '右视图=' '$QML_FILE' && grep -q '高精地图=' '$QML_FILE'" \
+    "grep_driving_qml_E 'rightCol=|右列=' && grep_driving_qml '右视图=' && grep_driving_qml '高精地图='" \
     "定时器输出右列/右视图/高精地图尺寸" \
     "定时器未输出关键组件尺寸"
 

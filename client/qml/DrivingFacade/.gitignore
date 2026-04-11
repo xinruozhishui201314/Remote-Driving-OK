@@ -1,0 +1,4 @@
+# qt_add_qml_module 若误将 OUTPUT_DIRECTORY 设在本目录时会产生（应使用 CMake 构建目录 + POST_BUILD 同步 typeinfo）
+lib*.a
+*_qml_module_dir_map.qrc
+qml/

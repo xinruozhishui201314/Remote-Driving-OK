@@ -1,10 +1,12 @@
 #pragma once
-#include <QObject>
+#include "eventbus.h"
+
 #include <QMutex>
+#include <QObject>
+
 #include <functional>
 #include <map>
 #include <utility>
-#include "eventbus.h"
 
 class EventBus;
 
@@ -24,100 +26,105 @@ class EventBus;
  * 进入/退出动作（entry/exit action）在状态切换时自动执行。
  */
 class SystemStateMachine : public QObject {
-    Q_OBJECT
-    Q_PROPERTY(QString currentState READ currentState NOTIFY stateChanged)
+  Q_OBJECT
+  Q_PROPERTY(QString currentState READ currentState NOTIFY stateChanged)
 
-public:
-    enum class SystemState {
-        IDLE,
-        CONNECTING,
-        AUTHENTICATING,
-        READY,
-        PRE_FLIGHT,
-        DRIVING,
-        DEGRADED,
-        EMERGENCY,
-        STOPPING,
-        ERROR,
-    };
-    Q_ENUM(SystemState)
+ public:
+  enum class SystemState {
+    IDLE,
+    CONNECTING,
+    AUTHENTICATING,
+    READY,
+    PRE_FLIGHT,
+    DRIVING,
+    DEGRADED,
+    EMERGENCY,
+    STOPPING,
+    ERROR,
+  };
+  Q_ENUM(SystemState)
 
-    enum class Trigger {
-        CONNECT,
-        CONNECTED,
-        AUTH_SUCCESS,
-        AUTH_FAILURE,
-        LOGOUT,
-        START_SESSION,
-        PREFLIGHT_OK,
-        PREFLIGHT_FAIL,
-        EMERGENCY_STOP,
-        NETWORK_DEGRADE,
-        NETWORK_RECOVER,
-        STOP_SESSION,
-        CONNECTION_LOST,
-        TIMEOUT,
-        RESET,
-    };
-    Q_ENUM(Trigger)
+  enum class Trigger {
+    CONNECT,
+    CONNECTED,
+    AUTH_SUCCESS,
+    AUTH_FAILURE,
+    LOGOUT,
+    START_SESSION,
+    PREFLIGHT_OK,
+    PREFLIGHT_FAIL,
+    EMERGENCY_STOP,
+    NETWORK_DEGRADE,
+    NETWORK_RECOVER,
+    STOP_SESSION,
+    CONNECTION_LOST,
+    TIMEOUT,
+    RESET,
+  };
+  Q_ENUM(Trigger)
 
-    explicit SystemStateMachine(EventBus* eventBus, QObject* parent = nullptr);
+  explicit SystemStateMachine(EventBus* eventBus, QObject* parent = nullptr);
 
-    Q_INVOKABLE bool fire(Trigger trigger);
-    Q_INVOKABLE bool fireByName(const QString& triggerName);
+  Q_INVOKABLE virtual bool fire(Trigger trigger);
+  Q_INVOKABLE bool fireByName(const QString& triggerName);
 
-    SystemState stateEnum() const;
-    QString currentState() const;
+  SystemState stateEnum() const;
+  QString currentState() const;
 
-    // 状态检查便利方法
-    bool isIdle() const { return stateEnum() == SystemState::IDLE; }
-    bool isDriving() const { return stateEnum() == SystemState::DRIVING; }
-    bool isDriveActive() const {
-        auto s = stateEnum();
-        return s == SystemState::DRIVING || s == SystemState::DEGRADED;
-    }
-    bool isEmergency() const { return stateEnum() == SystemState::EMERGENCY; }
+  // 状态检查便利方法
+  bool isIdle() const { return stateEnum() == SystemState::IDLE; }
+  bool isDriving() const { return stateEnum() == SystemState::DRIVING; }
+  bool isDriveActive() const {
+    auto s = stateEnum();
+    return s == SystemState::DRIVING || s == SystemState::DEGRADED;
+  }
+  bool isEmergency() const { return stateEnum() == SystemState::EMERGENCY; }
 
-signals:
-    void stateChanged(const QString& newState, const QString& oldState);
-    void emergencyActivated(const QString& reason);
-    void stateEntryAction(SystemState state);
+  /**
+   * 车端遥测/心跳是否参与 SafetyMonitor 的严格看门狗（心跳丢失→急停、死手等）。
+   * READY/IDLE 等「未进入远驾会话」状态为 false：由 MQTT 连通性刷新心跳，避免仅看视频时误报。
+   */
+  bool vehicleTelemetryHeartbeatRequired() const;
 
-private:
-    struct Transition {
-        SystemState target = SystemState::IDLE;
-        std::function<bool()> guard;
-        std::function<void()> action;
-    };
+ signals:
+  void stateChanged(const QString& newState, const QString& oldState);
+  void emergencyActivated(const QString& reason);
+  void stateEntryAction(SystemState state);
 
-    void addTransition(SystemState from, Trigger trig, SystemState to,
-                       std::function<bool()> guard = {},
-                       std::function<void()> action = {});
+ private:
+  struct Transition {
+    SystemState target = SystemState::IDLE;
+    std::function<bool()> guard;
+    std::function<void()> action;
+  };
 
-    // ★★★ 新增：状态进入/退出/转换动作注册接口 ★★★
-    // 状态进入动作：每次进入该状态时执行
-    void registerEntryAction(SystemState state, std::function<void()> action);
-    // 状态退出动作：每次离开该状态时执行
-    void registerExitAction(SystemState state, std::function<void()> action);
-    // 转换动作：特定触发器触发时执行（在 enter/exit 动作之后）
-    void registerTransitionAction(Trigger trigger, std::function<void()> action);
+  void addTransition(SystemState from, Trigger trig, SystemState to,
+                     std::function<bool()> guard = {}, std::function<void()> action = {});
 
-    void setupTransitions();
-    void onEnterState(SystemState state);
-    void onExitState(SystemState state);
+  // ★★★ 新增：状态进入/退出/转换动作注册接口 ★★★
+  // 状态进入动作：每次进入该状态时执行
+  void registerEntryAction(SystemState state, std::function<void()> action);
+  // 状态退出动作：每次离开该状态时执行
+  void registerExitAction(SystemState state, std::function<void()> action);
+  // 转换动作：特定触发器触发时执行（在 enter/exit 动作之后）
+  void registerTransitionAction(Trigger trigger, std::function<void()> action);
 
-    static QString stateToString(SystemState s);
-    static SystemState stringToState(const QString& s);
-    static QString triggerToString(Trigger t);
-    static Trigger stringToTrigger(const QString& name);
+  void setupTransitions();
+  void onEnterState(SystemState state);
+  void onExitState(SystemState state);
 
-    void publishEmergencyEvent(const QString& reason);
+  static QString stateToString(SystemState s);
+  static SystemState stringToState(const QString& s);
+  static QString triggerToString(Trigger t);
+  static Trigger stringToTrigger(const QString& name);
 
-    EventBus* m_eventBus = nullptr;
-    std::map<std::pair<SystemState, Trigger>, Transition> m_transitions;
-    std::map<SystemState, std::function<void()>> m_entryActions;
-    std::map<SystemState, std::function<void()>> m_exitActions;
-    std::map<Trigger, std::function<void()>> m_transitionActions;  // ★★★ 修复：转换动作映射 ★★★
-    SystemState m_current = SystemState::IDLE;
-    mutable QMutex m_mutex;
+  void publishEmergencyEvent(const QString& reason);
+
+  EventBus* m_eventBus = nullptr;
+  std::map<std::pair<SystemState, Trigger>, Transition> m_transitions;
+  std::map<SystemState, std::function<void()>> m_entryActions;
+  std::map<SystemState, std::function<void()>> m_exitActions;
+  std::map<Trigger, std::function<void()>> m_transitionActions;  // ★★★ 修复：转换动作映射 ★★★
+  SystemState m_current = SystemState::IDLE;
+  mutable QMutex m_mutex;
 };

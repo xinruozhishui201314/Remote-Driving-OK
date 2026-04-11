@@ -1,0 +1,17 @@
+{
+  "$comment": "V1 golden：每条实例须通过对应 schema 校验；新增消息类型时同步追加。",
+  "examples": [
+    {
+      "schema": "vehicle_control.json",
+      "instance": "vehicle_control.remote_control.json"
+    },
+    {
+      "schema": "vehicle_control.json",
+      "instance": "vehicle_control.emergency_stop.json"
+    },
+    {
+      "schema": "vehicle_status.json",
+      "instance": "vehicle_status.min.json"
+    }
+  ]
+}

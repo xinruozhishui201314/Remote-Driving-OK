@@ -18,39 +18,38 @@
 #ifdef ENABLE_NVDEC
 
 class NvdecDecoder : public IHardwareDecoder {
-public:
-    NvdecDecoder();
-    ~NvdecDecoder() override;
+ public:
+  NvdecDecoder();
+  ~NvdecDecoder() override;
 
-    bool initialize(const DecoderConfig& config) override;
-    void shutdown() override;
-    DecodeResult submitPacket(const uint8_t* data, size_t size,
-                               int64_t pts, int64_t dts) override;
-    DecodeResult receiveFrame(VideoFrame& frame) override;
-    void flush() override;
-    DecoderCapabilities queryCapabilities() const override;
-    bool isHardwareAccelerated() const override { return true; }
+  bool initialize(const DecoderConfig& config) override;
+  void shutdown() override;
+  DecodeResult submitPacket(const uint8_t* data, size_t size, int64_t pts, int64_t dts) override;
+  DecodeResult receiveFrame(VideoFrame& frame) override;
+  void flush() override;
+  DecoderCapabilities queryCapabilities() const override;
+  bool isHardwareAccelerated() const override { return true; }
 
-private:
-    struct Impl;
-    std::unique_ptr<Impl> m_impl;
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
 };
 
 #else
 
 class NvdecDecoder : public IHardwareDecoder {
-public:
-    bool initialize(const DecoderConfig&) override { return false; }
-    void shutdown() override {}
-    DecodeResult submitPacket(const uint8_t*, size_t, int64_t, int64_t) override {
-        return DecodeResult::Error;
-    }
-    DecodeResult receiveFrame(VideoFrame&) override { return DecodeResult::Error; }
-    void flush() override {}
-    DecoderCapabilities queryCapabilities() const override {
-        return {false, false, false, "NvdecDecoder(unavailable)"};
-    }
-    bool isHardwareAccelerated() const override { return false; }
+ public:
+  bool initialize(const DecoderConfig&) override { return false; }
+  void shutdown() override {}
+  DecodeResult submitPacket(const uint8_t*, size_t, int64_t, int64_t) override {
+    return DecodeResult::Error;
+  }
+  DecodeResult receiveFrame(VideoFrame&) override { return DecodeResult::Error; }
+  void flush() override {}
+  DecoderCapabilities queryCapabilities() const override {
+    return {false, false, false, "NvdecDecoder(unavailable)"};
+  }
+  bool isHardwareAccelerated() const override { return false; }
 };
 
-#endif // ENABLE_NVDEC
+#endif  // ENABLE_NVDEC

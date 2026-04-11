@@ -1,0 +1,6 @@
+{
+  "schemaVersion": "1.1.0",
+  "type": "emergency_stop",
+  "vin": "TESTVIN0000000001",
+  "sessionId": "sess-contract-test"
+}

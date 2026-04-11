@@ -9,6 +9,7 @@ import QtQuick 2.15
  * - 统一入口：通过 AppContext.xxx 访问所有核心对象
  * - 就绪状态检查：isReady 属性指示核心服务是否就绪（纯绑定，无写副作用）
  * - 安全方法调用：safeCall() 防止空指针调用
+ * - 远驾 UI 控制指令唯一入口：sendUiCommand(type, payload) → VehicleControlService（禁止 QML 直调 mqttController 发控）
  *
  * 使用方式：
  *   import RemoteDriving 1.0
@@ -31,6 +32,9 @@ QtObject {
     readonly property var safetyMonitor: rd_safetyMonitor !== undefined ? rd_safetyMonitor : null
     readonly property var systemStateMachine: rd_systemStateMachine !== undefined ? rd_systemStateMachine : null
     readonly property var nodeHealthChecker: rd_nodeHealthChecker !== undefined ? rd_nodeHealthChecker : null
+    /** 订阅 EventBus 解码/呈现完整性事件并向 QML 发横幅（见 main.qml videoIntegrityBanner） */
+    readonly property var videoIntegrityBannerBridge: rd_videoIntegrityBannerBridge !== undefined
+                                                      ? rd_videoIntegrityBannerBridge : null
 
     // ─────────────────────────────────────────────────────────────────
     // 就绪状态（禁止在绑定求值中写其它属性，否则触发 Binding loop）
@@ -38,6 +42,23 @@ QtObject {
 
     readonly property bool isReady: authManager !== null && vehicleManager !== null
                                     && webrtcStreamManager !== null && mqttController !== null
+
+    /** C++ 启动时 GL 探测：非软件光栅且未强制 LIBGL_ALWAYS_SOFTWARE 时为 true（见 rd_hardwarePresentationOk） */
+    readonly property bool hardwarePresentationOk: (typeof rd_hardwarePresentationOk !== "undefined")
+                                                   ? (rd_hardwarePresentationOk === true) : true
+
+    /**
+     * 是否使用系统窗口装饰（标题栏）。
+     * - 显式：CLIENT_USE_WINDOW_FRAME=1 / CLIENT_DISABLE_FRAMELESS=1
+     * - 自动：xcb + 检测到容器（/.dockerenv、cgroup、CLIENT_IN_CONTAINER=1）时默认启用，缓解 Docker+X11 无框窗客户区透出宿桌面
+     * - 关闭自动：CLIENT_AUTO_WINDOW_FRAME_FOR_CONTAINER=0；强制无框：CLIENT_FORCE_FRAMELESS=1
+     */
+    readonly property bool useWindowFrame: (typeof rd_useWindowFrame !== "undefined")
+                                           && (rd_useWindowFrame === true)
+
+    /** C++ 窗口策略决策原因（与 [Client][WindowPolicy][Decision] reason 一致，便于 grep） */
+    readonly property string windowFramePolicyReason: (typeof rd_windowFramePolicyReason !== "undefined")
+                                                      ? String(rd_windowFramePolicyReason) : ""
 
     // ─────────────────────────────────────────────────────────────────
     // 便捷状态属性
@@ -97,6 +118,20 @@ QtObject {
     }
 
     // ─────────────────────────────────────────────────────────────────
+    // 远驾 UI 控制 — 单一门面（与 C++ VehicleControlService::sendUiCommand 对齐）
+    // ─────────────────────────────────────────────────────────────────
+
+    function sendUiCommand(type, payload) {
+        var vc = vehicleControl
+        if (vc !== null && typeof vc.sendUiCommand === "function") {
+            vc.sendUiCommand(type, payload || ({}))
+            return true
+        }
+        console.warn(logPrefix, "[Control] sendUiCommand dropped: vehicleControl unavailable type=", type)
+        return false
+    }
+
+    // ─────────────────────────────────────────────────────────────────
     // 安全方法调用
     // ─────────────────────────────────────────────────────────────────
 
@@ -127,11 +162,12 @@ QtObject {
     // 统一刷新管理器
     // ─────────────────────────────────────────────────────────────────
 
-    function forceRefreshAllRenderers() {
+    function forceRefreshAllRenderers(reason) {
         var wsm = webrtcStreamManager
         if (wsm && typeof wsm.forceRefreshAllRenderers === "function") {
-            console.log("[AppContext] forceRefreshAllRenderers")
-            wsm.forceRefreshAllRenderers()
+            var r = (reason !== undefined && reason !== null && String(reason).length > 0) ? String(reason) : "unspecified"
+            console.log("[AppContext] forceRefreshAllRenderers reason=" + r)
+            wsm.forceRefreshAllRenderers(r)
             return true
         }
         return false
@@ -143,6 +179,21 @@ QtObject {
             return wsm.getTotalPendingFrames()
         }
         return -1
+    }
+
+    /** 与 C++ [Client][VideoFlickerClass][1Hz] 对齐：QML 检测到 everHad→false 等盖层风险时上报 */
+    function reportVideoFlickerQmlLayerEvent(where, detail) {
+        var wsm = webrtcStreamManager
+        if (!wsm || typeof wsm.reportVideoFlickerQmlLayerEvent !== "function") {
+            return
+        }
+        try {
+            var w = (where !== undefined && where !== null) ? String(where) : ""
+            var d = (detail !== undefined && detail !== null) ? String(detail) : ""
+            wsm.reportVideoFlickerQmlLayerEvent(w, d)
+        } catch (e) {
+            console.warn("[AppContext] reportVideoFlickerQmlLayerEvent failed", e)
+        }
     }
 
     readonly property string logPrefix: "[AppContext]"

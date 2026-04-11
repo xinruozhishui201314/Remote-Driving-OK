@@ -1,0 +1,20 @@
+--- a/client/src/services/safetymonitorservice.cpp
++++ b/client/src/services/safetymonitorservice.cpp
+@@ -59,6 +59,9 @@ void SafetyMonitorService::start() {
+   const int64_t now = safetyNowMs();
+   m_lastHeartbeatMs = now;
+   m_lastOperatorActivityMs = now;
++  // New session: deadman arms only after operator input; do not clear in stop() so unit tests
++  // that call runSafetyChecks() without a live timer are not accidentally disarmed.
++  m_deadmanActive.store(false);
+   m_safetyTimer.start();
+   qInfo() << "[Client][SafetyMonitorService] started 50Hz safety checks";
+ }
+@@ -67,5 +70,4 @@ void SafetyMonitorService::stop() {
+ void SafetyMonitorService::stop() {
+   m_safetyTimer.stop();
+   m_started = false;
+-  m_deadmanActive.store(false);
+ }
+ 
+ void SafetyMonitorService::updateLatency(double oneWayMs, double rttMs) {

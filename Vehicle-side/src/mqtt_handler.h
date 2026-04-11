@@ -42,6 +42,7 @@ public:
 private:
     void onMessageReceived(const std::string &topic, const std::string &payload);
     void processControlCommand(const std::string &jsonPayload);
+    void processClientEncoderHint(const std::string &jsonPayload);
 
     VehicleController *m_controller;
     bool m_connected = false;
@@ -53,6 +54,8 @@ private:
     std::unique_ptr<mqtt::async_client> m_client;
     std::string m_controlTopic = "vehicle/control";
     std::string m_statusTopic = "vehicle/status";
+    /** 与客户端 MqttController::publishClientEncoderHint 默认一致；可设 MQTT_ENCODER_HINT_TOPIC */
+    std::string m_encoderHintTopic = "teleop/client_encoder_hint";
     std::chrono::steady_clock::time_point m_lastStatusTime;
     // 日志统计
     uint64_t m_publishCount = 0;  // 发布计数

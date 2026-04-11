@@ -56,25 +56,14 @@ Rectangle {
             controlPanel._notifySafety()
             if (!controlPanel._driveChanged) return
             controlPanel._driveChanged = false
-            var legacyOnly = (typeof clientLegacyControlOnly !== "undefined" && clientLegacyControlOnly)
-            if (!legacyOnly) {
-                if (controlPanel._canUseVCS()) {
-                    controlPanel.vehicleControl.sendDriveCommand(
-                        controlPanel._pendingSteering,
-                        controlPanel._pendingThrottle,
-                        controlPanel._pendingBrake)
-                    return
-                }
-                console.warn("[Client][Control][ControlPanel] vehicleControl missing; drive command dropped")
+            if (controlPanel._canUseVCS()) {
+                controlPanel.vehicleControl.sendDriveCommand(
+                    controlPanel._pendingSteering,
+                    controlPanel._pendingThrottle,
+                    controlPanel._pendingBrake)
                 return
             }
-            var mc = controlPanel.mqttController
-            if (!mc || !mc.isConnected) return
-            mc.sendDriveCommand(
-                controlPanel._pendingSteering,
-                controlPanel._pendingThrottle,
-                controlPanel._pendingBrake
-            )
+            console.warn("[Client][Control][ControlPanel] vehicleControl missing; drive command dropped")
         }
     }
 
@@ -89,18 +78,11 @@ Rectangle {
     function _sendDriveImmediate() {
         _driveChanged = false
         _notifySafety()
-        var legacyOnly = (typeof clientLegacyControlOnly !== "undefined" && clientLegacyControlOnly)
-        if (!legacyOnly) {
-            if (_canUseVCS()) {
-                controlPanel.vehicleControl.sendDriveCommand(_pendingSteering, _pendingThrottle, _pendingBrake)
-                return
-            }
-            console.warn("[Client][Control][ControlPanel] vehicleControl missing; immediate drive dropped")
+        if (_canUseVCS()) {
+            controlPanel.vehicleControl.sendDriveCommand(_pendingSteering, _pendingThrottle, _pendingBrake)
             return
         }
-        var mc = controlPanel.mqttController
-        if (!mc || !mc.isConnected) return
-        mc.sendDriveCommand(_pendingSteering, _pendingThrottle, _pendingBrake)
+        console.warn("[Client][Control][ControlPanel] vehicleControl missing; immediate drive dropped")
     }
 
     // 方向盘角度信号
@@ -706,7 +688,7 @@ Rectangle {
                             text: "R"
                             Layout.fillWidth: true
                             height: 50
-                            enabled: controlPanel.mqttController && controlPanel.mqttController.isConnected
+                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.isConnected
                             contentItem: Text {
                                 text: parent.text
                                 font.pixelSize: 18
@@ -724,12 +706,8 @@ Rectangle {
                             onClicked: {
                                 controlPanel._notifySafety()
                                 var vc = controlPanel.vehicleControl
-                                var mc = controlPanel.mqttController
-                                if (vc) {
+                                if (vc)
                                     vc.sendUiCommand("gear", {"value": -1})
-                                } else if (mc) {
-                                    mc.sendGearCommand(-1)
-                                }
                             }
                         }
                         
@@ -737,7 +715,7 @@ Rectangle {
                             text: "N"
                             Layout.fillWidth: true
                             height: 50
-                            enabled: controlPanel.mqttController && controlPanel.mqttController.isConnected
+                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.isConnected
                             contentItem: Text {
                                 text: parent.text
                                 font.pixelSize: 18
@@ -755,12 +733,8 @@ Rectangle {
                             onClicked: {
                                 controlPanel._notifySafety()
                                 var vc = controlPanel.vehicleControl
-                                var mc = controlPanel.mqttController
-                                if (vc) {
+                                if (vc)
                                     vc.sendUiCommand("gear", {"value": 0})
-                                } else if (mc) {
-                                    mc.sendGearCommand(0)
-                                }
                             }
                         }
                         
@@ -768,7 +742,7 @@ Rectangle {
                             text: "D"
                             Layout.fillWidth: true
                             height: 50
-                            enabled: controlPanel.mqttController && controlPanel.mqttController.isConnected
+                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.isConnected
                             contentItem: Text {
                                 text: parent.text
                                 font.pixelSize: 18
@@ -786,12 +760,8 @@ Rectangle {
                             onClicked: {
                                 controlPanel._notifySafety()
                                 var vc = controlPanel.vehicleControl
-                                var mc = controlPanel.mqttController
-                                if (vc) {
+                                if (vc)
                                     vc.sendUiCommand("gear", {"value": 1})
-                                } else if (mc) {
-                                    mc.sendGearCommand(1)
-                                }
                             }
                         }
                     }
@@ -803,7 +773,7 @@ Rectangle {
                 Layout.fillWidth: true
                 height: 64
                 text: "🛑 紧急停止"
-                enabled: (controlPanel.vehicleControl) || (controlPanel.mqttController && controlPanel.mqttController.isConnected)
+                enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.isConnected
                 contentItem: Text {
                     text: parent.text
                     font.pixelSize: 20
@@ -835,13 +805,8 @@ Rectangle {
                     brakeSlider.value = 1.0
                     throttleSlider.value = 0.0
                     var vc = controlPanel.vehicleControl
-                    var mc = controlPanel.mqttController
-                    if (vc) {
+                    if (vc)
                         vc.requestEmergencyStop()
-                    } else if (mc) {
-                        mc.sendBrakeCommand(1.0)
-                        mc.sendThrottleCommand(0.0)
-                    }
                 }
             }
         }

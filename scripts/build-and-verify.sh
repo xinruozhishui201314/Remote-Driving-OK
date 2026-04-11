@@ -5,6 +5,8 @@
 #       SKIP_CARLA_BRIDGE_CPP=1 跳过 C++ Bridge（默认 1：无显示/GPU 时 CARLA 验证易失败；需验证时设 0）
 #       SKIP_STACK_UP=1 跳过本脚本内的 compose up（已手动启动栈时）
 #       SKIP_VERIFY_LOGIN=1 / SKIP_VERIFY_ADMIN=1 / SKIP_VERIFY_ADD_VEHICLE=1 跳过对应验证
+#       SKIP_VERIFY_CLIENT_SOURCE_MAP=1 跳过 client 单测名与 CLIENT_UNIT_TEST_SOURCE_MAP.md 一致性校验
+#       SKIP_VERIFY_CONTRACT_ARTIFACTS=0 时运行 ./scripts/verify-contract-artifacts.sh（默认 1：由 contract-ci 负责，避免本脚本强依赖 pip 拉包）
 #       SKIP_VERIFY_CARLA_WITH_CLIENT=0 启用客户端同步启动 CARLA 验证（默认 1 跳过，需 CARLA 镜像）
 # 与 verify-add-vehicle-e2e 一致：三文件 compose（含 dev，Backend 宿主机 8081）。
 # Backend dev 首次/重建后需在容器内 CMake 编译，默认可等待较久：
@@ -128,6 +130,30 @@ fi
 
 optional_client_dev_stack
 
+# 0b. 客户端 CTest 名 ↔ 映射表（MVP；无依赖）
+if [ "${SKIP_VERIFY_CLIENT_SOURCE_MAP:-0}" != "1" ]; then
+  log_section "0b/6 校验 CLIENT_UNIT_TEST_SOURCE_MAP.md 与 CMake 一致"
+  if bash "${SCRIPT_DIR}/verify-client-source-map-sync.sh" 2>&1; then
+    log_ok "单测映射表与 CMake 注册一致"
+  else
+    log_fail "verify-client-source-map-sync.sh 失败：新增 CTest 请同步 docs/CLIENT_UNIT_TEST_SOURCE_MAP.md"
+    FAILED=1
+  fi
+else
+  log_section "0b/6 单测映射表校验"
+  log_skip "SKIP_VERIFY_CLIENT_SOURCE_MAP=1"
+fi
+
+if [ "${SKIP_VERIFY_CONTRACT_ARTIFACTS:-1}" != "1" ]; then
+  log_section "0c/6 契约真源静态校验（verify-contract-artifacts.sh）"
+  if bash "${SCRIPT_DIR}/verify-contract-artifacts.sh" 2>&1; then
+    log_ok "OpenAPI + MQTT schema + golden 通过"
+  else
+    log_fail "verify-contract-artifacts.sh 失败（或设 SKIP_VERIFY_CONTRACT_ARTIFACTS=1 跳过，由 contract-ci 兜底）"
+    FAILED=1
+  fi
+fi
+
 # 1. 构建 Backend 并重启（使后续 E2E 使用新镜像，含 [Backend][AddVehicle] 等日志）
 if [ "${SKIP_BACKEND_BUILD:-0}" != "1" ]; then
   log_section "1/6 构建 Backend"
@@ -192,6 +218,28 @@ if bash "${SCRIPT_DIR}/verify-driving-layout.sh" 2>&1; then
   log_ok "UI 布局验证通过"
 else
   log_fail "UI 布局验证失败"
+  FAILED=1
+fi
+
+# 2a2. 本机 client/build 存在时：视频解码/显示策略单测（DMA-BUF 与软栈线程契约）
+if [ "${SKIP_VERIFY_CLIENT_VIDEO_DECODE_SANITY:-0}" != "1" ]; then
+  log_section "2a2/6 视频解码显示策略 (verify-client-video-decode-sanity.sh)"
+  if bash "${SCRIPT_DIR}/verify-client-video-decode-sanity.sh" 2>&1; then
+    log_ok "test_h264decoder / ClientVideoStreamHealth 契约通过（或已 SKIP 无 build）"
+  else
+    log_fail "verify-client-video-decode-sanity.sh 失败（修复后重试；仅 CI 无 client/build 可设 SKIP_VERIFY_CLIENT_VIDEO_DECODE_SANITY=1）"
+    FAILED=1
+  fi
+else
+  log_section "2a2/6 视频解码显示策略"
+  log_skip "SKIP_VERIFY_CLIENT_VIDEO_DECODE_SANITY=1"
+fi
+
+log_section "2a3/6 CPU 视频 RGBA8888 契约 (verify-client-video-rgba-contract.sh)"
+if bash "${SCRIPT_DIR}/verify-client-video-rgba-contract.sh" 2>&1; then
+  log_ok "RGBA8888 热路径静态门禁通过"
+else
+  log_fail "verify-client-video-rgba-contract.sh 失败"
   FAILED=1
 fi
 
@@ -281,6 +329,15 @@ if bash "$SCRIPT_DIR/verify-client-contract.sh" 2>&1; then
   log_ok "客户端 QML 控制路径契约检查通过"
 else
   log_fail "客户端契约检查失败"
+  FAILED=1
+fi
+
+echo ""
+log_section "QML AppContext 子目录 import 静态检查 (verify-qml-appcontext-imports.sh)"
+if bash "$SCRIPT_DIR/verify-qml-appcontext-imports.sh" 2>&1; then
+  log_ok "子目录 QML AppContext import 约定检查通过"
+else
+  log_fail "QML AppContext import 检查失败（须 import \"..\" 或 \"../..\"）"
   FAILED=1
 fi
 

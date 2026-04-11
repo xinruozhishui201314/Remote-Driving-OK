@@ -47,6 +47,11 @@ make build-backend
 make run-backend
 ```
 
+## 客户端进程独立性（与「容器内构建」不矛盾）
+
+- **构建与依赖**：客户端仍应在 `client-dev` 容器内 CMake 编译，以保证 Qt / libdatachannel / FFmpeg 等与 CI 一致。
+- **运行**：编译产物 `RemoteDrivingClient` 是**独立可执行文件**，可在容器内单独启动，无需与本机 `docker compose up` 的全栈同时存在；连接 Backend、Keycloak、ZLM、MQTT 由配置与环境变量决定，不可达时表现为功能降级或错误提示，而非要求「必须先起全栈才能启动进程」。
+
 ## 禁止的用法
 
 - **禁止** 在宿主机执行 `cd client && ./build.sh` 或 `./run.sh` 进行客户端编译/运行。

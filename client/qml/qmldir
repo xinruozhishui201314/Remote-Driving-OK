@@ -1,9 +1,16 @@
 module RemoteDriving
+import QtQuick auto
+import QtQml auto
+# 子目录 QML（shell/ 的 module shell、components/、components/driving/ 的 qmldir 类型等）引用 AppContext/SessionConstants
+# 等本模块单例时，须在文件首增加 import ".." 或 import "../.." 指向本 qmldir 所在目录，否则运行期可能出现 ReferenceError: AppContext is not defined。
 # AppContext 和 Theme 使用 pragma Singleton + qmldir 单例声明（Qt 6 QML 单例标准用法）
 # 使用方式：import RemoteDriving 1.0 → AppContext.xxx（推荐，与 main.qml 一致）
 #           import "." as Q         → Q.AppContext.xxx（同目录限定名备选）
 #           import "styles" as S    → S.Theme.xxx
 singleton AppContext 1.0 AppContext.qml
 singleton Theme 1.0 styles/Theme.qml
+singleton SessionConstants 1.0 shell/SessionConstants.qml
 
-# C++ 类型由 main.cpp 中 qmlRegisterType 注册
+# C++ 类型由 CMake qt_add_qml_module(URI RemoteDriving) + QML_ELEMENT 注册；remote-driving-cpp.qmltypes
+# 由 qmltyperegistrar 生成（勿手写），供 qmllint / IDE（见 docs/CLIENT_QT_UI_GOOGLE_STYLE.md）。
+typeinfo remote-driving-cpp.qmltypes

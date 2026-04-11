@@ -80,8 +80,9 @@ client/
 
 - **Qt6**：Multimedia, WebSockets, QuickControls2, **ShaderTools**, OpenGL, **Test**（单测）
 - **FFmpeg**（libavcodec, libavutil, libswscale, libavformat）— 软件解码
-- **VA-API**、**EGL + DRM** — 硬件/零拷贝路径（Linux）
-- **NVDEC** — `cmake -DENABLE_NVDEC=ON`（需 FFmpeg CUDA 能力）
+- **VA-API**（Intel / AMD 等，Linux）— 安装 **`libva-dev`**、**`libdrm-dev`**（及运行时的 `libva-drm2` 等），使 CMake 中 **`ENABLE_VAAPI=ON`**；配置结束时日志含 **`VA-API: ON`** 与 **`Client HW decode (CI grep): VA-API=ON`**。
+- **EGL + DRM** — DMA-BUF / 零拷贝呈现（与 VA-API 常同机安装 `libdrm-dev`、`libegl1-mesa-dev`）
+- **NVDEC**（NVIDIA）— `cmake -DENABLE_NVDEC=ON`，且 FFmpeg 需 **CUDA/NVDEC** 能力；日志含 **`NVDEC: ON`**。
 - **libdatachannel** — WebRTC
 - **Paho MQTT C++** — MQTT
 
@@ -89,6 +90,14 @@ client/
 
 - **OpenGL** — 视频场景图渲染
 - 头文件依赖仍可能使用仓库 [`../deps`](../deps) 中的 **cpp-httplib**、**nlohmann/json** 等（以 `CMakeLists.txt` 与容器镜像为准）
+
+## 独立启动（进程级）
+
+**驾驶舱客户端是可独立运行的 Qt 进程**：不强制与 Backend / Keycloak / ZLM / MQTT 同机或同 Compose 栈同时启动。无后端时仍可启动 UI（登录、选车、布局等会进入降级或失败分支，由日志与 `SessionManager` 错误状态体现）。全功能远驾（鉴权、车辆列表、会话、四路 WebRTC）依赖配置中的各服务端点可达。
+
+- 典型离线/排障：`QT_QPA_PLATFORM=offscreen` 跑无头或 `./scripts/run-client-with-software-rendering.sh` 等脚本（见 `docs/RUN_ENVIRONMENT.md`）；进程级「启动—事件循环—退出」门禁：`./scripts/verify-client-headless-lifecycle.sh`（需已编译 `RemoteDrivingClient`）。
+- 单测不拉起全栈：`./scripts/run-client-unit-tests-oneclick.sh` 在 `client-dev` 内跑 CTest（含 `SessionManager` 等异常路径用例）。
+- 单元测试「全覆盖」分层说明（L0–L4、QML/真 WebRTC 边界）：[`docs/CLIENT_UNIT_TEST_COVERAGE_TIERS.md`](../docs/CLIENT_UNIT_TEST_COVERAGE_TIERS.md)。
 
 ## 编译与运行（必读：仓库策略）
 
@@ -139,13 +148,21 @@ cmake --build build -j"$(nproc)"
 | `KEYCLOAK_URL` | Keycloak | 与 OIDC 流程一致 |
 | `MQTT_BROKER_URL` | MQTT Broker | |
 | `ZLM_WHEP_URL` | ZLMediaKit WHEP API | |
-| `QT_QPA_PLATFORM` | Qt 平台插件 | Linux 桌面常见 `xcb`；无头 `offscreen` |
+| `QT_QPA_PLATFORM` | Qt 平台插件 | Linux 桌面常见 `xcb`；无头 `offscreen`（见 [Qt offscreen](https://doc.qt.io/qt-6/qpa.html#offscreen)） |
+| `CLIENT_SKIP_OPENGL_PROBE` | 置 `1` 跳过启动时 OpenGL 能力探测 | 无头/CI/容器无 GPU 时常用 |
+| `CLIENT_HEADLESS_SMOKE_MS` | 大于 `0` 时在 N ms 后由 `main` 主动 `quit` | 默认 `0`（关闭）；用于验证 `app.exec`→`aboutToQuit`→日志关闭链，见 `scripts/verify-client-headless-lifecycle.sh` |
 | `DEFAULT_SERVER_URL` / `REMOTE_DRIVING_SERVER` | 默认 Backend（QML `defaultServerUrlFromEnv`） | 先于 `BACKEND_URL` 被 main 读取 |
 | `CLIENT_AUTO_CONNECT_VIDEO` | 置 `1` 时 QML 侧自动连视频 | 调试/自动化 |
+| `CLIENT_AUTO_CONNECT_TEST_VIN` | 自动连流时注入的 VIN（须与 ZLM `{VIN}_cam_*` 一致） | 默认 `123456789`；CARLA 常用 `carla-sim-001` |
 | `CLIENT_LAYOUT_DEBUG` | 置 `1` 开启布局调试 | |
 | `CLIENT_DEADMAN_ENABLED` | 死手开关 | 默认 `1` |
 | `CLIENT_DEADMAN_TIMEOUT_MS` | 死手超时（ms） | 默认 `3000` |
-| `CLIENT_LEGACY_CONTROL_ONLY` | 仅走旧版 QML→MQTT 控车路径 | 默认 `0`，排障用 |
+| `CLIENT_MEDIA_HARDWARE_DECODE` | 是否尝试 **GPU 硬解**（映射 `media.hardware_decode`，优先于 JSON） | 默认等价 `true`；设 `0/false/off/no` 强制软解 |
+| `CLIENT_MEDIA_REQUIRE_HARDWARE_DECODE` | 硬解失败时是否 **禁止** 退回 CPU 软解（`media.require_hardware_decode`） | 默认等价 `false`；设为 `1` 可在硬解失败时强制报错，用于生产排查 |
+| `CLIENT_WEBRTC_HW_DECODE` | （兼容）仅当 **非空** 且为 `0/false/off/no` 时关闭硬解 | 主开关已改为 `media.hardware_decode` / `CLIENT_MEDIA_HARDWARE_DECODE`；硬解未编译时见 **`[Client][VideoHealth][ERROR]`** |
+| `CLIENT_VIDEO_EVIDENCE_FULL_CRC_EVERY` | 证据链 **整图 CRC 采样间隔** | 未设置且 `CLIENT_VIDEO_EVIDENCE_CHAIN` 开启时 **默认 60**（前 `EARLY_MAX` 帧每帧算 `fullCrc`）；`0` 关闭默认采样；与 `CLIENT_VIDEO_FORENSICS` / `CLIENT_VIDEO_EVIDENCE_FULL_CRC` 全开互斥（全开时每条证据行都算 CRC） |
+| （启动日志） | `[Client][VideoHealth][Contract]` | **一行** `verdict=OK|ERROR`、`fullCrc_mode=`、`hwDecode_env/comp`、`dmaSg` 等；`ERROR` 时先修契约再查花屏 |
+| ~~`CLIENT_LEGACY_CONTROL_ONLY`~~ | （已移除）UI 控车唯一入口：`AppContext.sendUiCommand` → `VehicleControlService` | 见 `scripts/verify-client-contract.sh` |
 | `CLIENT_ENABLE_CONTROL_TICKER` | 控制节拍占位 | 默认 `0` |
 
 ## Docker 生产镜像

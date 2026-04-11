@@ -160,7 +160,10 @@ def _record_interaction(direction, peer, topic_or_path, payload_summary, payload
 # 相机与推流
 CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "640"))
 CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "480"))
-CAMERA_FPS = int(os.environ.get("CAMERA_FPS", "15"))
+# 默认 10fps：减轻 CARLA 渲染与客户端软 GL 四路呈现压力；需要更流畅可设 CAMERA_FPS=15
+CAMERA_FPS = int(os.environ.get("CAMERA_FPS", "10"))
+# 每路 H.264 目标码率（kbps）。此前未设 -b:v 时 libx264 为默认 CRF，码率随画面波动；默认 2000=2Mbps/路
+VIDEO_BITRATE_KBPS = int(os.environ.get("VIDEO_BITRATE_KBPS", "2000"))
 # 前摄像头：1.0,0,1.2 为驾驶位主视角（车内）；2.5 为车头视角
 CAMERA_DRIVER_VIEW = (os.environ.get("CAMERA_DRIVER_VIEW", "1").strip().lower() in ("1", "true", "yes"))
 _cam_front_x = 1.0 if CAMERA_DRIVER_VIEW else 2.5
@@ -173,6 +176,32 @@ CAMERA_CONFIGS = [
 # 四路 worker 错峰启动间隔（秒），避免同时连 ZLM 导致部分推流失败
 # 增大间隔可降低验证时因首帧未到导致 ffprobe 拉流失败的概率
 STAGGER_START_SECONDS = float(os.environ.get("STAGGER_START_SECONDS", "1.5"))
+# 客户端经 MQTT 转发的编码提示（与 WebRTC DataChannel client_video_encoder_hint 同形）；车端回写 vehicle/status
+MQTT_ENCODER_HINT_TOPIC = (os.environ.get("MQTT_ENCODER_HINT_TOPIC") or "teleop/client_encoder_hint").strip()
+
+def _ffmpeg_libx264_bitrate_args():
+    """libx264 码率限制：-b:v / -maxrate / -bufsize（与 zerolatency 搭配）。"""
+    b = VIDEO_BITRATE_KBPS
+    if b <= 0:
+        return []
+    bufsize = max(b * 2, 256)
+    return [
+        "-b:v", f"{b}k",
+        "-maxrate", f"{b}k",
+        "-bufsize", f"{bufsize}k",
+    ]
+
+
+def _ffmpeg_libx264_slice_args():
+    """限制每帧 slice 数，降低客户端 H.264 多 slice × FFmpeg 多线程解码时的水平带状风险。
+    CARLA_X264_SLICES：默认 1（单 slice）；仅调试多 slice 行为时调大（上限 16）。"""
+    try:
+        n = int(os.environ.get("CARLA_X264_SLICES", "1"))
+    except ValueError:
+        n = 1
+    n = max(1, min(n, 16))
+    return ["-x264-params", f"slices={n}"]
+
 
 def to_bgr(carla_image):
     """CARLA Image (BGRA) -> BGR numpy (H, W, 3)."""
@@ -194,9 +223,20 @@ def run_ffmpeg_pusher(stream_id, frame_queue, rtmp_url, width, height, fps, stop
         "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{width}x{height}", "-r", str(fps),
         "-i", "pipe:0",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-pix_fmt", "yuv420p", "-g", str(fps), "-keyint_min", str(fps),
-        "-f", "flv", rtmp_url,
+        "-profile:v", "baseline",  # ✅ 新增：与 SDP 声称的 Baseline Profile 对齐
+        "-level", "3.0",           # ✅ 新增：明确指定 Level 3.0
     ]
+    cmd.extend(_ffmpeg_libx264_bitrate_args())
+    cmd.extend(_ffmpeg_libx264_slice_args())
+    cmd.extend(
+        [
+            "-pix_fmt", "yuv420p",
+            "-g", str(fps),
+            "-keyint_min", str(fps),
+            "-f", "flv",
+            rtmp_url,
+        ]
+    )
     # ── 诊断增强：捕获 ffmpeg stderr 以解析 FPS/码率/帧质量 ────────────────────
     # ffmpeg stderr 包含 frame= fps= bitrate= 等统计行，是推流质量的核心证据
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -326,10 +366,20 @@ def run_ffmpeg_testsrc(stream_id, rtmp_url, width, height, fps, stop_event):
         "-f", "lavfi", "-i", f"testsrc=size={width}x{height}:rate={fps}",
         "-f", "lavfi", "-i", "aevalsrc=0",
         "-c:v", "libx264", "-preset", "ultrafast", "-tune", "zerolatency",
-        "-pix_fmt", "yuv420p", "-g", str(fps), "-keyint_min", str(fps),
-        "-c:a", "aac", "-b:a", "0k",
-        "-f", "flv", rtmp_url,
     ]
+    cmd.extend(_ffmpeg_libx264_bitrate_args())
+    cmd.extend(_ffmpeg_libx264_slice_args())
+    cmd.extend(
+        [
+            "-pix_fmt", "yuv420p",
+            "-g", str(fps),
+            "-keyint_min", str(fps),
+            "-c:a", "aac",
+            "-b:a", "0k",
+            "-f", "flv",
+            rtmp_url,
+        ]
+    )
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     import re
     ffmpeg_lines = []
@@ -528,7 +578,7 @@ _cam_stats_lock = threading.Lock()
 
 def _report_cam_stats():
     """每 5s 打印一次各相机帧到达率，与 ffmpeg 推流质量报告对齐，便于定位根因：
-    - 如果相机回调到达率正常(~15fps) 但 ffmpeg 推流率低 → ffmpeg 或 ZLM 问题
+    - 如果相机回调到达率正常(≈CAMERA_FPS) 但 ffmpeg 推流率低 → ffmpeg 或 ZLM 问题
     - 如果相机回调到达率本身就低 → CARLA 渲染问题(DISPLAY/GPU/传感器配置)
     """
     import time
@@ -750,10 +800,15 @@ def _spawn_cameras_and_start_pushers_impl():
         except Exception as e:
             log_zlm("DRS设置警告: %s (可能版本不支持)", e)
 
-        log_zlm("相机完整配置: size=%dx%d fps=%d fov=90 gamma=%s exp_mode=%s",
-                CAMERA_WIDTH, CAMERA_HEIGHT, CAMERA_FPS,
-                os.environ.get("CAMERA_GAMMA", "2.2"),
-                os.environ.get("CAMERA_EXPOSURE_MODE", "histogram"))
+        log_zlm(
+            "相机完整配置: size=%dx%d fps=%d video_bitrate_kbps=%d(每路) fov=90 gamma=%s exp_mode=%s",
+            CAMERA_WIDTH,
+            CAMERA_HEIGHT,
+            CAMERA_FPS,
+            VIDEO_BITRATE_KBPS,
+            os.environ.get("CAMERA_GAMMA", "2.2"),
+            os.environ.get("CAMERA_EXPOSURE_MODE", "histogram"),
+        )
 
         for cam_id, x, y, z, yaw in CAMERA_CONFIGS:
             q = queue.Queue(maxsize=5)
@@ -904,6 +959,59 @@ def send_status():
     except Exception as e:
         _err("Control", "send_status 总异常: %s", e)
 
+def _encoder_hint_vin_matches(stream_val, msg_vin):
+    """客户端 hint 可带 vin 或由 stream 前缀 {VIN}_cam_* 推断。"""
+    if msg_vin and msg_vin == VIN:
+        return True
+    if not msg_vin and stream_val:
+        prefix = VIN + "_"
+        if stream_val.startswith(prefix):
+            return True
+    return False
+
+
+def handle_client_encoder_hint_message(raw_text):
+    """消费 client_video_encoder_hint：日志 + 回写 vehicle/status（encoder_hint_ack）。"""
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        _warn("EncoderHint", "JSON 解析失败: %s raw=%s", e, (raw_text or "")[:200])
+        return
+    if not isinstance(payload, dict):
+        return
+    if payload.get("type") != "client_video_encoder_hint":
+        return
+    stream_val = payload.get("stream") or ""
+    msg_vin = payload.get("vin") or ""
+    if not _encoder_hint_vin_matches(stream_val, msg_vin):
+        return
+    _log(
+        "EncoderHint",
+        "已消费 MQTT client_video_encoder_hint stream=%s preferSingle=%s reason=%s (与 DataChannel 同形，闭环)",
+        stream_val,
+        payload.get("preferH264SingleSlice"),
+        payload.get("reasonCode"),
+    )
+    ack = {
+        "vin": VIN,
+        "type": "encoder_hint_ack",
+        "timestamp": int(time.time() * 1000),
+        "schemaVersion": "1.0.0",
+        "originalType": payload.get("type"),
+        "stream": stream_val,
+        "preferH264SingleSlice": payload.get("preferH264SingleSlice"),
+        "actionTaken": "logged",
+        "message": (
+            "carla-bridge received hint; to apply H.264 single-slice restart ffmpeg/x264 with slices=1 "
+            "(hot reload not implemented). See mqtt/schemas/client_encoder_hint.json."
+        ),
+    }
+    try:
+        mqtt_client.publish("vehicle/status", payload=json.dumps(ack), qos=1)
+    except Exception as e:
+        _warn("EncoderHint", "publish encoder_hint_ack failed: %s", e)
+
+
 def on_connect(client, userdata, flags, rc, *args):
     """兼容 paho-mqtt v1 (rc) 与 v2 (reason_code, properties)。"""
     try:
@@ -911,6 +1019,8 @@ def on_connect(client, userdata, flags, rc, *args):
         log_mqtt("启动 MQTT 客户端 ID: %s", getattr(client, "_client_id", "unknown"))
         result = client.subscribe("vehicle/control", qos=1)
         log_mqtt("订阅 vehicle/control 成功（QoS=1），result=%s", result)
+        r2 = client.subscribe(MQTT_ENCODER_HINT_TOPIC, qos=1)
+        log_mqtt("订阅 %s 成功（QoS=1 encoder hint 闭环），result=%s", MQTT_ENCODER_HINT_TOPIC, r2)
     except Exception as e:
         import traceback
         _err("MQTT", "on_connect/subscribe failed err=E_MQTT_CONN_FAILED cause=%s\n%s", e, traceback.format_exc())
@@ -921,6 +1031,10 @@ def on_message(client, userdata, msg):
         raw = (msg.payload or b"")
         if isinstance(raw, bytes):
             raw = raw.decode("utf-8", errors="replace")
+        topic = (msg.topic or "")
+        if topic == MQTT_ENCODER_HINT_TOPIC or topic.endswith("client_encoder_hint"):
+            handle_client_encoder_hint_message(raw)
+            return
         log_control("收到 vehicle/control 消息 topic=%s payload=%s", msg.topic, raw[:200])
         try:
             payload = json.loads(msg.payload if isinstance(msg.payload, str) else (msg.payload or b"").decode("utf-8"))

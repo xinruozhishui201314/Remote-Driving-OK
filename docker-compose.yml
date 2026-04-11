@@ -218,6 +218,11 @@ services:
     restart: unless-stopped
 
   # Client-dev - 开发环境客户端
+  # GPU 访问说明：
+  #   宿主机需安装 nvidia-container-toolkit（NVIDIA GPU）或 /dev/dri 可访问（Intel/AMD GPU）。
+  #   客户端在 QGuiApplication 前根据 nvidia-smi、/dev/dri/renderD*、glxinfo 自动选择 GL 栈
+  #   （client_display_runtime_policy.cpp）；Linux+xcb 交互会话默认要求硬件呈现（非 llvmpipe），
+  #   无 GPU 调试可设 CLIENT_GPU_PRESENTATION_OPTIONAL=1 或 CLIENT_ALLOW_SOFTWARE_PRESENTATION=1。
   client-dev:
     build: ./client-dev
     container_name: teleop-client-dev
@@ -232,9 +237,31 @@ services:
       - MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883
 
       # 流媒体（容器内用服务名，勿用 localhost）
+      - ZLM_VIDEO_URL=http://zlmediakit:80
       - ZLM_WHEP_URL=http://zlmediakit:80/index/api/webrtc
       # ZLM API secret：与 ZLM Docker 镜像生成的 secret 一致（volume 已初始化）
       - ZLM_API_SECRET=j9uH7zT0mawXzTrvqRythA48QvZ8rO2Y
+
+      # ── FFmpeg 解码线程（正确性优先）──────────────────────────────────────────
+      # 多 slice H.264（CARLA/WebRTC 常见）+ FF_THREAD_SLICE 且 thread_count>1 易产生水平条纹。
+      # 默认 1；仅在编码端验证单 slice 后可改为 2 换吞吐（见 client h264decoder STRIPE_RISK）。
+      - CLIENT_FFMPEG_DECODE_THREADS=1
+      # CLIENT_VIDEO_MAX_PRESENT_FPS：呈现帧率上限（每路独立限频）。
+      #   软件GL每帧约8~20ms主线程占用；25fps×4路=100帧/s，
+      #   最坏情形 100×20ms=2000ms > 1s → 仍需合并（COALESCE）兜底。
+      #   硬件GL不受此限制（可设0不限频，但通常也无需超过30fps）。
+      - CLIENT_VIDEO_MAX_PRESENT_FPS=25
+      # CLIENT_VIDEO_PRESENT_COALESCE：合并多解码帧为单次呈现（默认1已开启）。
+      #   解码线程比主线程快时，自动丢弃积压帧、只呈现最新帧；降低主线程事件队列压力。
+      - CLIENT_VIDEO_PRESENT_COALESCE=1
+    # GPU 设备挂载（硬件 GL 加速，解决视频闪烁根因）：
+    # NVIDIA GPU：通过 NVIDIA_VISIBLE_DEVICES 控制可见 GPU（需宿主机安装 nvidia-container-toolkit）
+    # Intel/AMD GPU：通过 /dev/dri 访问 DRM 设备（通常无需额外安装）
+    # 若宿主机无独显或未安装 nvidia-container-toolkit，客户端会自动选择软件光栅栈
+    devices:
+      - /dev/dri:/dev/dri   # Intel / AMD GPU（DRM）；NVIDIA 系统通常也存在
+    group_add:
+      - video                # DRM/KMS 设备组权限
     # 仅依赖 backend：CARLA 仿真推流不经过 teleop-vehicle；客户端可先启动再连车/仿真
     depends_on:
       - backend

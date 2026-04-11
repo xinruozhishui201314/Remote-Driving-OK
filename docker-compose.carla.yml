@@ -1,6 +1,6 @@
 # 注意：不要定义 networks，直接使用主文件中的 teleop-network
 # CARLA GPU 渲染模式说明（默认 offscreen = EGL GPU 加速，无需 DISPLAY）：
-#   offscreen (默认) : EGL GPU 加速无头渲染（推荐，相机帧率可达 15+ FPS）
+#   offscreen (默认) : EGL GPU 加速无头渲染（推荐；默认 CAMERA_FPS=10，可调 15）
 #   offscreen-x11   : X11 DISPLAY 无头渲染（DISPLAY 必需，无 DISPLAY 时用 llvmpipe 软件渲染，FPS 极低）
 #   window           : 显示仿真窗口（需 DISPLAY 环境变量）
 # 相机帧率低时，先确认 entrypoint.sh 日志中显示 "无头 GPU 加速（EGL，无 DISPLAY）"
@@ -39,8 +39,14 @@ services:
       #   USE_TESTSRC_FALLBACK=1  若 CARLA 相机 10s 内 < 3fps，自动降级到 testsrc
       FORCE_TESTSRC: ${FORCE_TESTSRC:-0}
       USE_TESTSRC_FALLBACK: ${USE_TESTSRC_FALLBACK:-1}
-      # 相机推流帧率（可降低到 10 或 5 以缓解 CARLA 渲染压力）
-      CAMERA_FPS: ${CAMERA_FPS:-15}
+      # 相机推流帧率（默认 10 缓解软 GL 四路客户端；需要更流畅设 CAMERA_FPS=15）
+      CAMERA_FPS: ${CAMERA_FPS:-10}
+      # 相机分辨率：720P=1280x720。注意像素约为 640x480 的 3 倍，客户端解码+主线程呈现压力明显上升；
+      # 若客户端 libgl_sw=1 仍卡顿/闪烁，优先硬件 GL 或改为更低分辨率，勿只依赖降码率。
+      CAMERA_WIDTH: ${CAMERA_WIDTH:-1280}
+      CAMERA_HEIGHT: ${CAMERA_HEIGHT:-720}
+      # 每路 H.264 目标码率（kbps）。512≈0.5Mbps/路；720p+512k 偏省带宽，画面可能块效应明显。
+      VIDEO_BITRATE_KBPS: ${VIDEO_BITRATE_KBPS:-512}
       # 车辆与视角：CARLA_VEHICLE_BP 如 vehicle.tesla.model3；SPECTATOR_VIEW_MODE=driver 主视角
       CARLA_VEHICLE_BP: ${CARLA_VEHICLE_BP:-vehicle.*}
       CARLA_SPAWN_INDEX: ${CARLA_SPAWN_INDEX:-0}

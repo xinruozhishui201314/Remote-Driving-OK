@@ -1,0 +1,5 @@
+LayoutMetrics 1.0 LayoutMetrics.qml
+DrivingLayoutDiagnostics 1.0 DrivingLayoutDiagnostics.qml
+TeleopPresentationState 1.0 TeleopPresentationState.qml
+TeleopKeyboardHandler 1.0 TeleopKeyboardHandler.qml
+DrivingVideoDiagnostics 1.0 DrivingVideoDiagnostics.qml

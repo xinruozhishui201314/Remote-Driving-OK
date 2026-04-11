@@ -263,7 +263,8 @@ if [ "${NO_CLIENT:-0}" != "1" ]; then
   # 与宿主机 DISPLAY 一致才能连接 X11（宿主机 :1 则用 :1）；可显式覆盖：CLIENT_DISPLAY=:0
   DISPLAY_VAL="${CLIENT_DISPLAY:-${DISPLAY:-:0}}"
   # 容器内：Backend 用 backend:8080，MQTT 用 teleop-mosquitto:1883（与 compose 服务名一致）
-  CLIENT_ENV="-e DISPLAY=$DISPLAY_VAL -e DEFAULT_SERVER_URL=http://backend:8080 -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 -e CLIENT_LOG_FILE=$CLIENT_LOG_PATH -e LIBGL_ALWAYS_SOFTWARE=1"
+  # GL 栈由客户端 main 内 ClientDisplayRuntimePolicy 自动选择（glxinfo / nvidia-smi），不再强制 LIBGL_ALWAYS_SOFTWARE
+  CLIENT_ENV="-e DISPLAY=$DISPLAY_VAL -e DEFAULT_SERVER_URL=http://backend:8080 -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 -e CLIENT_LOG_FILE=$CLIENT_LOG_PATH"
   # 在 bash -c 内显式 export DISPLAY，确保子进程一定使用指定显示（覆盖容器默认）
   CLIENT_RUN_WITH_DISPLAY="export DISPLAY=$DISPLAY_VAL; $CLIENT_RUN"
 

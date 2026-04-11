@@ -1,6 +1,5 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
-import QtQuick.Layouts 1.15
 import QtQuick.Window 2.15
 import RemoteDriving 1.0
 import "styles" as ThemeModule
@@ -126,6 +125,8 @@ Rectangle {
         var vm = videoContainer.vehicleManager
         if (wsm && vm) {
             var whep = vm.lastWhepUrl || ""
+            console.warn("[Client][StreamE2E][QML_VIDEOVIEW] performReconnect whepLen=" + String(whep).length
+                        + " vin=" + (vm.currentVin || ""))
             console.log("[VideoView] Performing reconnect to:", whep)
             wsm.connectFourStreams(whep)
         } else {

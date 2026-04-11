@@ -136,6 +136,7 @@ timeout 15 docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.ym
     -e QT_QPA_PLATFORM=xcb \
     -e QT_LOGGING_RULES="qt.qpa.*=false" \
     -e CLIENT_RESET_LOGIN=1 \
+    -e CLIENT_STARTUP_TCP_GATE=0 \
     client-dev bash -c '
         cd /workspace/client
         if [ -x /tmp/client-build/RemoteDrivingClient ]; then

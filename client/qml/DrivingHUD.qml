@@ -7,7 +7,6 @@
 import QtQuick 2.15
 import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
-import QtMultimedia
 import RemoteDriving 1.0
 import "components"
 import "styles" as ThemeModule
@@ -19,17 +18,17 @@ Item {
     required property var telemetryModel
     required property var networkStatusModel
     required property var safetyStatusModel
-    /** WebRtcClient*：主路视频，经 bindVideoOutput 输出到 VideoOutput 内置 sink */
+    /** WebRtcClient*：主路视频，经 bindVideoSurface 输出到 RemoteVideoSurface */
     required property var videoStreamClient
     property var _prevHudVideoBindClient: null
 
     function rebindHudVideoOutput() {
         if (_prevHudVideoBindClient && _prevHudVideoBindClient !== videoStreamClient) {
-            _prevHudVideoBindClient.bindVideoOutput(null)
+            _prevHudVideoBindClient.bindVideoSurface(null)
             _prevHudVideoBindClient = null
         }
         if (videoStreamClient && hudVideoOut) {
-            videoStreamClient.bindVideoOutput(hudVideoOut)
+            videoStreamClient.bindVideoSurface(hudVideoOut)
             _prevHudVideoBindClient = videoStreamClient
         }
     }
@@ -53,11 +52,12 @@ Item {
         color: "transparent"
     }
 
-    // 主视频区（Qt Multimedia）
-    VideoOutput {
+    // 主视频区（Scene Graph 纹理）
+    RemoteVideoSurface {
         id: hudVideoOut
         anchors.fill: parent
-        fillMode: VideoOutput.PreserveAspectCrop
+        fillMode: 1
+        panelLabel: "DrivingHUD"
         Component.onCompleted: root.rebindHudVideoOutput()
     }
 
@@ -150,9 +150,10 @@ Item {
                     font.family: root.chineseFont || font.family
                 }
                 ProgressBar {
+                    id: throttleBar
                     value: telemetryModel.throttle
                     width: 120; height: 10
-                    contentItem: Rectangle { color: theme.colorGood; radius: 4; width: parent.width * parent.value }
+                    contentItem: Rectangle { color: theme.colorGood; radius: 4; width: throttleBar.visualPosition * parent.width }
                 }
                 Text { 
                     text: "刹车"; 
@@ -161,9 +162,10 @@ Item {
                     font.family: root.chineseFont || font.family
                 }
                 ProgressBar {
+                    id: brakeBar
                     value: telemetryModel.brake
                     width: 120; height: 10
-                    contentItem: Rectangle { color: theme.colorDanger; radius: 4; width: parent.width * parent.value }
+                    contentItem: Rectangle { color: theme.colorDanger; radius: 4; width: brakeBar.visualPosition * parent.width }
                 }
             }
 

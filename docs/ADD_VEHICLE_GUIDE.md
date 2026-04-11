@@ -519,13 +519,12 @@ libGL error: failed to load driver: nvidia-drm
 
 **处理**：
 
-1. **已纳入一键脚本**：`start-all-nodes-and-verify.sh` 启动客户端时已传入 `LIBGL_ALWAYS_SOFTWARE=1`，强制使用软件渲染，避免加载 nvidia-drm。请拉取最新脚本后重新执行一键启动。
-2. **手动启动时**：在 exec 前加上该环境变量，例如：  
-   `docker compose ... exec -it -e DISPLAY=:0 -e LIBGL_ALWAYS_SOFTWARE=1 ... client-dev bash -c '... ./RemoteDrivingClient --reset-login'`
-3. **需要 GPU 加速时**：宿主机安装 nvidia-container-toolkit，compose 中 client-dev 使用 `deploy: resources: reservations: devices: [driver: nvidia]` 并挂载相应设备，则可不设 `LIBGL_ALWAYS_SOFTWARE=1`。
+1. **自动 GL 栈**：客户端在 `main` 中于 `QGuiApplication` 之前根据 **glxinfo -B** / **nvidia-smi -L** 选择硬件或软件栈（见 `client_display_runtime_policy.cpp`），启动时 stderr 会有 `[Client][DisplayPolicy]`。无 NVIDIA 且无法跑 glxinfo 时会保守选择软件光栅；AMD/Intel 建议在镜像中安装 **mesa-utils**。
+2. **手动强制软件**：`docker compose ... exec -it -e DISPLAY=:0 -e CLIENT_ASSUME_SOFTWARE_GL=1 ... client-dev bash -c '... ./RemoteDrivingClient --reset-login'`
+3. **需要 GPU 加速**：宿主机安装 nvidia-container-toolkit，compose 中为 client-dev 配置 NVIDIA 设备并保证容器内驱动与 GLX/EGL 可用；成功时 `[Client][GLProbe]` 的 `GL_RENDERER` 应为 NVIDIA/AMD/Intel 等而非 llvmpipe。
 
 **查看日志**：若仍启动失败，可在容器内前台运行以查看完整 stderr：  
-`docker compose ... exec -it -e DISPLAY=:0 -e LIBGL_ALWAYS_SOFTWARE=1 -e CLIENT_LOG_FILE=/tmp/remote-driving-client.log client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login 2>&1 | tee /tmp/remote-driving-client.log'`  
+`docker compose ... exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e CLIENT_LOG_FILE=/tmp/remote-driving-client.log client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login 2>&1 | tee /tmp/remote-driving-client.log'`  
 再在另一终端复制日志：`docker compose ... exec client-dev cat /tmp/remote-driving-client.log > ./client.log`。
 
 ### 10.7 修改后必做验证步骤（强制）

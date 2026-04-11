@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <unistd.h>
 #include <cmath>
+#include <cstdlib>
 #include <regex>
 #ifdef ENABLE_MQTT_PAHO
 #include <chrono>
@@ -134,6 +135,19 @@ bool MqttHandler::connect(const std::string &brokerUrl)
             return false;
         }
 
+        {
+            const char *hintEnv = std::getenv("MQTT_ENCODER_HINT_TOPIC");
+            if (hintEnv && hintEnv[0] != '\0')
+                m_encoderHintTopic = hintEnv;
+            try {
+                m_client->subscribe(m_encoderHintTopic, 1)->wait();
+                LOG_MQTT_INFO("Subscribed to encoder hint topic: {} successfully", m_encoderHintTopic);
+            } catch (const std::exception &e) {
+                LOG_MQTT_WARN("Failed to subscribe encoder hint topic {}: {} (non-fatal)",
+                             m_encoderHintTopic, e.what());
+            }
+        }
+
         m_connected = true;
         LOG_MQTT_INFO("MQTT connection established: connected=true, control_topic={}, status_topic={}",
                      m_controlTopic, m_statusTopic);
@@ -188,12 +202,92 @@ void MqttHandler::onMessageReceived(const std::string &topic, const std::string 
         LOG_MQTT_DEBUG("MQTT payload (first 200 chars): {}...", payload.substr(0, 200));
     }
 
+    if (topic == m_encoderHintTopic || topic.find("client_encoder_hint") != std::string::npos) {
+        processClientEncoderHint(payload);
+        return;
+    }
+
     if (topic.find("control") != std::string::npos) {
         LOG_MQTT_DEBUG("Processing control command from topic: {}", topic);
         processControlCommand(payload);
     } else {
         LOG_MQTT_WARN("Unknown topic type, ignoring: {}", topic);
     }
+}
+
+void MqttHandler::processClientEncoderHint(const std::string &jsonPayload)
+{
+#ifdef ENABLE_MQTT_PAHO
+    if (jsonPayload.find("client_video_encoder_hint") == std::string::npos)
+        return;
+
+    std::regex type_regex("\"type\"\\s*:\\s*\"([^\"]+)\"");
+    std::smatch type_match;
+    if (!std::regex_search(jsonPayload, type_match, type_regex) ||
+        type_match[1].str() != "client_video_encoder_hint") {
+        return;
+    }
+
+    std::string msg_vin;
+    std::regex vin_regex("\"vin\"\\s*:\\s*\"([^\"]+)\"");
+    std::smatch vin_match;
+    if (std::regex_search(jsonPayload, vin_match, vin_regex))
+        msg_vin = vin_match[1].str();
+
+    const bool vin_ok = m_vin.empty() || msg_vin.empty() || msg_vin == m_vin;
+    if (!vin_ok) {
+        LOG_SEC_WARN_WITH_CODE(SEC_VIN_MISMATCH,
+            "Ignoring encoder hint: VIN mismatch (msg_vin={}, cfg_vin={})", msg_vin, m_vin);
+        return;
+    }
+
+    std::string stream_id;
+    std::regex stream_regex("\"stream\"\\s*:\\s*\"([^\"]+)\"");
+    std::smatch sm;
+    if (std::regex_search(jsonPayload, sm, stream_regex))
+        stream_id = sm[1].str();
+
+    LOG_MQTT_INFO("[Vehicle-side][EncoderHint] consumed client_video_encoder_hint stream={} "
+                  "(MQTT relay; same payload shape as WebRTC DataChannel)",
+                  stream_id);
+
+    if (!m_client || !m_connected) {
+        LOG_MQTT_WARN("Cannot publish encoder_hint_ack: client not ready");
+        return;
+    }
+
+    try {
+        std::string stream_esc;
+        for (char c : stream_id) {
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') ||
+                c == '_' || c == '-' || c == '.')
+                stream_esc += c;
+        }
+        std::ostringstream json;
+        json << "{\"timestamp\":" << std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        if (!m_vin.empty())
+            json << ",\"vin\":\"" << m_vin << "\"";
+        json << ",\"type\":\"encoder_hint_ack\"";
+        json << ",\"schemaVersion\":\"1.0.0\"";
+        json << ",\"originalType\":\"client_video_encoder_hint\"";
+        json << ",\"stream\":\"" << stream_esc << "\"";
+        json << ",\"actionTaken\":\"logged\"";
+        json << ",\"message\":\"Vehicle-side received encoder hint; apply single-slice at encoder if applicable\"";
+        json << "}";
+
+        const std::string pl = json.str();
+        mqtt::message_ptr msg = mqtt::make_message(m_statusTopic, pl);
+        msg->set_qos(1);
+        m_client->publish(msg);
+        LOG_MQTT_INFO("Published encoder_hint_ack to {}", m_statusTopic);
+    } catch (const std::exception &e) {
+        LOG_MQTT_ERROR_WITH_CODE(MQTT_PUBLISH_FAILED,
+            "Failed to publish encoder_hint_ack: {}", e.what());
+    }
+#else
+    (void)jsonPayload;
+#endif
 }
 
 void MqttHandler::processControlCommand(const std::string &jsonPayload)

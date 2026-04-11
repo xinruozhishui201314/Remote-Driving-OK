@@ -97,7 +97,9 @@ QtObject {
     property alias colorBorderActive: themeRoot.drivingColorBorderActive
     property alias colorAccent: themeRoot.drivingColorAccent
     property alias colorWarning: themeRoot.drivingColorWarning
+    property alias colorWarn: themeRoot.drivingColorWarning
     property alias colorDanger: themeRoot.drivingColorDanger
+    property alias colorEmergency: themeRoot.drivingColorDanger
     property alias colorTextPrimary: themeRoot.drivingColorTextPrimary
     property alias colorTextSecondary: themeRoot.drivingColorTextSecondary
     property alias colorButtonBg: themeRoot.drivingColorButtonBg

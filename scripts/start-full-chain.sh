@@ -1,11 +1,15 @@
 #!/bin/bash
 # 一键启动全链路并逐环体验证，最后启动客户端供界面操作
 #
+# 若仅需「与下述相同 compose/client-dev 方式」的一键自动化测试（L1+CTest+连接+可选 CARLA 四路）：
+#   bash scripts/run-client-oneclick-all-tests.sh
+#   WITH_CARLA=1 bash scripts/run-client-oneclick-all-tests.sh
+#
 # 链路：客户端 → 鉴权(Keycloak)/后端 → 选车/会话 → MQTT(start_stream) → 车端或 CARLA Bridge → 推流 → ZLM → 客户端拉流
 # 本脚本：启动 Compose(dev Backend 8081) + 默认 CARLA 仿真(remote-driving/carla-with-bridge) → 验证 → 启动客户端
 #
 # 用法：
-#   bash scripts/start-full-chain.sh              # 启动全链路 + 验证 + 从登录页启动客户端（默认跳过 2c 自动连视频，便于完整人工测登录/选车/连接）
+#   bash scripts/start-full-chain.sh              # 启动全链路 + 验证 + 从登录页启动客户端；默认要求 GPU（NVIDIA 挂载 + 硬件 GL）；无 GPU: TELEOP_GPU_OPTIONAL=1
 #   bash scripts/start-full-chain.sh auto-connect # 在 2c 额外跑 verify-connect-feature（CLIENT_AUTO_CONNECT_VIDEO=1，约 18s，跳过登录，仅自动化拉流）
 #   bash scripts/start-full-chain.sh manual       # 与默认相同（显式声明「跳过 2c」）；兼容旧脚本与文档
 #   bash scripts/start-full-chain.sh no-verify    # 启动全链路 + 启动客户端（跳过验证）
@@ -25,6 +29,10 @@
 #   CLIENT_QT_VERSION=6.8.0       Qt 版本（与镜像 /opt/Qt 路径一致）
 #   CLIENT_QT_AQT_ARCH=linux_gcc_64  aqt install-qt 架构名（与 ensure_qsb 一致；list-qt 仍先试 gcc_64）
 #
+# 环境变量（client-dev 内 CMake / make；ensure_client_built 与 start_client 兜底编译）：
+#   TELEOP_CLIENT_MAKE_JOBS=8           make -j 并行数；未设置或非正整数时默认宿主机 $(nproc)
+#   TELEOP_CLIENT_CMAKE_BUILD_TYPE=Debug  传给 cmake -DCMAKE_BUILD_TYPE=...（如 Release、RelWithDebInfo）
+#
 # 重建 client-dev 镜像（利用 Docker 层缓存 + 可选 Qt 镜像源，避免每次 --no-cache 全量）：
 #   export AQT_BASE=https://mirrors.tuna.tsinghua.edu.cn/qt/   # 可选，加速 aqt 下载
 #   docker compose -f docker-compose.yml -f docker-compose.client-dev.yml build client-dev
@@ -37,8 +45,35 @@
 # 环境变量（日志）：
 #   TELEOP_RUN_ID=my-run-1     自定义本会话子目录名（默认 YYYY-MM-DD-HHMMSS）；与 logs/<TELEOP_RUN_ID>/ 对应
 #
+# 环境变量（客户端视频可观测性 / 硬件解码，随「启动 GUI 客户端」注入 docker exec）：
+#   TELEOP_CLIENT_VIDEO_DIAG_MINIMAL=1  关闭默认注入的 CLIENT_VIDEO_EVIDENCE_* / FrameSummary 等（减日志）
+#   TELEOP_CLIENT_SKIP_HW_VIDEO_DECODE=1  注入 CLIENT_MEDIA_HARDWARE_DECODE=0 等（强制软解+可回退）
+#
 # 环境变量（2c 自动化，可选）：
 #   RUN_AUTO_CONNECT_VERIFY=1  与传参 auto-connect 等效：在 no-client 等场景也尝试跑 verify-connect-feature（需 DISPLAY）
+#
+# 环境变量（远控台硬件 GL 门禁；默认开启，见下方 TELEOP_GPU_OPTIONAL）：
+#   TELEOP_REQUIRE_HW_GL=1  启动客户端时传入 CLIENT_TELOP_STATION=1：非硬件 GL（如 llvmpipe）时进程拒绝启动（见 client_app_bootstrap / RUN_ENVIRONMENT.md）
+#   默认：传参未带 no-client 时 TELEOP_REQUIRE_HW_GL=1（可用 TELEOP_REQUIRE_HW_GL=0 或 TELEOP_GPU_OPTIONAL=1 关闭）
+#
+# 环境变量（client-dev 使用宿主 NVIDIA + X11 cookie；默认开启）：
+#   TELEOP_CLIENT_NVIDIA_GL=1  启动前强制执行 scripts/verify-client-nvidia-gl-prereqs.sh：
+#     校验 Xauthority 存在且非空、DISPLAY（可 TELEOP_CLIENT_NVIDIA_GL_SKIP_DISPLAY_CHECK=1 跳过）、
+#     docker run --gpus all（可 TELEOP_CLIENT_NVIDIA_GL_SKIP_DOCKER_GPU_TEST=1 跳过）、
+#     compose 合并 config；自动选用 docker-compose.client-nvidia-gl.yml 或 .deploy.yml。
+#   TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE  强制使用指定 overlay（相对仓库根，如 docker-compose.client-nvidia-gl.deploy.yml）
+#   XAUTHORITY_HOST_PATH  显式指定 cookie 文件（否则按 XAUTHORITY → ~/.Xauthority 解析）
+#
+# 宿主有 NVIDIA 但 client-dev 未挂 GPU（默认启动 GUI 时直接失败退出）：
+#   若宿主机 nvidia-smi -L 可见 GPU，而 teleop-client-dev 内无 /dev/nvidia0，本脚本在将启动客户端时 exit 1，
+#   避免 llvmpipe+X11 客户区透底等环境问题。绕过（不推荐用于日常 UI）： TELEOP_ALLOW_CLIENT_WITHOUT_GPU=1
+#   正确修复： TELEOP_CLIENT_NVIDIA_GL=1 bash scripts/start-full-chain.sh（或合并 docker-compose.client-nvidia-gl.yml）
+#   注意：传参 no-client 时不做此检查（不启动 GUI）。
+#
+# 默认必须 GPU 硬件加速（客户端路径）：
+#   未传 no-client 时默认 TELEOP_CLIENT_NVIDIA_GL=1 且 TELEOP_REQUIRE_HW_GL=1（容器挂 NVIDIA + 客户端拒绝软件光栅）。
+#   无 NVIDIA / CI / 仅软件 GL： TELEOP_GPU_OPTIONAL=1
+#   或分别关闭： TELEOP_CLIENT_NVIDIA_GL=0  TELEOP_REQUIRE_HW_GL=0（可与 TELEOP_ALLOW_CLIENT_WITHOUT_GPU=1 同用）
 #
 # 日志：每次运行在本机 logs/<YYYY-MM-DD-HHMMSS>/ 下归档本会话（可通过 TELEOP_RUN_ID 覆盖运行 ID）；
 #   compose 挂载 ./logs→/workspace/logs；客户端 CLIENT_LOG_FILE、验证脚本、docker-*.log 均在该子目录。
@@ -55,18 +90,70 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+# ---------- 先解析影响 GPU 默认值的参数（须在 NVIDIA 预检与 dc_* 之前）----------
+SKIP_CARLA="${SKIP_CARLA:-0}"
+DO_VERIFY=1
+DO_CLIENT=1
+DO_MANUAL_ONLY=1
+DO_CLEANUP=1
+DO_BUILD=1
+for arg in "$@"; do
+    case "$arg" in
+        no-verify)    DO_VERIFY=0 ;;
+        no-client)    DO_CLIENT=0 ;;
+        manual)       DO_MANUAL_ONLY=1 ;;
+        auto-connect) DO_MANUAL_ONLY=0 ;;
+        no-cleanup)   DO_CLEANUP=0 ;;
+        cleanup)      DO_CLEANUP=1 ;;
+        no-build)     DO_BUILD=0 ;;
+        skip-carla)   SKIP_CARLA=1 ;;
+    esac
+done
+if [ "${RUN_AUTO_CONNECT_VERIFY:-0}" = "1" ]; then
+    DO_MANUAL_ONLY=0
+fi
+
+# 客户端容器内 cmake/make（ensure_client_built、start_client 兜底编译）
+TELEOP_CLIENT_CMAKE_BUILD_TYPE="${TELEOP_CLIENT_CMAKE_BUILD_TYPE:-Debug}"
+if [[ -n "${TELEOP_CLIENT_MAKE_JOBS:-}" ]] && [[ "${TELEOP_CLIENT_MAKE_JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+    :
+else
+    TELEOP_CLIENT_MAKE_JOBS="$(nproc)"
+fi
+
+# 默认要求 GPU：client-dev 挂 NVIDIA + 启动时硬件 GL 门禁（无 GPU/CI 用 TELEOP_GPU_OPTIONAL=1）
+if [ "${TELEOP_GPU_OPTIONAL:-0}" != "1" ] && [ "$DO_CLIENT" -eq 1 ]; then
+    : "${TELEOP_CLIENT_NVIDIA_GL:=1}"
+    : "${TELEOP_REQUIRE_HW_GL:=1}"
+fi
+
 # 与 start-all-nodes.sh 一致：dev backend 宿主机 8081；CARLA 为第四文件（可选 nogpu 覆盖）
 dc_main() {
-  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml "$@"
+  local nvidia=()
+  if [ "${TELEOP_CLIENT_NVIDIA_GL:-0}" = "1" ]; then
+    : "${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE:?TELEOP_CLIENT_NVIDIA_GL=1 但未设置 TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE（预检应已导出）}"
+    nvidia+=( -f "${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE}" )
+  fi
+  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml \
+    "${nvidia[@]}" "$@"
 }
 dc_carla() {
   local a=( -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml -f docker-compose.carla.yml )
   [ "${CARLA_NO_GPU:-0}" = "1" ] && a+=( -f docker-compose.carla.nogpu.yml )
+  if [ "${TELEOP_CLIENT_NVIDIA_GL:-0}" = "1" ]; then
+    : "${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE:?TELEOP_CLIENT_NVIDIA_GL=1 但未设置 TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE（预检应已导出）}"
+    a+=( -f "${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE}" )
+  fi
   docker compose "${a[@]}" "$@"
 }
 dc_all_down() {
   dc_carla down "$@"
 }
+
+# TELEOP_CLIENT_NVIDIA_GL=1：严格预检并导出 XAUTHORITY_HOST_PATH / TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE
+if [ "${TELEOP_CLIENT_NVIDIA_GL:-0}" = "1" ]; then
+  eval "$(bash "$SCRIPT_DIR/verify-client-nvidia-gl-prereqs.sh" --emit-export)"
+fi
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -82,6 +169,9 @@ teleop_logs_init_run_subdir
 trap 'teleop_stop_docker_log_followers 2>/dev/null || true' EXIT
 echo -e "${CYAN}本会话日志目录: ${TELEOP_LOGS_RUN_DIR}${NC}"
 echo -e "${CYAN}（仓库 logs 根: ${TELEOP_LOGS_DIR}；运行 ID: ${TELEOP_RUN_ID}）${NC}"
+if [ "${TELEOP_GPU_OPTIONAL:-0}" != "1" ] && [ "${DO_CLIENT:-1}" -eq 1 ]; then
+    echo -e "${GREEN}GPU 硬件加速（默认）：NVIDIA 挂载 + 硬件 GL 门禁；无 NVIDIA/CI 请设 ${CYAN}TELEOP_GPU_OPTIONAL=1${NC}"
+fi
 
 BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:8081}"
 CARLA_MAP="${CARLA_MAP:-Town01}"
@@ -362,6 +452,43 @@ check_nodes_up() {
     return $failed
 }
 
+# ---------- 宿主有 NVIDIA 时强制 client-dev 已挂 GPU（避免容器内 llvmpipe + X11 透底）----------
+# 依赖：teleop-client-dev 已运行；dc_main 与当前 TELEOP_CLIENT_NVIDIA_GL / compose 一致。
+assert_client_dev_gpu_when_host_has_nvidia() {
+    if [ "${TELEOP_ALLOW_CLIENT_WITHOUT_GPU:-0}" = "1" ]; then
+        return 0
+    fi
+    if [ "${DO_CLIENT:-1}" != "1" ]; then
+        return 0
+    fi
+    if ! command -v nvidia-smi >/dev/null 2>&1; then
+        return 0
+    fi
+    if ! nvidia-smi -L 2>/dev/null | grep -qE '^GPU[[:space:]]+[0-9]+:'; then
+        return 0
+    fi
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^teleop-client-dev$'; then
+        return 0
+    fi
+    if dc_main exec -T client-dev test -c /dev/nvidia0 2>/dev/null; then
+        return 0
+    fi
+
+    echo -e "${RED}══════════════════════════════════════════════════════════════════════${NC}"
+    echo -e "${RED}错误: 宿主机 nvidia-smi 可见 GPU，但 teleop-client-dev 容器内不存在 /dev/nvidia0。${NC}"
+    echo -e "${RED}      客户端将在容器内走 Mesa 软件光栅，易出现「仅窗框、客户区像宿桌面」等问题。${NC}"
+    echo ""
+    echo -e "${CYAN}修复（推荐）:${NC}"
+    echo "  TELEOP_CLIENT_NVIDIA_GL=1 bash scripts/start-full-chain.sh"
+    echo "  或先: eval \"\$(bash scripts/verify-client-nvidia-gl-prereqs.sh --emit-export)\""
+    echo "  再合并 -f \"\${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE}\" 启动 client-dev（见 docker-compose.client-nvidia-gl.yml 头注释）。"
+    echo ""
+    echo -e "${YELLOW}若确知无需 GPU（如仅 CI / 无界面调试）:${NC} TELEOP_ALLOW_CLIENT_WITHOUT_GPU=1"
+    echo -e "${YELLOW}说明: 传参 no-client 时不做本检查。${NC}"
+    echo -e "${RED}══════════════════════════════════════════════════════════════════════${NC}"
+    exit 1
+}
+
 # ---------- 逐环体验证 ----------
 verify_chain() {
     echo -e "${CYAN}========== 2. 逐环体验证（客户端→后端→ZLM→MQTT→车端→四路流）==========${NC}"
@@ -579,6 +706,25 @@ ensure_client_libgl_mesa_dev() {
     echo -e "${YELLOW}  可尝试: 以 root 进入容器手动 apt-get install libgl1-mesa-dev，或重建镜像（client/Dockerfile.client-dev 已包含该包）${NC}"
     echo ""
     return 1
+}
+
+# ---------- 确保 client-dev 内有 mesa-utils（glxinfo，供客户端 DisplayPolicy 启动前检测 GL 栈）----------
+ensure_client_mesa_utils() {
+    if dc_main exec -T client-dev bash -c 'command -v glxinfo >/dev/null 2>&1' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} mesa-utils 已安装（glxinfo 可用）"
+        return 0
+    fi
+    echo -e "${YELLOW}容器内未检测到 glxinfo（mesa-utils），正在以 root 安装 mesa-utils...${NC}"
+    if dc_main exec -T -u root client-dev bash -c \
+        'apt-get update -qq && apt-get install -y -qq --no-install-recommends mesa-utils && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        if dc_main exec -T client-dev bash -c 'command -v glxinfo >/dev/null 2>&1' 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} mesa-utils 已安装，glxinfo 可用"
+            return 0
+        fi
+    fi
+    echo -e "${YELLOW}⚠${NC} mesa-utils 安装失败或 glxinfo 仍不可用（客户端将仅用 nvidia-smi / 保守回退选择 GL 栈；可检查网络或手动: apt-get install mesa-utils）${NC}"
+    echo ""
+    return 0
 }
 
 # ---------- 增强环境检查：X11 / WSLg / Qt 平台插件兼容性 ----------
@@ -819,7 +965,7 @@ test_qt_platform_plugins() {
     # 检测虚拟化环境
     if [ -d /dev/dri ] && ls /dev/dri/* 2>/dev/null | grep -q "render"; then
         echo -e "${GREEN}✓${NC} GPU 加速可用（/dev/dri）"
-        echo -e "  建议: 可尝试取消 LIBGL_ALWAYS_SOFTWARE=1"
+        echo -e "  建议: 客户端会自动选择 GL 栈；硬件优先需可用的 DRI/EGL（见 [Client][GLProbe]）"
     else
         echo -e "${YELLOW}⚠${NC} 未检测到 GPU 加速（软件渲染模式）"
     fi
@@ -1215,7 +1361,10 @@ verify_client_container_health() {
     
     # 检查是否有错误日志
     echo -n "  错误日志检查 ... "
-    local error_count=$(dc_main exec -T client-dev bash -c 'cat /workspace/logs/*.log 2>/dev/null | grep -c -i "error\|fatal\|crash\|segfault" || echo "0"' 2>/dev/null || echo "0")
+    # grep -c 在无匹配时仍输出 0 但退出码为 1，勿再接 || echo "0"（会得到两行 0，触发 [: integer expected）
+    local error_count
+    error_count=$(dc_main exec -T client-dev bash -c 'grep -hi "error\|fatal\|crash\|segfault" /workspace/logs/*.log 2>/dev/null | wc -l' 2>/dev/null | tr -d " \r\n" || true)
+    error_count=${error_count:-0}
     if [ "$error_count" -gt 0 ]; then
         echo -e "${YELLOW}⚠${NC} 发现 $error_count 条错误日志"
     else
@@ -1379,6 +1528,26 @@ ensure_client_libxkbcommon_dev() {
     return 1
 }
 
+# ---------- 确保 client-dev 容器内有硬件解码依赖（VA-API / libdrm）----------
+ensure_client_hw_decode_deps() {
+    if dc_main exec -T client-dev bash -c 'pkg-config --exists libva libva-drm libdrm' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} 硬件解码依赖已就绪（libva, libva-drm, libdrm）"
+        return 0
+    fi
+    echo -e "${YELLOW}容器内未检测到硬件解码依赖，正在安装 libva-dev libdrm-dev...${NC}"
+    if dc_main exec -T -u root client-dev bash -c \
+        'apt-get update -qq && apt-get install -y -qq --no-install-recommends libva-dev libdrm-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        if dc_main exec -T client-dev bash -c 'pkg-config --exists libva libva-drm libdrm' 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} 硬件解码依赖已安装"
+            return 0
+        fi
+    fi
+    echo -e "${RED}✗${NC} 硬件解码依赖安装失败，客户端将无法使用硬件加速解码"
+    echo -e "${YELLOW}  可尝试: 以 root 进入容器手动 apt-get install libva-dev libdrm-dev${NC}"
+    echo ""
+    return 1
+}
+
 # ---------- 确保 libpulse0 + libpulse-dev（Qt6Multimedia 依赖 libpulse；缺则链接阶段 pa_* undefined）----------
 ensure_client_libpulse() {
     if dc_main exec -T client-dev bash -c '
@@ -1416,6 +1585,7 @@ ensure_client_libpulse() {
 # ---------- 强制重新编译客户端（确保使用最新代码）----------
 ensure_client_built() {
     echo -e "${CYAN}========== 编译客户端（强制重新编译以确保使用最新代码）==========${NC}"
+    echo -e "${CYAN}  TELEOP_CLIENT_MAKE_JOBS=${TELEOP_CLIENT_MAKE_JOBS} TELEOP_CLIENT_CMAKE_BUILD_TYPE=${TELEOP_CLIENT_CMAKE_BUILD_TYPE}${NC}"
     
     # 停止可能正在运行的客户端进程
     dc_main exec -T client-dev bash -c 'pkill -9 RemoteDrivingClient 2>/dev/null || true; sleep 1' 2>/dev/null || true
@@ -1426,13 +1596,18 @@ ensure_client_built() {
     fi
     
     # 强制重新编译（使用 /tmp/client-build 确保干净编译）
-    if dc_main exec -T client-dev bash -c '
+    if dc_main exec -T \
+        -e "TELEOP_CLIENT_MAKE_JOBS=${TELEOP_CLIENT_MAKE_JOBS}" \
+        -e "TELEOP_CLIENT_CMAKE_BUILD_TYPE=${TELEOP_CLIENT_CMAKE_BUILD_TYPE}" \
+        client-dev bash -c '
         set -e
+        JOBS="${TELEOP_CLIENT_MAKE_JOBS:-$(nproc)}"
+        BT="${TELEOP_CLIENT_CMAKE_BUILD_TYPE:-Debug}"
         mkdir -p /tmp/client-build && cd /tmp/client-build
         echo "配置 CMake..."
-        cmake /workspace/client -DCMAKE_PREFIX_PATH=/opt/Qt/6.8.0/gcc_64:/opt/libdatachannel -DCMAKE_BUILD_TYPE=Debug
-        echo "编译客户端..."
-        make -j4
+        cmake /workspace/client -DCMAKE_PREFIX_PATH=/opt/Qt/6.8.0/gcc_64:/opt/libdatachannel -DCMAKE_BUILD_TYPE="${BT}"
+        echo "编译客户端 (make -j${JOBS})..."
+        make -j"${JOBS}"
         if [ ! -x ./RemoteDrivingClient ]; then
             echo "错误: 编译完成但可执行文件不存在"
             exit 1
@@ -1512,7 +1687,8 @@ start_client() {
         echo -e "${GREEN}所有节点已运行。请在本机有图形界面的终端执行以下命令启动远程驾驶客户端：${NC}"
         echo ""
         echo "  xhost +local:docker"
-        echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e LIBGL_ALWAYS_SOFTWARE=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+        echo "  # GL 栈由客户端自动选择（glxinfo/nvidia-smi）；强制软件可设 CLIENT_ASSUME_SOFTWARE_GL=1"
+        echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
         echo ""
         return 0
     fi
@@ -1525,7 +1701,8 @@ start_client() {
     echo ""
     echo -e "${CYAN}若无法打开客户端窗口（如报 Authorization required），请在本机有图形界面的终端执行：${NC}"
     echo "  xhost +local:docker"
-    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e LIBGL_ALWAYS_SOFTWARE=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=$ZLM_VIDEO_URL -e MQTT_BROKER_URL=$MQTT_BROKER_URL client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+    echo "  # GL 栈由客户端自动选择；强制软件: CLIENT_ASSUME_SOFTWARE_GL=1"
+    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=$ZLM_VIDEO_URL -e MQTT_BROKER_URL=$MQTT_BROKER_URL client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
     echo ""
     echo -e "${GREEN}请按以下步骤在客户端界面操作验证：${NC}"
     echo "  1) 登录（如 123 / 123）"
@@ -1553,24 +1730,65 @@ start_client() {
     echo -e "${CYAN}按 Ctrl+C 将关闭客户端；停止全栈（含 CARLA）请另开终端: docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml -f docker-compose.carla.yml down${NC}"
     echo ""
     # 使用 -it 以便 Ctrl+C/关闭窗口能正确结束容器内进程
-    # 设置 Qt 平台插件和日志级别，避免黑屏问题
-    # LIBGL_ALWAYS_SOFTWARE=1 强制软件渲染（避免容器内加载 nvidia-drm 失败黑屏）。
-    # QT_XCB_GL_INTEGRATION=glx：与 xcb_egl+llvmpipe 组合相比，可规避 X 单包超长断连
-    # （libxcb XCB_CONN_CLOSED_REQ_LEN_EXCEED）；客户端 main 内亦会在未显式强制 xcb_egl 时纠偏为 glx。
+    # GL 栈由 RemoteDrivingClient 在 QGuiApplication 之前自动选择（glxinfo / nvidia-smi，见
+    # client_display_runtime_policy.cpp），不在此传入 LIBGL_ALWAYS_SOFTWARE / QT_XCB_GL_INTEGRATION，避免与 C++ 策略冲突。
+    if dc_main exec -T client-dev bash -c 'ls /dev/dri/renderD* >/dev/null 2>&1'; then
+        echo -e "${GREEN}✓ 容器内可见 /dev/dri/renderD*（DRM 已挂载；实际硬件/软件 GL 以客户端 [Client][DisplayPolicy]、[Client][GLProbe] 为准）${NC}"
+    else
+        echo -e "${YELLOW}⚠ 容器内未检测到 /dev/dri/renderD*；客户端通常会选择软件光栅栈${NC}"
+    fi
+    _TELEOP_HW_GATE=()
+    if [ "${TELEOP_GPU_OPTIONAL:-0}" = "1" ] || [ "${TELEOP_REQUIRE_HW_GL:-0}" = "0" ]; then
+        _TELEOP_HW_GATE=(-e CLIENT_GPU_PRESENTATION_OPTIONAL=1)
+        echo -e "${YELLOW}✓ 传入 CLIENT_GPU_PRESENTATION_OPTIONAL=1（关闭 Linux+xcb 默认硬件呈现门禁；TELEOP_GPU_OPTIONAL 或 TELEOP_REQUIRE_HW_GL=0）${NC}"
+    elif [ "${TELEOP_REQUIRE_HW_GL:-0}" = "1" ]; then
+        _TELEOP_HW_GATE=(-e CLIENT_TELOP_STATION=1)
+        echo -e "${GREEN}✓ TELEOP_REQUIRE_HW_GL=1 → 传入 CLIENT_TELOP_STATION=1（显式远控台门禁，与进程内默认一致）${NC}"
+    fi
+    # 视频诊断 + 有 NVIDIA 全链路时优先硬件解码（客户端内仍有 software_raster / 能力门禁）
+    _CLIENT_VIDEO_ENV_EXTRA=()
+    if [ "${TELEOP_CLIENT_VIDEO_DIAG_MINIMAL:-0}" != "1" ]; then
+        _CLIENT_VIDEO_ENV_EXTRA+=(
+            -e CLIENT_H264_DECODE_FRAME_SUMMARY_EVERY=60
+            -e CLIENT_VIDEO_EVIDENCE_CHAIN=1
+            -e CLIENT_VIDEO_EVIDENCE_STRIPE_ROWS=1
+        )
+        echo -e "${GREEN}✓ 注入视频诊断 env：CLIENT_H264_DECODE_FRAME_SUMMARY_EVERY=60 CLIENT_VIDEO_EVIDENCE_CHAIN=1 STRIPE_ROWS=1${NC}"
+    fi
+    if [ "${TELEOP_CLIENT_SKIP_HW_VIDEO_DECODE:-0}" = "1" ]; then
+        _CLIENT_VIDEO_ENV_EXTRA+=(
+            -e CLIENT_MEDIA_HARDWARE_DECODE=0
+            -e CLIENT_MEDIA_REQUIRE_HARDWARE_DECODE=0
+        )
+        echo -e "${YELLOW}✓ TELEOP_CLIENT_SKIP_HW_VIDEO_DECODE=1 → CLIENT_MEDIA_HARDWARE_DECODE=0（软解）${NC}"
+    fi
+    if [ "${TELEOP_CLIENT_NVIDIA_GL:-0}" = "1" ] && [ "${TELEOP_GPU_OPTIONAL:-0}" != "1" ] &&
+        [ "${TELEOP_CLIENT_SKIP_HW_VIDEO_DECODE:-0}" != "1" ]; then
+        _CLIENT_VIDEO_ENV_EXTRA+=(
+            -e CLIENT_MEDIA_HARDWARE_DECODE=1
+            -e CLIENT_MEDIA_REQUIRE_HARDWARE_DECODE=1
+            -e CLIENT_WEBRTC_HW_EXPORT_DMABUF=1
+        )
+        echo -e "${GREEN}✓ 注入硬件视频路径：CLIENT_MEDIA_*_HARDWARE_DECODE=1 CLIENT_WEBRTC_HW_EXPORT_DMABUF=1（require=1 时硬解失败不回退软解）${NC}"
+    fi
     dc_main exec -it \
         -e DISPLAY="$DISPLAY" \
         -e QT_QPA_PLATFORM=xcb \
-        -e LIBGL_ALWAYS_SOFTWARE=1 \
-        -e QT_XCB_GL_INTEGRATION=glx \
         -e QT_LOGGING_RULES="qt.qpa.*=false" \
         -e ZLM_VIDEO_URL="$ZLM_VIDEO_URL" \
         -e MQTT_BROKER_URL="$MQTT_BROKER_URL" \
         -e CLIENT_RESET_LOGIN=1 \
         -e CLIENT_AUTO_CONNECT_VIDEO=0 \
         -e "CLIENT_LOG_FILE=${_client_log}" \
+        -e "TELEOP_CLIENT_MAKE_JOBS=${TELEOP_CLIENT_MAKE_JOBS}" \
+        -e "TELEOP_CLIENT_CMAKE_BUILD_TYPE=${TELEOP_CLIENT_CMAKE_BUILD_TYPE}" \
+        "${_TELEOP_HW_GATE[@]}" \
+        "${_CLIENT_VIDEO_ENV_EXTRA[@]}" \
         client-dev bash -c '
         set -e  # 任何错误立即退出
         mkdir -p /tmp/client-build && cd /tmp/client-build
+        JOBS="${TELEOP_CLIENT_MAKE_JOBS:-$(nproc)}"
+        BT="${TELEOP_CLIENT_CMAKE_BUILD_TYPE:-Debug}"
         
         # 优先使用 /tmp/client-build（确保是最新编译的）
         if [ -x ./RemoteDrivingClient ]; then
@@ -1591,10 +1809,10 @@ start_client() {
             set -e  # 编译失败时立即退出
             if [ ! -f CMakeCache.txt ]; then
                 echo "配置 CMake..."
-                cmake /workspace/client -DCMAKE_PREFIX_PATH=/opt/Qt/6.8.0/gcc_64:/opt/libdatachannel -DCMAKE_BUILD_TYPE=Debug
+                cmake /workspace/client -DCMAKE_PREFIX_PATH=/opt/Qt/6.8.0/gcc_64:/opt/libdatachannel -DCMAKE_BUILD_TYPE="${BT}"
             fi
-            echo "编译客户端..."
-            make -j4
+            echo "编译客户端 (make -j${JOBS})..."
+            make -j"${JOBS}"
             if [ ! -x ./RemoteDrivingClient ]; then
                 echo "❌ 错误: 编译完成但可执行文件不存在"
                 exit 1
@@ -1606,29 +1824,7 @@ start_client() {
 }
 
 # ---------- main ----------
-SKIP_CARLA="${SKIP_CARLA:-0}"
-DO_VERIFY=1
-DO_CLIENT=1
-DO_MANUAL_ONLY=1   # 默认跳过 2c（自动连视频会跳过登录）；需要 2c 时传 auto-connect 或设 RUN_AUTO_CONNECT_VERIFY=1
-DO_CLEANUP=1  # 默认启用清理
-DO_BUILD=1    # 默认启用编译检查
-for arg in "$@"; do
-    case "$arg" in
-        no-verify)   DO_VERIFY=0 ;;
-        no-client)   DO_CLIENT=0 ;;
-        manual)      DO_MANUAL_ONLY=1 ;;  # 与默认相同：跳过 2c
-        auto-connect) DO_MANUAL_ONLY=0 ;; # 运行 2c verify-connect-feature（跳过登录的自动化拉流）
-        no-cleanup)  DO_CLEANUP=0 ;;  # 跳过清理步骤（快速重启）
-        cleanup)     DO_CLEANUP=1 ;;  # 强制清理（默认行为）
-        no-build)    DO_BUILD=0 ;;  # 跳过编译步骤（客户端启动时自动编译）
-        skip-carla)  SKIP_CARLA=1 ;; # 无 GPU / 不跑 CARLA 仿真
-    esac
-done
-# CI/无头：需要无客户端但仍跑 2c 时 export RUN_AUTO_CONNECT_VERIFY=1（仍需 DISPLAY 与 X11）
-if [ "${RUN_AUTO_CONNECT_VERIFY:-0}" = "1" ]; then
-    DO_MANUAL_ONLY=0
-fi
-
+# DO_* / SKIP_CARLA 已在脚本开头解析（早于 NVIDIA 预检）
 ensure_client_dev_image
 
 # 执行清理（如果启用）
@@ -1644,6 +1840,7 @@ if ! check_nodes_up; then
     echo -e "${RED}部分节点未就绪，请检查: docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml ps${NC}"
     exit 1
 fi
+assert_client_dev_gpu_when_host_has_nvidia
 echo -e "${GREEN}所有节点已运行。${NC}"
 {
     echo "TELEOP_RUN_ID=${TELEOP_RUN_ID}"
@@ -1666,8 +1863,10 @@ if [ "$DO_VERIFY" -eq 1 ] || [ "$DO_CLIENT" -eq 1 ]; then
     ensure_client_chinese_font
     ensure_client_mosquitto_pub
     ensure_client_libgl_mesa_dev
+    ensure_client_mesa_utils
     ensure_client_libxkbcommon_dev
     ensure_client_libpulse
+    ensure_client_hw_decode_deps
     ensure_qt_multimedia_in_container
     ensure_qsb_in_container
     
@@ -1786,6 +1985,8 @@ if [ "$DO_CLIENT" -eq 1 ]; then
 else
     echo -e "${CYAN}未启动客户端（no-client）。所有节点已运行。手动启动远程驾驶客户端请执行：${NC}"
     echo "  xhost +local:docker"
-    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e LIBGL_ALWAYS_SOFTWARE=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=$(teleop_client_log_container_path) -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+    echo "  # GL 栈由客户端自动选择（见 stderr [Client][DisplayPolicy]）"
+    echo "  # 视频诊断/硬解 env 与脚本内 start_client 默认一致，见本文件 _CLIENT_VIDEO_ENV_EXTRA 与 TELEOP_CLIENT_* 注释"
+    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=$(teleop_client_log_container_path) -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
     wait_stream_e2e_background
 fi

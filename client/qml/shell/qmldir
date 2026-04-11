@@ -1,0 +1,5 @@
+module shell
+SessionWorkspace 1.0 SessionWorkspace.qml
+LoginStage 1.0 LoginStage.qml
+VehiclePickStage 1.0 VehiclePickStage.qml
+DrivingStageHost 1.0 DrivingStageHost.qml

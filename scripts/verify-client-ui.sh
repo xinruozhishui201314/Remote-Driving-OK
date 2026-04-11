@@ -29,7 +29,7 @@ echo "编译 OK"
 echo "[3/3] 运行客户端 6 秒验证（--reset-login 从登录界面启动）..."
 export DISPLAY="${DISPLAY:-:0}"
 RUN_RESULT=0
-docker compose exec -T -e DISPLAY="$DISPLAY" -e CLIENT_RESET_LOGIN=1 client-dev bash -c "cd /tmp/client-build && timeout 6 ./RemoteDrivingClient --reset-login" 2>&1 || RUN_RESULT=$?
+docker compose exec -T -e DISPLAY="$DISPLAY" -e CLIENT_RESET_LOGIN=1 -e CLIENT_STARTUP_TCP_GATE=0 client-dev bash -c "cd /tmp/client-build && timeout 6 ./RemoteDrivingClient --reset-login" 2>&1 || RUN_RESULT=$?
 
 if [ "$RUN_RESULT" -eq 124 ]; then
     echo "VERIFY_OK: 客户端运行 6 秒无崩溃，界面加载正常"

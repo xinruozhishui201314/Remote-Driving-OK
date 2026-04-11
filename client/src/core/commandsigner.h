@@ -24,50 +24,50 @@
  * credentials 在会话建立时设置一次，之后只读）。
  */
 class CommandSigner {
-public:
-    CommandSigner() = default;
+ public:
+  CommandSigner() = default;
 
-    /**
-     * 设置会话凭证，派生签名密钥。
-     * @param vin       车辆 VIN
-     * @param sessionId 会话 ID
-     * @param token     认证令牌
-     */
-    void setCredentials(const QString& vin, const QString& sessionId, const QString& token);
+  /**
+   * 设置会话凭证，派生签名密钥。
+   * @param vin       车辆 VIN
+   * @param sessionId 会话 ID
+   * @param token     认证令牌
+   */
+  void setCredentials(const QString& vin, const QString& sessionId, const QString& token);
 
-    /**
-     * 清除凭证（会话结束时调用）。
-     */
-    void clearCredentials();
+  /**
+   * 清除凭证（会话结束时调用）。
+   */
+  void clearCredentials();
 
-    /**
-     * 是否已初始化（有有效凭证）。
-     */
-    bool isReady() const { return !m_signingKey.isEmpty(); }
+  /**
+   * 是否已初始化（有有效凭证）。
+   */
+  bool isReady() const { return !m_signingKey.isEmpty(); }
 
-    /**
-     * 对 JSON 对象签名，原地添加 "hmac" 字段。
-     * @param json  输入/输出 JSON
-     * @return true = 成功，false = 未初始化
-     */
-    bool sign(QJsonObject& json) const;
+  /**
+   * 对 JSON 对象签名，原地添加 "hmac" 字段。
+   * @param json  输入/输出 JSON
+   * @return true = 成功，false = 未初始化
+   */
+  bool sign(QJsonObject& json) const;
 
-    /**
-     * 验证 JSON 对象中的 "hmac" 字段。
-     * @param json      待验证的 JSON（含 "hmac" 字段）
-     * @param reason    失败原因（out）
-     * @return true = 签名有效
-     */
-    bool verify(const QJsonObject& json, QString* reason = nullptr) const;
+  /**
+   * 验证 JSON 对象中的 "hmac" 字段。
+   * @param json      待验证的 JSON（含 "hmac" 字段）
+   * @param reason    失败原因（out）
+   * @return true = 签名有效
+   */
+  bool verify(const QJsonObject& json, QString* reason = nullptr) const;
 
-    /**
-     * 计算规范化载荷的 HMAC（可用于测试）。
-     */
-    QByteArray computeHmac(const QByteArray& canonicalPayload) const;
+  /**
+   * 计算规范化载荷的 HMAC（可用于测试）。
+   */
+  QByteArray computeHmac(const QByteArray& canonicalPayload) const;
 
-private:
-    static QByteArray canonicalize(const QJsonObject& json);
-    static QByteArray deriveKey(const QString& vin, const QString& sessionId, const QString& token);
+ private:
+  static QByteArray canonicalize(const QJsonObject& json);
+  static QByteArray deriveKey(const QString& vin, const QString& sessionId, const QString& token);
 
-    QByteArray m_signingKey;
+  QByteArray m_signingKey;
 };

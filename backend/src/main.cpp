@@ -975,6 +975,7 @@ int main() {
 
         nlohmann::json out = nlohmann::json::object();
         out["sessionId"] = session_id;
+        out["vin"] = vin; // 与路径 /api/v1/vins/{vin}/sessions 一致，供客户端校验响应与选车
         nlohmann::json media = nlohmann::json::object();
         media["whip"] = whip_url;
         media["whep"] = whep_url;

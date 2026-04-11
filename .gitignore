@@ -33,6 +33,8 @@ qrc_*
 .DS_Store
 
 # Python
+.venv-contract/
+.contract-openapi-base.yaml
 __pycache__/
 *.py[cod]
 *.pyo

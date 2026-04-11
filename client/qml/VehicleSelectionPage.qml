@@ -544,10 +544,10 @@ Rectangle {
             }
         }
         
-        function onSessionCreated(sessionId, whipUrl, whepUrl, controlConfig) {
+        function onSessionCreated(sessionVin, sessionId, whipUrl, whepUrl, controlConfig) {
             errorText.text = ""
             creatingSession = false
-            console.log("[Client][UI][VehicleSelection] 会话创建成功，进入驾驶")
+            console.log("[Client][UI][VehicleSelection] 会话创建成功 sessionVin=" + sessionVin + "，进入驾驶")
             Qt.callLater(function() { confirmAndEnter() })
         }
         

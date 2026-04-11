@@ -1,0 +1,6 @@
+<RCC>
+  <qresource prefix="/">
+    <file alias="/">/repo/client/qml</file>
+
+  </qresource>
+</RCC>

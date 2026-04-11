@@ -1,12 +1,19 @@
+import ".."
 import QtQuick 2.15
+import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import RemoteDriving 1.0
 import "../styles" as ThemeModule
 import "." as CustomComponents
 
 /**
- * 驾驶界面 - 仪表盘面板部分
- * 从 DrivingInterface.qml 提取，包含档位显示、箱体状态、速度控制、设备状态、清扫状态、档位选择
+ * 驾驶界面 - 仪表盘面板部分（归档 / 未接入主界面 import 链）
+ *
+ * 从 DrivingInterface.qml 提取，包含档位显示、箱体状态、速度控制、设备状态、清扫状态、档位选择。
+ *
+ * Canonical：client/qml/components/driving/* + DrivingInterface（DrivingFacade v2）。
+ * 禁止仅在本文交付远驾功能；应 port 至 DrivingCenterColumn 等并更新契约文档。
+ * 见 docs/CLIENT_MODULARIZATION_ASSESSMENT.md §5、docs/CLIENT_UI_MODULE_CONTRACT.md §5。
  */
 Rectangle {
     id: dashboardPanel
@@ -53,18 +60,7 @@ Rectangle {
     // 发送控制指令
     // ═══════════════════════════════════════════════════════════════════════════
     function sendControlCommand(type, payload) {
-        var legacyOnly = (typeof clientLegacyControlOnly !== "undefined" && clientLegacyControlOnly)
-        if (!legacyOnly) {
-            if (AppContext.vehicleControl && typeof vehicleControl.sendUiCommand === "function") {
-                vehicleControl.sendUiCommand(type, payload || {})
-                return
-            }
-            console.warn("[Client][Command][Dashboard] vehicleControl missing; dropped type=", type)
-            return
-        }
-        if (AppContext.mqttController && typeof mqttController.sendUiEnvelopeJson === "function") {
-            mqttController.sendUiEnvelopeJson(type, payload || {})
-        }
+        AppContext.sendUiCommand(type, payload)
     }
     
     // ═══════════════════════════════════════════════════════════════════════════

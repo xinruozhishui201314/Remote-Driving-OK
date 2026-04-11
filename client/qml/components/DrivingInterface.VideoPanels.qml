@@ -1,13 +1,18 @@
+import ".."
 import QtQuick 2.15
 import QtQuick.Layouts 1.15
-import QtMultimedia
 import RemoteDriving 1.0
 import "../styles" as ThemeModule
 
 /**
- * 驾驶界面 - 视频面板部分
- * 从 DrivingInterface.qml 提取，包含四路视频面板和主视图
- * 共享状态通过 AppContext 传递
+ * 驾驶界面 - 视频面板部分（归档 / 未接入主界面 import 链）
+ *
+ * 从 DrivingInterface.qml 提取，包含四路视频面板和主视图。
+ * 共享状态通过 AppContext 传递。
+ *
+ * Canonical：client/qml/components/driving/* + DrivingInterface（DrivingFacade v2）。
+ * 禁止仅在本文交付远驾功能；应 port 至 DrivingLeftRail / DrivingRightRail / DrivingCenterColumn。
+ * 见 docs/CLIENT_MODULARIZATION_ASSESSMENT.md §5、docs/CLIENT_UI_MODULE_CONTRACT.md §5。
  */
 Rectangle {
     id: videoPanels
@@ -55,31 +60,89 @@ Rectangle {
         id: drivingVideoPanelRoot
         property string title: ""
         property bool showPlaceholder: true
-        property QtObject streamClient: null
+        property WebRtcClient streamClient: null
         property bool hasVideoFrame: false
+        property bool everHadVideoFrame: false
         property int placeholderClearDelay: 2500
         property bool isLayoutDebugEnabled: (typeof layoutDebugEnabled !== "undefined" && layoutDebugEnabled) || false
-        property QtObject _prevVideoBindClient: null
+        property WebRtcClient _prevVideoBindClient: null
+        property WebRtcClient _streamClientIdentity: null
+        property int _sideFrameReadyLogSeq: 0
+        property bool _videoOutSideHadBadGeom: false
+        property bool _prevEverHadSidePanel: false
+
+        onEverHadVideoFrameChanged: {
+            if (_prevEverHadSidePanel && !everHadVideoFrame) {
+                console.warn("[Client][UI][Video][LayerFlickerRisk] DrivingVideoPanel[" + title + "] everHadVideoFrame true→false"
+                             + " ★ 占位将盖回视频；查 streamClient 是否抖动"
+                             + " streamClient=" + (streamClient ? String(streamClient) : "null")
+                             + " tMs=" + Date.now())
+                AppContext.reportVideoFlickerQmlLayerEvent("DrivingVideoPanel:" + title,
+                    "everHad_true_to_false streamClient=" + (streamClient ? String(streamClient) : "null"))
+            }
+            _prevEverHadSidePanel = everHadVideoFrame
+        }
+
+        function diagSideVideoOutputGeom(axis) {
+            if (typeof videoOutSide === "undefined" || !videoOutSide)
+                return
+            var w = videoOutSide.width
+            var h = videoOutSide.height
+            var bad = (w <= 0 || h <= 0)
+            if (bad) {
+                if (!_videoOutSideHadBadGeom) {
+                    console.warn("[Client][UI][Video][VideoOutputGeom] DrivingVideoPanel[" + title + "] invalid axis=" + axis
+                                 + " w=" + w + " h=" + h + " visibleOut=" + videoOutSide.visible
+                                 + " tMs=" + Date.now())
+                }
+                _videoOutSideHadBadGeom = true
+            } else if (_videoOutSideHadBadGeom) {
+                _videoOutSideHadBadGeom = false
+                console.warn("[Client][UI][Video][VideoOutputGeom] DrivingVideoPanel[" + title + "] ★ recovered axis=" + axis
+                             + " w=" + w + " h=" + h + " tMs=" + Date.now())
+            }
+        }
+
+        function checkSideLayoutConstraints() {
+            if (width <= 0 || height <= 0) {
+                console.warn("[Client][UI][Video] VideoPanel[" + title + "] 尺寸为0或负数！(DrivingVideoPanel)"
+                    + " width=" + width + " height=" + height
+                    + " visible=" + visible)
+            }
+        }
 
         function rebindSidePanelVideoOutput() {
             if (_prevVideoBindClient && _prevVideoBindClient !== streamClient) {
-                _prevVideoBindClient.bindVideoOutput(null)
+                _prevVideoBindClient.bindVideoSurface(null)
                 _prevVideoBindClient = null
             }
             if (streamClient && videoOutSide) {
-                streamClient.bindVideoOutput(videoOutSide)
+                streamClient.bindVideoSurface(videoOutSide)
                 _prevVideoBindClient = streamClient
             }
         }
 
         // streamClient 变化诊断
         onStreamClientChanged: {
+            var prevId = _streamClientIdentity
+            _streamClientIdentity = streamClient
+            if (!streamClient || prevId !== streamClient) {
+                everHadVideoFrame = false
+                hasVideoFrame = false
+                console.warn("[Client][UI][Video][StreamIdentity] VideoPanel[" + title + "] ptr "
+                             + (streamClient ? String(streamClient) : "null")
+                             + " prevPtr=" + (prevId ? String(prevId) : "null")
+                             + " resetEverHad=true")
+            }
             rebindSidePanelVideoOutput()
             var info = (streamClient !== null && streamClient !== undefined)
-                ? ("ptr=" + streamClient + " type=" + (streamClient.metaObject ? streamClient.metaObject().className() : "N/A"))
+                ? ("ptr=" + streamClient)
                 : "null/undefined"
             console.warn("[Client][UI][Video] VideoPanel[" + title + "] onStreamClientChanged streamClient=" + info)
         }
+
+        onWidthChanged: checkSideLayoutConstraints()
+        onHeightChanged: checkSideLayoutConstraints()
         
         radius: 6
         color: colorPanel
@@ -91,9 +154,38 @@ Rectangle {
             id: placeholderClearTimer
             interval: placeholderClearDelay
             repeat: false
+            onTriggered: { }
+        }
+
+        Timer {
+            id: sideConnectionsDiagTimer
+            interval: 10000
+            repeat: true
+            running: true
             onTriggered: {
-                hasVideoFrame = false
-                console.log("[Client][UI][Video] VideoPanel placeholder 显示（连接断开≥" + placeholderClearDelay/1000 + "s）")
+                var _wsm = AppContext.webrtcStreamManager ? AppContext.webrtcStreamManager : null
+                if (!_wsm) return
+                var sc = drivingVideoPanelRoot.streamClient
+                var scInfo = (sc !== null && sc !== undefined)
+                    ? ("ptr=" + sc) : "null"
+                var myRc = -1
+                if (sc) {
+                    if (title === "左视图")
+                        myRc = _wsm.getLeftSignalReceiverCount ? _wsm.getLeftSignalReceiverCount() : -1
+                    else if (title === "右视图")
+                        myRc = _wsm.getRightSignalReceiverCount ? _wsm.getRightSignalReceiverCount() : -1
+                    else if (title === "后视图")
+                        myRc = _wsm.getRearSignalReceiverCount ? _wsm.getRearSignalReceiverCount() : -1
+                }
+                var pend = (sc && sc.pendingVideoHandlerDepth) ? sc.pendingVideoHandlerDepth() : -1
+                var binds = (sc && sc.bindVideoSurfaceInvocationCount) ? sc.bindVideoSurfaceInvocationCount() : -1
+                var bindsLife = (sc && sc.bindVideoSurfaceLifetimeInvocationCount) ? sc.bindVideoSurfaceLifetimeInvocationCount() : -1
+                var totalP = _wsm.getTotalPendingFrames ? _wsm.getTotalPendingFrames() : -1
+                console.log("[Client][UI][Video] PeriodicDiag DrivingVideoPanel[" + title + "]"
+                            + " streamClient=" + scInfo + " myRc=" + myRc
+                            + " pendingDepth=" + pend
+                            + " bindSurfThisConn=" + binds + " bindSurfLifetime=" + bindsLife
+                            + " totalPendingAllStreams=" + totalP)
             }
         }
         
@@ -103,6 +195,7 @@ Rectangle {
             spacing: 4
             
             Text {
+                id: sidePanelTitleText
                 text: title
                 color: colorTextPrimary
                 font.pixelSize: 12
@@ -111,45 +204,94 @@ Rectangle {
             }
             
             Item {
-                width: parent.width
-                height: parent.height - 24
+                width: Math.max(1, parent.width)
+                height: Math.max(32, parent.height - sidePanelTitleText.height - parent.spacing)
                 clip: true
+
+                Rectangle {
+                    anchors.fill: parent
+                    z: 0
+                    color: colorPanel
+                }
                 
-                VideoOutput {
+                RemoteVideoSurface {
                     id: videoOutSide
                     anchors.fill: parent
                     z: 5
-                    fillMode: VideoOutput.PreserveAspectCrop
+                    fillMode: 1
+                    panelLabel: drivingVideoPanelRoot.title
                     Component.onCompleted: drivingVideoPanelRoot.rebindSidePanelVideoOutput()
+                    onWidthChanged: {
+                        drivingVideoPanelRoot.diagSideVideoOutputGeom("w")
+                        if (width <= 0 || height <= 0)
+                            console.warn("[Client][UI][Video][RemoteSurfaceSize] DrivingVideoPanel[" + drivingVideoPanelRoot.title + "]"
+                                         + " w=" + width + " h=" + height)
+                    }
+                    onHeightChanged: {
+                        drivingVideoPanelRoot.diagSideVideoOutputGeom("h")
+                        if (width <= 0 || height <= 0)
+                            console.warn("[Client][UI][Video][RemoteSurfaceSize] DrivingVideoPanel[" + drivingVideoPanelRoot.title + "]"
+                                         + " w=" + width + " h=" + height)
+                    }
+                    onVisibleChanged: {
+                        console.warn("[Client][UI][Video][RemoteSurfaceVisible] DrivingVideoPanel[" + drivingVideoPanelRoot.title + "]"
+                                     + " visible=" + visible + " w=" + width + " h=" + height
+                                     + " tMs=" + Date.now())
+                    }
                 }
 
                 Connections {
+                    id: sideStreamClientConnections
                     target: streamClient
                     ignoreUnknownSignals: true
 
-                    function onVideoFrameReady(image, frameWidth, frameHeight, frameId) {
+                    function onTargetChanged() {
+                        var targetObj = sideStreamClientConnections.target !== undefined ? sideStreamClientConnections.target : null
+                        var targetInfo = (targetObj !== null && targetObj !== undefined)
+                            ? ("ptr=" + targetObj) : "null/undefined"
+                        console.warn("[Client][UI][Video] DrivingVideoPanel[" + drivingVideoPanelRoot.title
+                                     + "] Connections.target changed target=" + targetInfo)
+                    }
+
+                    function onVideoFrameReady(frameWidth, frameHeight, frameId) {
                         var hasValidSize = (frameWidth > 0 && frameHeight > 0)
+                        drivingVideoPanelRoot._sideFrameReadyLogSeq = drivingVideoPanelRoot._sideFrameReadyLogSeq + 1
+                        var n = drivingVideoPanelRoot._sideFrameReadyLogSeq
+                        if (!hasValidSize) {
+                            if (n <= 15 || (n % 120 === 0))
+                                console.warn("[Client][UI][Video][FrameReady] DrivingVideoPanel[" + drivingVideoPanelRoot.title + "] INVALID"
+                                             + " frameId=" + frameId + " fw=" + frameWidth + " fh=" + frameHeight)
+                        } else if (n <= 5 || (n % 120 === 0)) {
+                            console.log("[Client][UI][Video][FrameReady] DrivingVideoPanel[" + drivingVideoPanelRoot.title + "] ok"
+                                        + " n=" + n + " " + frameWidth + "x" + frameHeight + " frameId=" + frameId)
+                        }
                         if (hasValidSize) {
                             placeholderClearTimer.stop()
                             hasVideoFrame = true
+                            everHadVideoFrame = true
+                        } else if (!everHadVideoFrame) {
+                            hasVideoFrame = false
                         }
                     }
 
                     function onConnectionStatusChanged(connected) {
-                        if (connected) {
+                        if (connected)
                             placeholderClearTimer.stop()
-                        } else {
-                            placeholderClearTimer.restart()
-                        }
                     }
                 }
                 
-                // 占位图标
+                // 占位图标（不透明底：无帧时与 VideoPanel.qml / DrivingInterface 内联 VideoPanel 一致，避免透出宿主）
                 Rectangle {
                     anchors.fill: parent
-                    color: "transparent"
-                    visible: showPlaceholder && !hasVideoFrame
+                    color: colorPanel
+                    visible: showPlaceholder && !everHadVideoFrame
                     z: 15
+                    onVisibleChanged: {
+                        console.warn("[Client][UI][Video][Placeholder] VideoPanel[" + title + "] 📹层 visible=" + visible
+                                     + " everHadVideoFrame=" + everHadVideoFrame
+                                     + " showPlaceholder=" + showPlaceholder
+                                     + " z=15>RemoteVideoSurface.z=5")
+                    }
                     Text {
                         anchors.centerIn: parent
                         text: "📹"
@@ -206,7 +348,7 @@ Rectangle {
         }
     }
     
-    // ═══════════════════════════���═══════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════════════════════
     // 右列：右视图 + 高精地图
     // ═══════════════════════════════════════════════════════════════════════════
     ColumnLayout {

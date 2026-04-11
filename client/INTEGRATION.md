@@ -206,7 +206,7 @@ http://<server>/index/api/webrtc?app=<app>&stream=<vin>&type=play
 | 文件 | 说明 |
 |------|------|
 | `src/authmanager.h/cpp` | 登录认证管理 |
-| `src/vehiclemanager.h/cpp` | 车辆列表和选择管理 |
+| `src/vehiclemanager.h/cpp` + `src/services/vehiclecatalogclient.*` + `src/services/remotesessionclient.*` + `src/services/vehicle_api_parsers.*` | 车辆列表、HTTP 建会话、VIN 状态（列表/会话 HTTP 子模块 + 可测解析） |
 | `qml/LoginDialog.qml` | 登录界面 |
 | `qml/VehicleSelectionDialog.qml` | 车辆选择界面 |
 

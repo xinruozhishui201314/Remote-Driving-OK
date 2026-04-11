@@ -1,9 +1,10 @@
 #pragma once
 #include <QObject>
 #include <QTimer>
-#include <memory>
+
 #include <atomic>
 #include <cstdint>
+#include <memory>
 
 class VehicleStatus;
 class SystemStateMachine;
@@ -22,86 +23,93 @@ class VehicleControlService;
  * 50Hz 安全检查周期（20ms）。
  */
 class SafetyMonitorService : public QObject {
-    Q_OBJECT
+  Q_OBJECT
 
-public:
-    struct Config {
-        // Deadman timer（操作员持续操控）
-        int deadmanTimeoutMs = 3000;
+ public:
+  struct Config {
+    // Deadman timer（操作员持续操控）
+    int deadmanTimeoutMs = 3000;
 
-        // 延迟看门狗
-        double maxOneWayLatencyMs   = 150.0;
-        double maxRoundTripMs       = 250.0;
-        double warningLatencyMs     = 100.0;
-        int    emergencyTriggerCount = 3; // 连续超限次数触发急停
+    // 延迟看门狗
+    double maxOneWayLatencyMs = 150.0;
+    double maxRoundTripMs = 250.0;
+    double warningLatencyMs = 100.0;
+    int emergencyTriggerCount = 3;  // 连续超限次数触发急停
 
-        // 心跳监控
-        int expectedHeartbeatIntervalMs = 100;
-        int heartbeatTimeoutMs          = 500;
-        int missedBeforeWarning         = 3;
-        int missedBeforeEmergency       = 5;
+    // 心跳监控
+    int expectedHeartbeatIntervalMs = 100;
+    int heartbeatTimeoutMs = 500;
+    int missedBeforeWarning = 3;
+    int missedBeforeEmergency = 5;
 
-        // 操作员监控
-        int inactivityTimeoutMs = 5000;
-    };
+    // 操作员监控
+    int inactivityTimeoutMs = 5000;
+  };
 
-    explicit SafetyMonitorService(VehicleStatus* vs,
-                                   SystemStateMachine* fsm,
-                                   QObject* parent = nullptr);
-    ~SafetyMonitorService() override;
+  explicit SafetyMonitorService(VehicleStatus* vs, SystemStateMachine* fsm,
+                                QObject* parent = nullptr);
+  ~SafetyMonitorService() override;
 
-    void setControlService(VehicleControlService* ctrl) { m_control = ctrl; }
-    void setConfig(const Config& cfg);
+  void setControlService(VehicleControlService* ctrl) { m_control = ctrl; }
+  void setConfig(const Config& cfg);
 
-    bool initialize();
-    void start();
-    void stop();
+  bool initialize();
+  /** 启动 50Hz 安全巡检；后端会话建立后由 SessionManager 调用（幂等）。 */
+  virtual void start();
+  virtual void stop();
 
-    // 外部输入
-    void updateLatency(double oneWayMs, double rttMs);
-    void onHeartbeatReceived();
-    void onOperatorActivity(); // 由 VehicleControlService 调用
+  /** 单测专用：注入单调时钟；本类内所有原 TimeUtils::nowMs() 路径改为使用该时间。生产代码勿调用。
+   */
+  static void setUnitTestNowMsForTesting(int64_t ms);
+  static void clearUnitTestClockForTesting();
 
-    bool isDeadmanActive() const { return m_deadmanActive.load(); }
+  // 外部输入（直接调用）
+  void updateLatency(double oneWayMs, double rttMs);
+  void onHeartbeatReceived();
 
-signals:
-    void safetyWarning(const QString& message);
-    void speedLimitRequested(double maxKmh);
-    void emergencyStopTriggered(const QString& reason);
-    void safetyStatusChanged(bool allOk);
+  bool isDeadmanActive() const { return m_deadmanActive.load(); }
 
-public slots:
-    void runSafetyChecks();
+ signals:
+  void safetyWarning(const QString& message);
+  void speedLimitRequested(double maxKmh);
+  void emergencyStopTriggered(const QString& reason);
+  void safetyStatusChanged(bool allOk);
 
-private:
-    void checkLatency();
-    void checkHeartbeat();
-    void checkOperatorActivity();
-    void checkDeadman();
-    void triggerEmergencyStop(const QString& reason);
+ public slots:
+  void runSafetyChecks();
+  /** VehicleControlService::pingSafety 使用 QMetaObject::invokeMethod 排队调用；必须为 slot
+   *（Qt 文档：invokable 仅限 slot / Q_INVOKABLE / signal）。 */
+  void onOperatorActivity();
 
-    Config m_config;
-    VehicleStatus*        m_vehicleStatus = nullptr;
-    SystemStateMachine*   m_fsm           = nullptr;
-    VehicleControlService* m_control      = nullptr;
+ private:
+  void checkLatency();
+  void checkHeartbeat();
+  void checkOperatorActivity();
+  void checkDeadman();
+  void triggerEmergencyStop(const QString& reason);
 
-    QTimer m_safetyTimer;
+  Config m_config;
+  VehicleStatus* m_vehicleStatus = nullptr;
+  SystemStateMachine* m_fsm = nullptr;
+  VehicleControlService* m_control = nullptr;
 
-    // Latency watchdog
-    std::atomic<double> m_currentOneWayMs{0.0};
-    std::atomic<double> m_currentRTTMs{0.0};
-    int    m_latencyViolationCount = 0;
+  QTimer m_safetyTimer;
 
-    // Heartbeat monitor
-    int64_t m_lastHeartbeatMs = 0;
-    int     m_missedHeartbeats = 0;
+  // Latency watchdog
+  std::atomic<double> m_currentOneWayMs{0.0};
+  std::atomic<double> m_currentRTTMs{0.0};
+  int m_latencyViolationCount = 0;
 
-    // Operator / Deadman
-    int64_t m_lastOperatorActivityMs = 0;
-    std::atomic<bool> m_deadmanActive{false};
+  // Heartbeat monitor
+  int64_t m_lastHeartbeatMs = 0;
+  int m_missedHeartbeats = 0;
 
-    bool m_started = false;
+  // Operator / Deadman
+  int64_t m_lastOperatorActivityMs = 0;
+  std::atomic<bool> m_deadmanActive{false};
 
-    static constexpr int kSafetyCheckHz = 50;
-    static constexpr int kSafetyCheckIntervalMs = 1000 / kSafetyCheckHz; // 20ms
+  bool m_started = false;
+
+  static constexpr int kSafetyCheckHz = 50;
+  static constexpr int kSafetyCheckIntervalMs = 1000 / kSafetyCheckHz;  // 20ms
 };

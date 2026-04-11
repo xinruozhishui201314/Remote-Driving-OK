@@ -370,6 +370,8 @@ Base: /api/v1
 - POST /faults/{faultId}/ack
 - POST /faults/{faultId}/clear              # 需权限
 
+**OpenAPI 真源**：正式路径、请求/响应模型以 `backend/api/openapi.yaml` 为准（与上表概要冲突时以 OpenAPI 为准并回写本节）。
+
 ---
 
 ## 11. 全链路结构化日志规范 (Observability)
@@ -379,3 +381,41 @@ Base: /api/v1
 所有日志必须输出为单行 JSON 格式。
 
 **标准字段**：
+- 时间戳、级别、消息、模块名；涉及远端会话时必须携带 `vin`、`sessionId`；跨服务追踪携带 `traceId`（与 §2 术语一致）。字段扩展须向后兼容（只 additive）。
+
+---
+
+## 12. 接口契约真源与分级演进（MVP / V1 / V2）
+
+### 12.1 真源与 CI 门禁（冲突处理）
+
+| 层级 | 单一真源 | 机器校验入口 |
+|------|----------|----------------|
+| HTTP API（Backend 对外） | `backend/api/openapi.yaml` | `.github/workflows/contract-ci.yml` → `scripts/verify-contract-artifacts.sh`（OpenAPI 结构）+ `scripts/verify-contract-v1-cross-service.sh`（路由与契约对齐） |
+| MQTT 控制/状态消息 | `mqtt/schemas/*.json` | 同上 + `mqtt/schemas/examples/manifest.json` 下 golden 实例 |
+| 客户端远驾 UI 模块边界 | `docs/CLIENT_UI_MODULE_CONTRACT.md` | `.github/workflows/client-ci.yml` → `scripts/verify-client-ui-module-contract.sh`（及 `verify-client-ui-quality-chain.sh`） |
+| 业务与安全不变量 | **本文档** | 评审与场景/E2E；若与 OpenAPI / JSON Schema 字面冲突，**以本文档为准** 并应在同一次变更中修正契约文件 |
+
+### 12.2 MVP（当前基线）
+
+- **每层一真源**：HTTP→OpenAPI；MQTT→`mqtt/schemas`；QML→Facade 文档。
+- **CI 每条链路至少一项校验**：`contract-ci`（HTTP+MQTT）与 `client-ci`（Facade）；本地可 `./scripts/verify-contract-artifacts.sh`。
+- **兼容性默认**：字段与响应 **只 additive**；`schemaVersion` / OpenAPI `info.version` 按语义化版本管理。
+
+### 12.3 V1（扩展基线）
+
+- **Golden 全覆盖**：每种对外 MQTT Schema 在 `mqtt/schemas/examples/manifest.json` 中至少登记一条合法样例；新增消息类型须同步追加。
+- **跨服务契约测试**：`scripts/validate_api_against_openapi.py` 校验 Backend 注册路由与 OpenAPI 路径模板（含 `{param}` 与 C++ 正则路由匹配）；由 `verify-contract-v1-cross-service.sh` 串联。
+- **弃用策略**：见 §12.5；任何弃用须在 OpenAPI / Schema 描述中写明 `deprecated` 与下线时间窗口。
+
+### 12.4 V2（发布绑定）
+
+- **Breaking 自动检测**：PR 上对 `backend/api/openapi.yaml` 运行 `oasdiff breaking`（见 `scripts/verify-openapi-breaking-change.sh` 与 `contract-ci`）；发现 breaking 须 bump **主版本**（URL `/api/vx` 或 OpenAPI `info.version` 主版本）并一次性更新全部 consumers。
+- **生成物绑定（可选演进）**：在发布流水线中对 OpenAPI / Schema 生成客户端 Stub 或文档站点，产物版本与镜像 tag 对齐；具体工具链由 `docs/API_STANDARDIZATION.md` 维护。
+
+### 12.5 弃用策略（Deprecation）
+
+1. **标记**：在 OpenAPI 的 operation 或字段、或在 JSON Schema 的字段描述中标注 `deprecated: true` 或文字「弃用 / 替换为 …」。
+2. **并行期**：至少保留 **一个完整 minor 周期**（或不少于 4 周，取较长者），期间旧字段仍可读写；新字段优先在并行期内由新版本 producer 写入。
+3. **移除**：仅允许在 **主版本升级** 中删除字段或收紧必填；必须同时提供迁移说明（`docs/` 或 OpenAPI description）与回滚方案。
+4. **观测**：弃用期内记录「仍使用旧字段」的 metrics 或日志采样；归零后再执行移除。

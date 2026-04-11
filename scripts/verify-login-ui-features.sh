@@ -34,7 +34,9 @@ if ! $COMPOSE_CMD exec -T client-dev test -x /tmp/client-build/RemoteDrivingClie
 fi
 
 log_section "1) 运行客户端约 5 秒（不 --reset-login，以触发 loadCredentials 与 usernameHistory 日志）"
-$COMPOSE_CMD exec -T -e DISPLAY=:0 -e LIBGL_ALWAYS_SOFTWARE=1 -e CLIENT_LOG_FILE="$LOG_PATH" client-dev bash -c "cd /tmp/client-build && (timeout 5 ./RemoteDrivingClient 2>&1 || true)" >/dev/null 2>&1 || true
+# 短跑 UI：强制软件栈避免 CI/无 GPU 环境漂移；默认硬件门禁会拒绝 llvmpipe，故显式允许软件呈现
+$COMPOSE_CMD exec -T -e DISPLAY=:0 -e CLIENT_ASSUME_SOFTWARE_GL=1 -e CLIENT_ALLOW_SOFTWARE_PRESENTATION=1 \
+  -e CLIENT_LOG_FILE="$LOG_PATH" -e CLIENT_STARTUP_TCP_GATE=0 client-dev bash -c "cd /tmp/client-build && (timeout 5 ./RemoteDrivingClient 2>&1 || true)" >/dev/null 2>&1 || true
 sleep 1
 
 log_section "2) 检查日志中的账户名历史与登录页相关输出"

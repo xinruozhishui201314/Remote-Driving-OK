@@ -1,5 +1,6 @@
 #pragma once
 
+class QGuiApplication;
 class QString;
 
 /**
@@ -11,4 +12,11 @@ namespace ClientLogging {
 bool init();
 void shutdown();
 
-} // namespace ClientLogging
+/**
+ * Unix：SIGINT/SIGTERM 默认可能绕过 QCoreApplication::quit，导致异步日志未 drain。
+ * 在 QGuiApplication 构造且 init() 之后调用：自管道 + QSocketNotifier 在主线程 shutdown 并 exit(130/143)。
+ * 非 Unix 或 pipe 失败时为 no-op。
+ */
+void installUnixSignalLogFlushAndQuit(QGuiApplication &app);
+
+}  // namespace ClientLogging

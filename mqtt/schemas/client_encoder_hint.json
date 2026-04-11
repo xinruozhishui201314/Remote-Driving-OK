@@ -1,0 +1,34 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "urn:teleop:schemas:client_encoder_hint:1.0.0",
+  "title": "Client → vehicle/bridge: video encoder hint (MQTT relay of DataChannel payload)",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["type", "schemaVersion"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "const": "client_video_encoder_hint"
+    },
+    "schemaVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "stream": {
+      "type": "string",
+      "description": "WebRTC/ZLM stream id e.g. {vin}_cam_front"
+    },
+    "vin": {
+      "type": "string",
+      "description": "Optional; client MQTT relay may set from session VIN"
+    },
+    "preferH264SingleSlice": { "type": "boolean" },
+    "reasonCode": { "type": "string" },
+    "note": { "type": "string" },
+    "mqttRelayAtMs": {
+      "type": "integer",
+      "description": "Set by client MqttController when publishing to MQTT"
+    }
+  },
+  "additionalProperties": true
+}

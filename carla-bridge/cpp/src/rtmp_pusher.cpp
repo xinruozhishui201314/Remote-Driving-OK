@@ -89,10 +89,33 @@ void RtmpPusher::startTestPattern() {
 
 void RtmpPusher::writerLoop() {
   std::ostringstream oss;
+  
+  // ─ 读取编码参数环境变量（与 Python carla_bridge.py 对齐）
+  int bitrate_kbps = 2000;  // 默认值
+  int slices = 1;           // 默认值
+  
+  if (const char* br_env = std::getenv("VIDEO_BITRATE_KBPS")) {
+    try {
+      bitrate_kbps = std::max(1, std::stoi(br_env));
+    } catch (...) {}
+  }
+  if (const char* sl_env = std::getenv("CARLA_X264_SLICES")) {
+    try {
+      slices = std::max(1, std::stoi(sl_env));
+    } catch (...) {}
+  }
+  
+  int bufsize_kbps = bitrate_kbps * 2;
+  
   oss << "ffmpeg -y -f rawvideo -pix_fmt bgr24 -s " << m_width << "x" << m_height
       << " -r " << m_fps << " -i pipe:0"
-      << " -c:v libx264 -preset ultrafast -tune zerolatency -pix_fmt yuv420p"
+      << " -c:v libx264 -preset ultrafast -tune zerolatency"
+      << " -b:v " << bitrate_kbps << "k"          // ✅ 新增：码率控制
+      << " -maxrate " << bitrate_kbps << "k"      // ✅ 新增：最大码率限制
+      << " -bufsize " << bufsize_kbps << "k"      // ✅ 新增：缓冲区大小
+      << " -pix_fmt yuv420p"
       << " -g " << m_fps << " -keyint_min " << m_fps
+      << " -x264-params slices=" << slices        // ✅ 新增：切片控制
       << " -f flv " << m_rtmpUrl << " 2>/dev/null";
   std::string cmd = oss.str();
   std::cout << logTag(m_streamId) << " ffmpeg 推流已启动 -> " << m_rtmpUrl << std::endl;

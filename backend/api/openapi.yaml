@@ -68,9 +68,7 @@ paths:
           schema:
             type: string
             default: "1.0.0"
-            examples:
-              v1_0_0: "1.0.0"
-              v1_1_0: "1.1.0"
+            example: "1.1.0"
       responses:
         '200':
           description: Success
@@ -407,7 +405,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: Keycloak JWT, from Authorization: Bearer <token>
+      description: "Keycloak JWT, from Authorization: Bearer <token>"
 
   schemas:
     HealthResponse:
@@ -457,7 +455,7 @@ components:
       properties:
         apiVersion:
           type: string
-          const: "1.0.0"
+          enum: ["1.0.0"]
         sub:
           type: string
           description: Keycloak subject (user ID)
@@ -478,7 +476,7 @@ components:
       properties:
         apiVersion:
           type: string
-          const: "1.1.0"
+          enum: ["1.1.0"]
         vin:
           type: string
         model:
@@ -533,7 +531,7 @@ components:
       properties:
         apiVersion:
           type: string
-          const: "1.1.0"
+          enum: ["1.1.0"]
         sessionId:
           type: string
           format: uuid
@@ -553,7 +551,7 @@ components:
       properties:
         apiVersion:
           type: string
-          const: "1.1.0"
+          enum: ["1.1.0"]
         whip:
           type: string
           format: uri
@@ -569,7 +567,7 @@ components:
       properties:
         apiVersion:
           type: string
-          const: "1.1.0"
+          enum: ["1.1.0"]
         algo:
           type: string
           enum: [HMAC-SHA256, NONE]
@@ -588,7 +586,7 @@ components:
       properties:
         apiVersion:
           type: string
-          const: "1.1.0"
+          enum: ["1.1.0"]
         brokerUrl:
           type: string
           format: uri
@@ -625,7 +623,7 @@ components:
           type: string
         state:
           type: string
-          const: "ENDED"
+          enum: ["ENDED"]
         endedAt:
           type: string
           format: date-time
@@ -709,7 +707,7 @@ components:
             properties:
               error:
                 type: string
-                const: "version_mismatch"
+                enum: ["version_mismatch"]
               clientVersion:
                 type: string
               serverVersion:

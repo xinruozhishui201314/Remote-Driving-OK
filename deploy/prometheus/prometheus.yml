@@ -8,6 +8,10 @@ global:
     cluster: 'teleop'
     environment: 'development'
 
+# 客户端 / 媒体 / 安全告警（示例阈值，部署时请按环境调参）
+rule_files:
+  - "alerts/client_teleop.yml"
+
 # Alertmanager 配置（可选）
 # alerting:
 #   alertmanagers:
@@ -41,6 +45,13 @@ scrape_configs:
       - targets: ['zlmediakit:80']
     metrics_path: '/index/api/getMediaList'
     scrape_interval: 15s
+
+  # 驾驶舱客户端（MetricsCollector + HttpEndpointServer；端口以进程启动参数为准，示例 9080）
+  # - job_name: 'teleop-client'
+  #   static_configs:
+  #     - targets: ['host.docker.internal:9080']
+  #   metrics_path: '/metrics'
+  #   scrape_interval: 15s
 
   # PostgreSQL Exporter（需要单独部署）
   # - job_name: 'postgres-exporter'

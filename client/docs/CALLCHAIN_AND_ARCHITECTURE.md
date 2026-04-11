@@ -20,12 +20,13 @@ sequenceDiagram
   QML->>VM: selectVehicle(vin) / setCurrentVin
   VM-->>MQTT: currentVinChanged(vin)
   QML->>VM: startSessionForCurrentVin(serverUrl, token)
-  VM-->>QML: sessionCreated(sessionId, whip, whep, controlConfig)
+  VM-->>QML: sessionCreated(sessionVin, sessionId, whip, whep, controlConfig)
   QML->>MQTT: connectToBroker / set broker from controlConfig
   QML->>MQTT: requestStreamStart
   QML->>WSM: connect streams WHEP
   MQTT-->>VS: statusReceived
-  QML->>VCS: sendUiCommand(type, payload) 或 legacy sendControlCommand
+  QML->>AppCtx: sendUiCommand(type, payload)
+  AppCtx->>VCS: sendUiCommand(type, payload)
   Note over QML,VCS: VehicleControlService 内部调用 MqttController::sendControlCommand
   QML->>VCS: requestEmergencyStop
   VCS->>MQTT: sendEmergencyStopCommand(true)
@@ -52,10 +53,13 @@ sequenceDiagram
 |------|------|------|
 | `CLIENT_DEADMAN_ENABLED` | 是否启用死手超时（远驾模式下无操作则急停） | `1` |
 | `CLIENT_DEADMAN_TIMEOUT_MS` | 无操作超时（毫秒） | `3000` |
-| `CLIENT_LEGACY_CONTROL_ONLY` | 仅走旧版 QML→MQTT 控车路径（排障） | `0` |
+| ~~`CLIENT_LEGACY_CONTROL_ONLY`~~ | 已移除；契约见 `scripts/verify-client-contract.sh` | — |
 | `CLIENT_ENABLE_CONTROL_TICKER` | 启用同线程控制节拍占位 | `0` |
 | `CLIENT_AUTO_CONNECT_VIDEO` | 置 `1` 时自动连接视频（自动化/调试） | 未设置 |
 | `CLIENT_LAYOUT_DEBUG` | 置 `1` 开启布局调试 | 未设置 |
+| `CLIENT_MEDIA_HEALTH_RECOVERY_MS` | 每槽位呈现惩罚持续时间（ms） | `20000`（范围 3000–120000） |
+| `CLIENT_MEDIA_HEALTH_AGGREGATE` | `weighted` / `min`：多路呈现因子聚合策略 | `weighted` |
+| `CLIENT_MEDIA_HEALTH_WEIGHT_FRONT` | weighted 模式下主路权重 | `2` |
 | `DEFAULT_SERVER_URL` / `REMOTE_DRIVING_SERVER` | 默认 Backend URL（`main.cpp` 注入 QML） | 可回落到 `BACKEND_URL` |
 
 ## 4. 日志前缀

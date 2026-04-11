@@ -1,0 +1,26 @@
+# 备用 NVIDIA overlay：不使用顶层 `gpus:`，改用 deploy.reservations.devices。
+# 供旧版 Compose 或解析 `gpus` 失败的环境；由 scripts/verify-client-nvidia-gl-prereqs.sh 自动回退选用。
+#
+# 注意：部分 Docker Compose 版本对单机 `up` 仍可能不应用 deploy 块；若容器内 nvidia-smi 不可用，
+# 请升级 Docker / Compose，或改用 docker-compose.client-nvidia-gl.yml（gpus: all）。
+#
+# 与 docker-compose.client-nvidia-gl.yml 环境/卷一致，避免合并时语义分叉。
+
+services:
+  client-dev:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-graphics,utility,display,compute}
+      XAUTHORITY: /root/.Xauthority
+    volumes:
+      - type: bind
+        source: ${XAUTHORITY_HOST_PATH:-${HOME}/.Xauthority}
+        target: /root/.Xauthority
+        read_only: true

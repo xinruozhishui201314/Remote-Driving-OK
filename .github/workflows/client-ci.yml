@@ -1,0 +1,109 @@
+# 客户端 CI：MVP 映射表契约（必过）+ 覆盖率分路径门禁（仅手动触发，避免 GitHub 托管机缺完整 Qt6 MultimediaQuick 链）。
+name: Client CI
+
+on:
+  push:
+    paths:
+      - 'client/**'
+      - 'docs/CLIENT_UNIT_TEST_SOURCE_MAP.md'
+      - 'docs/CLIENT_UI_QUALITY_CHAIN.md'
+      - 'scripts/verify-client-source-map-sync.sh'
+      - 'scripts/verify-client-ui-quality-chain.sh'
+      - 'scripts/verify-client-ui-module-contract.sh'
+      - 'scripts/verify-client-contract.sh'
+      - 'scripts/verify-qml-appcontext-imports.sh'
+      - 'scripts/verify-driving-layout.sh'
+      - 'scripts/verify-client-video-pipeline.sh'
+      - 'scripts/verify-client-video-rgba-contract.sh'
+      - 'scripts/verify-qmltypes-match-generated.sh'
+      - 'scripts/regenerate-client-qmltypes.sh'
+      - 'client/qml/DrivingFacade/**'
+      - 'scripts/run-client-coverage-with-thresholds.sh'
+      - '.github/workflows/client-ci.yml'
+  pull_request:
+    paths:
+      - 'client/**'
+      - 'docs/CLIENT_UNIT_TEST_SOURCE_MAP.md'
+      - 'docs/CLIENT_UI_QUALITY_CHAIN.md'
+      - 'scripts/verify-client-source-map-sync.sh'
+      - 'scripts/verify-client-ui-quality-chain.sh'
+      - 'scripts/verify-client-ui-module-contract.sh'
+      - 'scripts/verify-client-contract.sh'
+      - 'scripts/verify-qml-appcontext-imports.sh'
+      - 'scripts/verify-driving-layout.sh'
+      - 'scripts/verify-client-video-pipeline.sh'
+      - 'scripts/verify-client-video-rgba-contract.sh'
+      - 'scripts/verify-qmltypes-match-generated.sh'
+      - 'scripts/regenerate-client-qmltypes.sh'
+      - 'client/qml/DrivingFacade/**'
+      - 'scripts/run-client-coverage-with-thresholds.sh'
+      - '.github/workflows/client-ci.yml'
+  workflow_dispatch: {}
+
+jobs:
+  source-map-sync:
+    name: CTest ↔ CLIENT_UNIT_TEST_SOURCE_MAP.md
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify source map sync
+        run: ./scripts/verify-client-source-map-sync.sh
+
+  # 契约 + 静态 grep + 布局 + 视频结构（无 Docker/Qt；完整 qmllint/format 见 docs/CLIENT_UI_QUALITY_CHAIN.md）
+  ui-quality-chain-lite:
+    name: UI quality chain (lite, no Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: UI quality chain (CLIENT_UI_CHAIN_CI_LITE=1)
+        env:
+          CLIENT_UI_CHAIN_CI_LITE: "1"
+        run: ./scripts/verify-client-ui-quality-chain.sh
+
+  # CMake 配置并打印 VA-API / NVDEC（与 client/CMakeLists.txt STATUS 对齐；需完整 Qt6+FFmpeg+libva-dev）
+  client-cmake-hw-decode-flags:
+    name: Client cmake — VA-API / NVDEC ON|OFF
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Qt6 + FFmpeg + VA-API (Intel/AMD 硬解探测)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            cmake pkg-config \
+            qt6-base-dev qt6-declarative-dev qt6-multimedia-dev \
+            libavcodec-dev libavutil-dev libswscale-dev libavformat-dev \
+            libva-dev libdrm-dev libegl1-mesa-dev
+      - name: Configure client and print HW decode flags
+        run: |
+          cmake -S client -B /tmp/rd-client-hw-cmake -DCMAKE_BUILD_TYPE=Release 2>&1 | tee /tmp/cmake-client.log
+          echo "========== VA-API / NVDEC (expected in CMake STATUS) =========="
+          grep -E "VA-API:|NVDEC:|Client HW decode" /tmp/cmake-client.log
+          echo "================================================================"
+
+  # MVP：分路径 *_LINES_MIN 在 client-dev / 本机 oneclick 构建通过后执行（与脚本注释示例一致）。
+  # 在 GHA 上跑需与 Dockerfile.client-dev 同等 Qt 链；默认仅手动触发以免误红主分支。
+  coverage-thresholds:
+    name: Coverage gates (CLIENT_COVERAGE_ENFORCE + *_LINES_MIN)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    needs: source-map-sync
+    steps:
+      - uses: actions/checkout@v4
+      - name: Print coverage gate recipe
+        run: |
+          echo "在 client-dev 或本机构建目录执行（示例）:"
+          echo "  export CLIENT_COVERAGE_ENFORCE=1 OVERALL_LINES_MIN=18 CORE_LINES_MIN=20 \\"
+          echo "    MEDIA_LINES_MIN=15 SERVICES_LINES_MIN=15 UTILS_LINES_MIN=12 INFRA_LINES_MIN=8 APP_LINES_MIN=5"
+          echo "  ./scripts/run-client-coverage-with-thresholds.sh"
+          echo "或容器: docker compose ... run client-dev /workspace/scripts/run-client-coverage-with-thresholds.sh"
+
+  mutation-mull-hint:
+    name: Mull mutation (V1 定期任务入口)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "配置 Mull 工具链后: MULL_BUILD_DIR=<mull-build> ./scripts/run-client-mutation-sample.sh"
+          echo "参考: https://github.com/mull-project/mull"

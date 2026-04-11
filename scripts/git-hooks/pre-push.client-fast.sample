@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# 示例：git pre-push — 仅快速客户端检查（秒级，不启 Docker）
+# 安装：cp scripts/git-hooks/pre-push.client-fast.sample .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# 完整验证请在 CI 或本地执行：./scripts/run-all-client-functional-tests.sh
+set -e
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+./scripts/verify-client-contract.sh
+./scripts/verify-driving-layout.sh

@@ -1,0 +1,17 @@
+# V1：可选每周触发 Mull 提示（不执行构建，避免无 Mull 工具链时失败）。在 fork 中可改为真实 job。
+name: Client mutation (weekly reminder)
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "[Client][mutation] 每周检查：对 core/antireplay、commandsigner、RTP 解析等运行 Mull（本机或自托管 runner）。"
+          echo "  MULL_BUILD_DIR=<clang+mull 构建目录> ./scripts/run-client-mutation-sample.sh"
+          cat docs/CLIENT_UNIT_TEST_COVERAGE_TIERS.md | sed -n '/V1/,/V2/p' | head -20
