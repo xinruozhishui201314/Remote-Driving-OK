@@ -5,6 +5,10 @@
 #include <atomic>
 #include <memory>
 
+extern "C" {
+#include <libavutil/pixfmt.h>
+}
+
 class H264Decoder;
 class IHardwareDecoder;
 struct SwsContext;
@@ -40,6 +44,7 @@ class H264WebRtcHwBridge {
   static const char* kEnvVarName;
 
   bool isActive() const { return static_cast<bool>(m_dec); }
+  bool isHardwareAccelerated() const;
 
   bool tryOpen(const QByteArray& avccExtradata, int codedW, int codedH);
   void shutdown();
@@ -62,13 +67,14 @@ class H264WebRtcHwBridge {
 
  private:
   bool drainAllOutput(H264Decoder* dec);
-  bool convertCpuNv12ToRgbaAndIngest(H264Decoder* dec, struct VideoFrame& vf);
+  bool convertCpuFrameToRgbaAndIngest(H264Decoder* dec, struct VideoFrame& vf);
 
   QString m_streamTag;
   std::unique_ptr<IHardwareDecoder> m_dec;
   struct SwsContext* m_swsNv12ToRgba = nullptr;
   int m_swsW = 0;
   int m_swsH = 0;
+  AVPixelFormat m_swsSrcFmt = AV_PIX_FMT_NONE;
   QString m_backendLabel;
   std::atomic<bool> m_dmaBufSgBroken{false};
   bool m_preferDmaBufExport = false;

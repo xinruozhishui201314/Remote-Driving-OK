@@ -116,6 +116,10 @@ void H264WebRtcHwBridge::flush() {
     m_dec->flush();
 }
 
+bool H264WebRtcHwBridge::isHardwareAccelerated() const {
+  return m_dec && m_dec->isHardwareAccelerated();
+}
+
 bool H264WebRtcHwBridge::tryOpen(const QByteArray& avccExtradata, int codedW, int codedH) {
   shutdown();
   if (avccExtradata.isEmpty()) {
@@ -215,46 +219,63 @@ void H264WebRtcHwBridge::disableDmaBufExportForCpuFallback() {
              << " preferDmaWas=" << m_preferDmaBufExport << " sgEnvWanted=" << m_dmabufSgEnvWanted;
 }
 
-bool H264WebRtcHwBridge::convertCpuNv12ToRgbaAndIngest(H264Decoder* dec, VideoFrame& vf) {
+bool H264WebRtcHwBridge::convertCpuFrameToRgbaAndIngest(H264Decoder* dec, VideoFrame& vf) {
   if (!dec)
     return false;
   const int w = static_cast<int>(vf.width);
   const int h = static_cast<int>(vf.height);
-  if (w <= 0 || h <= 0 || vf.pixelFormat != VideoFrame::PixelFormat::NV12) {
-    qWarning() << "[Client][HW-E2E][" << m_streamTag << "][NV12] bad frame wxh=" << w << "x" << h
+  
+  AVPixelFormat srcAvFmt = AV_PIX_FMT_NONE;
+  if (vf.pixelFormat == VideoFrame::PixelFormat::NV12) {
+    srcAvFmt = AV_PIX_FMT_NV12;
+  } else if (vf.pixelFormat == VideoFrame::PixelFormat::YUV420P) {
+    srcAvFmt = AV_PIX_FMT_YUV420P;
+  }
+
+  if (w <= 0 || h <= 0 || srcAvFmt == AV_PIX_FMT_NONE) {
+    qWarning() << "[Client][HW-E2E][" << m_streamTag << "][CPU-Ingest] bad frame wxh=" << w << "x" << h
                << " fmt=" << static_cast<int>(vf.pixelFormat);
     return false;
   }
-  if (!vf.planes[0].data || !vf.planes[1].data) {
-    qWarning() << "[Client][HW-E2E][" << m_streamTag << "][NV12] null plane ptr";
-    return false;
-  }
-
-  if (VideoFrameEvidence::pipelineTraceEnabled()) {
-    static std::atomic<int> s_nv12CpuLog{0};
-    const int n = s_nv12CpuLog.fetch_add(1, std::memory_order_relaxed);
-    if (n < 72 || (n % 100) == 0) {
-      qInfo() << "[Client][VideoE2E][HW-NV12→RGBA] stream=" << m_streamTag << " sampleN=" << n
-              << " wxh=" << w << "x" << h << " strideY=" << vf.planes[0].stride
-              << " strideUV=" << vf.planes[1].stride
-              << " ★ Y/UV stride 与 width 关系异常时 sws 后易出现条状";
+  
+  if (vf.pixelFormat == VideoFrame::PixelFormat::NV12) {
+    if (!vf.planes[0].data || !vf.planes[1].data) {
+      qWarning() << "[Client][HW-E2E][" << m_streamTag << "][NV12] null plane ptr";
+      return false;
+    }
+  } else if (vf.pixelFormat == VideoFrame::PixelFormat::YUV420P) {
+    if (!vf.planes[0].data || !vf.planes[1].data || !vf.planes[2].data) {
+      qWarning() << "[Client][HW-E2E][" << m_streamTag << "][YUV420P] null plane ptr";
+      return false;
     }
   }
 
-  VideoInterlacedPolicy::maybeApplyToNv12VideoFrame(vf, m_streamTag);
+  if (VideoFrameEvidence::pipelineTraceEnabled()) {
+    static std::atomic<int> s_cpuLog{0};
+    const int n = s_cpuLog.fetch_add(1, std::memory_order_relaxed);
+    if (n < 72 || (n % 100) == 0) {
+      qInfo() << "[Client][VideoE2E][HW-CPU→RGBA] stream=" << m_streamTag << " sampleN=" << n
+              << " wxh=" << w << "x" << h << " fmt=" << static_cast<int>(vf.pixelFormat);
+    }
+  }
 
-  if (!m_swsNv12ToRgba || m_swsW != w || m_swsH != h) {
+  if (vf.pixelFormat == VideoFrame::PixelFormat::NV12) {
+    VideoInterlacedPolicy::maybeApplyToNv12VideoFrame(vf, m_streamTag);
+  }
+
+  if (!m_swsNv12ToRgba || m_swsW != w || m_swsH != h || m_swsSrcFmt != srcAvFmt) {
     sws_freeContext(m_swsNv12ToRgba);
     m_swsNv12ToRgba = nullptr;
     m_swsNv12ToRgba =
-        sws_getContext(w, h, AV_PIX_FMT_NV12, w, h, AV_PIX_FMT_RGBA, SWS_FAST_BILINEAR, nullptr,
+        sws_getContext(w, h, srcAvFmt, w, h, AV_PIX_FMT_RGBA, SWS_FAST_BILINEAR, nullptr,
                        nullptr, nullptr);
     m_swsW = w;
     m_swsH = h;
+    m_swsSrcFmt = srcAvFmt;
     videoSwsConfigureYuvToRgbaColorspace(m_swsNv12ToRgba);
   }
   if (!m_swsNv12ToRgba) {
-    qWarning() << "[Client][HW-E2E][" << m_streamTag << "][SWS] sws_getContext NV12→RGBA failed";
+    qWarning() << "[Client][HW-E2E][" << m_streamTag << "][SWS] sws_getContext CPU→RGBA failed";
     return false;
   }
 
@@ -265,9 +286,10 @@ bool H264WebRtcHwBridge::convertCpuNv12ToRgbaAndIngest(H264Decoder* dec, VideoFr
   }
 
   const uint8_t* srcSlice[4] = {static_cast<const uint8_t*>(vf.planes[0].data),
-                                static_cast<const uint8_t*>(vf.planes[1].data), nullptr, nullptr};
+                                static_cast<const uint8_t*>(vf.planes[1].data),
+                                static_cast<const uint8_t*>(vf.planes[2].data), nullptr};
   int srcStride[4] = {static_cast<int>(vf.planes[0].stride), static_cast<int>(vf.planes[1].stride),
-                      0, 0};
+                      static_cast<int>(vf.planes[2].stride), 0};
   uint8_t* dstSlice[1] = {rgba.bits()};
   int dstStride[1] = {static_cast<int>(rgba.bytesPerLine())};
   const int rows = sws_scale(m_swsNv12ToRgba, srcSlice, srcStride, 0, h, dstSlice, dstStride);
@@ -348,7 +370,7 @@ bool H264WebRtcHwBridge::drainAllOutput(H264Decoder* dec) {
       continue;
     }
 
-    if (!convertCpuNv12ToRgbaAndIngest(dec, vf))
+    if (!convertCpuFrameToRgbaAndIngest(dec, vf))
       return false;
   }
 }

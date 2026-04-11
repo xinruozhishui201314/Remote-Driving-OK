@@ -94,6 +94,11 @@ DecodeResult FFmpegSoftDecoder::submitPacket(const uint8_t* data, size_t size, i
   m_packet->pts = pts;
 
   const int ret = avcodec_send_packet(m_ctx, m_packet);
+  static int s_sendCount = 0;
+  if (ret >= 0 && (s_sendCount <= 5 || (s_sendCount % 300) == 0)) {
+      qDebug() << "[Client][FFmpegSoftDecoder] send_packet ok size=" << size << " pts=" << pts << " total=" << s_sendCount;
+  }
+  s_sendCount++;
   if (ret == AVERROR(EAGAIN))
     return DecodeResult::NeedMore;
   if (ret < 0) {
@@ -108,6 +113,11 @@ DecodeResult FFmpegSoftDecoder::receiveFrame(VideoFrame& frame) {
     return DecodeResult::Error;
 
   const int ret = avcodec_receive_frame(m_ctx, m_frame);
+  static int s_recvCount = 0;
+  if (ret >= 0 && (s_recvCount <= 5 || (s_recvCount % 300) == 0)) {
+      qDebug() << "[Client][FFmpegSoftDecoder] receive_frame ok wxh=" << m_frame->width << "x" << m_frame->height << " total=" << s_recvCount;
+  }
+  s_recvCount++;
   if (ret == AVERROR(EAGAIN))
     return DecodeResult::NeedMore;
   if (ret == AVERROR_EOF)
@@ -116,6 +126,7 @@ DecodeResult FFmpegSoftDecoder::receiveFrame(VideoFrame& frame) {
     return DecodeResult::Error;
 
   frame.memoryType = VideoFrame::MemoryType::CPU_MEMORY;
+  frame.pixelFormat = VideoFrame::PixelFormat::YUV420P;
   frame.width = static_cast<uint32_t>(m_frame->width);
   frame.height = static_cast<uint32_t>(m_frame->height);
   frame.pts = m_frame->pts;

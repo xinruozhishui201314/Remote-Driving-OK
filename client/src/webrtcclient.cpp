@@ -1796,15 +1796,18 @@ void WebRtcClient::setupVideoDecoder() {
 
       const int64_t onMsgTime = QDateTime::currentMSecsSinceEpoch();
       const int camFrontSeq = ++s_camFrontLogCount;
-      if (camFrontSeq <= 50) {
+      if (camFrontSeq <= 50 || (camFrontSeq % 300) == 0) {
         qInfo() << "[Client][WebRTC][onMessage] ★★★ onMessage 工作线程回调 ★★★"
                 << " camFrontSeq=" << camFrontSeq << " stream=" << m_stream
                 << " hasVariant=" << msg.index() << " lifecycleId=" << lifecycleId
                 << " time=" << onMsgTime
-                << "（若 cam_front 从未出现此日志 → track.onMessage 回调未建立或未触发）";
+                << " (index: 0=binary/RTP, 1=string/SDP...)";
       }
       if (std::holds_alternative<rtc::binary>(msg)) {
         const auto &bin = std::get<rtc::binary>(msg);
+        if (camFrontSeq <= 5 || (camFrontSeq % 300) == 0) {
+            qInfo() << "[Client][WebRTC][onMessage] Binary packet received: stream=" << m_stream << " size=" << bin.size();
+        }
         if (!m_rtpIngressRing || bin.empty())
           return;
         const uint8_t *const p = reinterpret_cast<const uint8_t *>(bin.data());
@@ -2111,6 +2114,13 @@ void WebRtcClient::flushCoalescedVideoPresent() {
 }
 
 void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 frameId) {
+  static int s_presentCount = 0;
+  if (s_presentCount <= 5 || (s_presentCount % 300) == 0) {
+      qInfo() << "[Client][WebRTC][Present] presentDecodedFrameToOutputs stream=" << m_stream
+               << " frameId=" << frameId << " size=" << image.size()
+               << " totalPresent=" << s_presentCount;
+  }
+  s_presentCount++;
   if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
     qWarning() << "[Client][WebRTC][Present] 跳过无效/不完整尺寸 stream=" << m_stream
                << " frameId=" << frameId << " size=" << image.size();
@@ -2184,27 +2194,29 @@ void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 fra
     qWarning() << "[Client][WebRTC][Queue] stream=" << m_stream
                << " pending=" << m_framesPendingInQueue;
   }
-  if (m_videoFrameLogCount <= 5 || (m_videoFrameLogCount % 60) == 0) {
-    RemoteVideoSurface *const rsPath = m_boundRemoteSurface.data();
-    QVideoSink *const skPath = activeSink();
-    const char *branch = "none";
-    if (rsPath)
-      branch = "remote_surface";
-    else if (skPath)
-      branch = (skPath == m_ownedSink) ? "qvideo_sink_owned" : "qvideo_sink_bound";
-    qInfo() << "[Client][VideoPresent][Path] stream=" << m_stream << " frame#"
-            << m_videoFrameLogCount << " presentBackend=" << webRtcPresentBackendTag(m_presentBackendSnapshot)
-            << " branch=" << branch
-            << " remoteSurfacePtr=" << static_cast<const void *>(rsPath)
-            << " activeVideoSinkPtr=" << static_cast<const void *>(skPath)
-            << " bindOutCnt=" << m_bindVideoOutputCallCount
-            << " bindSurfCnt=" << m_bindVideoSurfaceCallCount
-            << " pendingInQueue=" << m_framesPendingInQueue
-            << " ★ branch=真实呈现路径；bind*Cnt=本连接周期计数(prepare 清零后与指针可能不一致)";
-    qInfo() << "[Client][VideoPresent][Diag] stream=" << m_stream << " frame#"
-            << m_videoFrameLogCount << " pendingInQueue=" << m_framesPendingInQueue
-            << " ★ 详见同帧 [VideoPresent][Path] 的 branch=/remoteSurfacePtr=/activeVideoSinkPtr=";
-  }
+    if (m_videoFrameLogCount <= 5 || (m_videoFrameLogCount % 60) == 0) {
+      RemoteVideoSurface *const rsPath = m_boundRemoteSurface.data();
+      QVideoSink *const skPath = activeSink();
+      const char *branch = "none";
+      if (rsPath)
+        branch = "remote_surface";
+      else if (skPath)
+        branch = (skPath == m_ownedSink) ? "qvideo_sink_owned" : "qvideo_sink_bound";
+      qInfo() << "[Client][VideoPresent][Path] stream=" << m_stream << " frame#"
+              << m_videoFrameLogCount << " frameId=" << frameId
+              << " presentBackend=" << webRtcPresentBackendTag(m_presentBackendSnapshot)
+              << " branch=" << branch
+              << " remoteSurfacePtr=" << static_cast<const void *>(rsPath)
+              << " activeVideoSinkPtr=" << static_cast<const void *>(skPath)
+              << " bindOutCnt=" << m_bindVideoOutputCallCount
+              << " bindSurfCnt=" << m_bindVideoSurfaceCallCount
+              << " pendingInQueue=" << m_framesPendingInQueue
+              << " ★ branch=真实呈现路径；bind*Cnt=本连接周期计数(prepare 清零后与指针可能不一致)";
+      qInfo() << "[Client][VideoPresent][Diag] stream=" << m_stream << " frame#"
+              << m_videoFrameLogCount << " frameId=" << frameId
+              << " pendingInQueue=" << m_framesPendingInQueue
+              << " ★ 详见同帧 [VideoPresent][Path] 的 branch=/remoteSurfacePtr=/activeVideoSinkPtr=";
+    }
 
   QElapsedTimer mainThreadFrameBudget;
   mainThreadFrameBudget.start();
@@ -2396,6 +2408,13 @@ void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 fra
 
 void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId) {
   try {
+    static int s_decoderSlotInCount = 0;
+    if (s_decoderSlotInCount <= 5 || (s_decoderSlotInCount % 300) == 0) {
+        qInfo() << "[Client][WebRTC][Slot] onVideoFrameFromDecoder stream=" << m_stream
+                 << " frameId=" << frameId << " size=" << image.size()
+                 << " totalSlotIn=" << s_decoderSlotInCount;
+    }
+    s_decoderSlotInCount++;
     ++m_presentSecVideoSlotEntries;
     ++m_framesPendingInQueue;
     m_presentSecMaxPending = std::max(m_presentSecMaxPending, m_framesPendingInQueue);

@@ -179,7 +179,7 @@ bool H264Decoder::ensureDecoder() {
     if (!m_webrtcHwActive && !m_sps.isEmpty() && !m_pps.isEmpty()) {
       const QByteArray avcc = buildAvccExtradata();
       if (!avcc.isEmpty()) {
-        if (m_webrtcHw->tryOpen(avcc, m_width, m_height)) {
+        if (m_webrtcHw->tryOpen(avcc, m_width, m_height) && m_webrtcHw->isHardwareAccelerated()) {
           m_webrtcHwActive = true;
           m_webrtcHwPts = 0;
           qInfo() << "[H264][" << m_streamTag
@@ -190,7 +190,13 @@ bool H264Decoder::ensureDecoder() {
             logVideoStreamHealthContract(QStringLiteral("path_hw"));
           }
         } else {
+          // 如果 bridge 成功打开但不是硬解，则不激活 webrtcHwActive，从而走 native SW 路径
           m_webrtcHwActive = false;
+          if (m_webrtcHw->isActive()) {
+            qInfo() << "[H264][" << m_streamTag
+                    << "][HW-E2E] bridge opened but not hardware accelerated, using native software path instead";
+            m_webrtcHw->shutdown();
+          }
         }
       }
     }
@@ -221,12 +227,17 @@ bool H264Decoder::ensureDecoder() {
       return false;
     }
     // 硬解初始化失败，检查是否允许降级
-    if (Configuration::instance().requireHardwareDecode()) {
+    const bool strictHw = qEnvironmentVariableIsSet("CLIENT_STRICT_HW_DECODE_REQUIRED");
+    if (Configuration::instance().requireHardwareDecode() && strictHw) {
       qCritical() << "[H264][" << m_streamTag
                   << "][HW-REQUIRED] 硬解已编译但未激活（设备/驱动不可用），media.require_hardware_decode=true "
-                     "禁止退回软解。检查 VA-API/NVDEC 设备可用性或设置 "
+                     "且已设 CLIENT_STRICT_HW_DECODE_REQUIRED，禁止退回软解。检查 VA-API/NVDEC 设备可用性或设置 "
                      "media.require_hardware_decode=false / CLIENT_MEDIA_REQUIRE_HARDWARE_DECODE=0";
       return false;
+    } else if (Configuration::instance().requireHardwareDecode()) {
+      qWarning() << "[H264][" << m_streamTag
+                 << "][HW-FALLBACK] 硬解已编译但未激活（设备/驱动不可用）；虽然 media.require_hardware_decode=true，"
+                    "但未设 CLIENT_STRICT_HW_DECODE_REQUIRED，为保证可用性，降级至 CPU 软解。";
     }
     // 允许软解，输出信息日志而非错误
     qWarning() << "[H264][" << m_streamTag
@@ -1550,6 +1561,12 @@ void H264Decoder::decodeCompleteFrame(const std::vector<QByteArray> &nalUnits) {
 
     if (m_webrtcHwActive && m_webrtcHw) {
       const int64_t pts = m_webrtcHwPts++;
+      static int s_hwInCount = 0;
+      if (s_hwInCount <= 5 || (s_hwInCount % 300) == 0) {
+          qDebug() << "[H264][" << m_streamTag << "][HW] submitCompleteAnnexB size=" << annexB.size()
+                   << " pts=" << pts << " totalHwIn=" << s_hwInCount;
+      }
+      s_hwInCount++;
       if (!m_webrtcHw->submitCompleteAnnexB(
               this, reinterpret_cast<const uint8_t *>(annexB.constData()),
               static_cast<size_t>(annexB.size()), pts)) {
@@ -1584,6 +1601,12 @@ void H264Decoder::decodeCompleteFrame(const std::vector<QByteArray> &nalUnits) {
     }
 
     int ret = avcodec_send_packet(m_ctx, pkt);
+    static int s_swInCount = 0;
+    if (ret >= 0 && (s_swInCount <= 5 || (s_swInCount % 300) == 0)) {
+        qDebug() << "[H264][" << m_streamTag << "][SW] avcodec_send_packet ok size=" << annexB.size()
+                 << " totalSwIn=" << s_swInCount;
+    }
+    s_swInCount++;
     av_packet_free(&pkt);
 
     if (ret == AVERROR(EAGAIN)) {
@@ -1951,10 +1974,11 @@ void H264Decoder::emitDecodedFrames() {
         emit frameReady(dstFrame, m_frameIdCounter);
         m_diagFrameReadyEmitAccum.fetch_add(1, std::memory_order_relaxed);
         // ★★★ 如果此日志不出现但 emitDecoded 日志出现 → QueuedConnection 失效 ★★★
-        if (m_framesEmitted <= 5) {
+        if (m_framesEmitted <= 5 || (m_framesEmitted % 300) == 0) {
           int queuedConnCount = this->receivers(SIGNAL(frameReady(const QImage &, quint64)));
           qInfo() << "[H264][" << m_streamTag << "] ★★★ emit frameReady 完成 ★★★"
                   << " frameId=" << m_frameIdCounter
+                  << " totalEmitted=" << m_framesEmitted
                   << " lifecycleId=" << m_currentLifecycleId.load()
                   << " queuedConnections=" << queuedConnCount
                   << " ★ queuedConnections=0 → WebRtcClient::onVideoFrameFromDecoder 未连接到 "
@@ -1977,9 +2001,14 @@ void H264Decoder::emitDecodedFrames() {
 
   av_frame_free(&frame);
 
+  // 默认大幅降频：该路径每帧可达 30+ 次/秒，同步写日志会拖慢解码线程与异步日志队列。
+  // CLIENT_H264_LOG_EMIT_BATCH=1 恢复每批一条；否则仅前 3 次输出 + 约每 300 帧一条。
   if (framesOut > 0) {
-    qDebug() << "[H264][" << m_streamTag << "] emitDecoded: 本次输出" << framesOut
-             << "帧，total=" << m_framesEmitted;
+    const bool everyBatch = qEnvironmentVariableIntValue("CLIENT_H264_LOG_EMIT_BATCH") != 0;
+    if (everyBatch || m_framesEmitted <= 3 || (m_framesEmitted % 300) == 0) {
+      qDebug() << "[H264][" << m_streamTag << "] emitDecoded: 本次输出" << framesOut
+               << "帧，total=" << m_framesEmitted;
+    }
   }
 }
 

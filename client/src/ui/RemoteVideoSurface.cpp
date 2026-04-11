@@ -434,6 +434,12 @@ void RemoteVideoSurface::setPanelLabel(const QString &label) {
 
 void RemoteVideoSurface::applyDmaBufFrame(SharedDmaBufFrame handle, quint64 frameId,
                                           const QString &streamTag) {
+  static int s_applyDmaFrameCount = 0;
+  if (s_applyDmaFrameCount <= 5 || (s_applyDmaFrameCount % 300) == 0) {
+      qInfo() << "[Client][UI][RemoteVideoSurface] applyDmaBufFrame: stream=" << streamTag
+               << " frameId=" << frameId << " totalDmaApply=" << s_applyDmaFrameCount;
+  }
+  s_applyDmaFrameCount++;
   if (!handle || handle->frame.memoryType != VideoFrame::MemoryType::DMA_BUF) {
     static std::atomic<int> s_bad{0};
     if (s_bad.fetch_add(1, std::memory_order_relaxed) < 6) {
@@ -499,6 +505,13 @@ void RemoteVideoSurface::applyDmaBufFrame(SharedDmaBufFrame handle, quint64 fram
 }
 
 void RemoteVideoSurface::applyFrame(QImage image, quint64 frameId, const QString &streamTag) {
+  static int s_applyFrameCount = 0;
+  if (s_applyFrameCount <= 5 || (s_applyFrameCount % 300) == 0) {
+      qInfo() << "[Client][UI][RemoteVideoSurface] applyFrame: stream=" << streamTag
+               << " frameId=" << frameId << " size=" << image.size()
+               << " totalApply=" << s_applyFrameCount;
+  }
+  s_applyFrameCount++;
   if (!imageUsableForTexture(image)) {
     static std::atomic<int> s_badGeomLogs{0};
     if (s_badGeomLogs.fetch_add(1, std::memory_order_relaxed) < 8) {
@@ -594,6 +607,12 @@ QSGNode *RemoteVideoSurface::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeDa
       delete oldNode;
       return nullptr;
     }
+    static int s_dmaLogCount = 0;
+    if (s_dmaLogCount <= 5 || (s_dmaLogCount % 60) == 0) {
+        qInfo() << "[Client][UI][RemoteVideoSurface][SG] updatePaintNode DMA-BUF stream=" << streamSnap
+                 << " label=" << m_panelLabel;
+    }
+    s_dmaLogCount++;
     static std::atomic<int> s_capOnce{0};
     if (s_capOnce.fetch_add(1, std::memory_order_relaxed) == 0)
       nv12DmaBufLogCapabilityOnce(win);
@@ -721,6 +740,12 @@ QSGNode *RemoteVideoSurface::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeDa
 
   // 仅在新纹理上传路径打 SG 证据（避免每帧仅改 setRect 时刷屏）
   const bool newBitmapUpload = hasNew || !node->texture();
+  static int s_cpuLogCount = 0;
+  if (newBitmapUpload && (s_cpuLogCount <= 5 || (s_cpuLogCount % 60) == 0)) {
+    qInfo() << "[Client][UI][RemoteVideoSurface][SG] updatePaintNode CPU stream=" << streamSnap
+            << " label=" << m_panelLabel << " hasNew=" << hasNew;
+  }
+  if (newBitmapUpload) s_cpuLogCount++;
   QQuickWindow *win = window();
   if (newBitmapUpload) {
     quint64 fid = 0;

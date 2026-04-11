@@ -15,6 +15,29 @@
 
 // 生产构建：定义 ENABLE_MQTT_PAHO 时使用 Paho async_client（见 CMakeLists / connectToBroker）。
 
+namespace {
+// 入站 MQTT 原始日志（Paho 回调 / mosquitto_sub）默认每 N 条记 1 条，避免 10~50Hz 遥测刷屏。
+// CLIENT_MQTT_TRACE_MESSAGES=1 全量；CLIENT_MQTT_MESSAGE_LOG_SAMPLE_RATE 覆盖 N（≤0 视为默认）。
+constexpr int kDefaultMqttInboundLogEveryN = 50;
+
+bool shouldLogMqttInboundMessage(quint64 &seq) {
+  ++seq;
+  if (qEnvironmentVariableIntValue("CLIENT_MQTT_TRACE_MESSAGES") != 0)
+    return true;
+  if (seq <= 5u)
+    return true;
+  bool ok = false;
+  const int rate = qEnvironmentVariableIntValue("CLIENT_MQTT_MESSAGE_LOG_SAMPLE_RATE", &ok);
+  const int mod = (ok && rate > 0) ? rate : kDefaultMqttInboundLogEveryN;
+  if (mod <= 1)
+    return true;
+  return (seq % static_cast<quint64>(mod)) == 0u;
+}
+
+quint64 s_mqttPahoInboundSeq = 0;
+quint64 s_mqttSubInboundSeq = 0;
+}  // namespace
+
 MqttController::MqttController(QObject *parent) : QObject(parent) {
 #ifdef ENABLE_MQTT_PAHO
   // Paho MQTT 客户端将在 connectToBroker 时初始化
@@ -120,7 +143,9 @@ void MqttController::connectToBroker() {
     m_client->set_message_callback([this](mqtt::const_message_ptr msg) {
       QString topic = QString::fromStdString(msg->get_topic());
       QByteArray payload(msg->to_string().data(), msg->to_string().length());
-      qDebug() << "[MQTT] 消息回调触发，主题:" << topic << "大小:" << payload.size() << "bytes";
+      if (shouldLogMqttInboundMessage(s_mqttPahoInboundSeq)) {
+        qDebug() << "[MQTT] 消息回调触发，主题:" << topic << "大小:" << payload.size() << "bytes";
+      }
       QMetaObject::invokeMethod(this, "onMessageReceived", Qt::QueuedConnection,
                                 Q_ARG(QByteArray, topic.toUtf8()), Q_ARG(QByteArray, payload));
     });
@@ -606,13 +631,13 @@ void MqttController::onConnected() {
         }
       }
 
-      qDebug() << "[MQTT] [mosquitto_sub] 收到消息，主题:" << topic << "大小:" << payload.size()
-               << "bytes";
-      qDebug() << "[MQTT] [mosquitto_sub] 消息内容（前100字符）:" << payload.left(100);
-
-      // ★ 检查是否包含档位信息
-      if (payload.contains("\"gear\"")) {
-        qDebug() << "[GEAR] [MQTT] [mosquitto_sub] 消息包含档位信息";
+      if (shouldLogMqttInboundMessage(s_mqttSubInboundSeq)) {
+        qDebug() << "[MQTT] [mosquitto_sub] 收到消息，主题:" << topic << "大小:" << payload.size()
+                 << "bytes";
+        qDebug() << "[MQTT] [mosquitto_sub] 消息内容（前100字符）:" << payload.left(100);
+        if (payload.contains(QStringLiteral("\"gear\""))) {
+          qDebug() << "[GEAR] [MQTT] [mosquitto_sub] 消息包含档位信息";
+        }
       }
 
       // 调用消息处理函数
@@ -752,8 +777,8 @@ void MqttController::onMessageReceived(const QByteArray &topic, const QByteArray
                         << " ★编码侧已消费 hint（日志/MQTT 闭环）";
     }
 
-    // 日志记录（每50条或每5秒记录一次）
-    bool shouldLog = (messageCount % 50 == 0) || (logTimer.elapsed() >= 5000) || isAckMessage ||
+    // 日志记录（降频：每100条或每10秒；重要 ack 仍每次都记）
+    bool shouldLog = (messageCount % 100 == 0) || (logTimer.elapsed() >= 10000) || isAckMessage ||
                      isEncoderHintAck;
 
     if (shouldLog) {

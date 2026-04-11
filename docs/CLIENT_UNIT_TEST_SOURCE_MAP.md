@@ -59,6 +59,7 @@
 | `test_clientvideodiagcache`　　　| `client/tests/unit/test_clientvideodiagcache.cpp`　　　| `TestClientVideoDiagCache`　　　|
 | `test_h264clientdiag`　　　　　　| `client/tests/unit/test_h264clientdiag.cpp`　　　　　　| `TestH264ClientDiag`　　　　　　|
 | `test_h264decoder`　　　　　　　 | `client/tests/unit/test_h264decoder.cpp`　　　　　　　　| `TestH264Decoder`（依赖 FFmpeg） |
+| `test_video_interlaced_policy`　 | `client/tests/unit/test_video_interlaced_policy.cpp` | `TestVideoInterlacedPolicy`　　 |
 | `test_mqtt_paho_broker_smoke`　　| `client/tests/integration/test_mqtt_paho_broker_smoke.cpp` | `TestMqttPahoBrokerSmoke`（L3；无 `MQTT_TEST_BROKER` 时 QSKIP） |
 
 运行单个用例（示例）：
