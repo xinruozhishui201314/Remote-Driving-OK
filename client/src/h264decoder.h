@@ -56,6 +56,15 @@ class H264Decoder : public QObject {
   }
 
   /**
+   * ★ 5-WHY 加固：主线程背压反馈。由主线程在 QML/VideoSink 成功处理帧后调用，
+   * 标记该帧对应的池槽位已空闲。解码线程根据「未释放槽位」比例自动限帧/降采样。
+   */
+  void releaseFrame(quint64 frameId);
+
+  /** 诊断：获取当前帧池积压比例（0.0-1.0）；>0.5 表明主线程排队严重 */
+  double poolPressure() const;
+
+  /**
    * WebRTC 硬解路径（VAAPI/NVDEC）：NV12→RGBA 完成后由此入口与软解共用帧池 / frameReady / 证据链。
    * 仅由 H264WebRtcHwBridge 在解码线程调用。
    */

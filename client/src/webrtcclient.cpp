@@ -2592,6 +2592,11 @@ void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 fra
     }
 
     emit videoFrameReady(displayFrame.width(), displayFrame.height(), frameId);
+
+    // ★ 5-WHY 加固：完成渲染后释放槽位，建立反馈闭环
+    if (m_h264Decoder) {
+      m_h264Decoder->releaseFrame(frameId);
+    }
   } catch (const std::exception &e) {
     qCritical() << "[Client][WebRTC][ERROR] videoSink/videoFrameReady 异常 stream=" << m_stream
                 << " error=" << e.what();
@@ -2670,11 +2675,15 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
       //   4. flushCoalescedVideoPresent 在主线程事件循环顺序执行，不存在并发写。
       // 结论：两者均在主线程，无竞态；Qt 隐式共享已保证数据安全，无需显式 copy()。
       const bool wasCoalesced = !m_coalescedPresentImage.isNull();
+      const quint64 oldFid = m_coalescedPresentFrameId;
+
       m_coalescedPresentImage = image;  // 隐式共享（refcount++），无像素拷贝
       m_coalescedPresentFrameId = frameId;
       m_coalescedPresentEpoch.fetch_add(1, std::memory_order_relaxed);
-      // ★ 统计 coalescing 丢帧：若已有待呈现帧（flush 未触发），本次覆盖即为丢帧
-      if (wasCoalesced) {
+
+      // ★ 5-WHY 加固：释放被合并丢弃的旧帧槽位，建立反馈闭环
+      if (wasCoalesced && m_h264Decoder) {
+        m_h264Decoder->releaseFrame(oldFid);
         ++m_presentSecCoalescedDrops;
       }
       bool expected = false;

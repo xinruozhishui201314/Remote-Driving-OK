@@ -2208,6 +2208,30 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
       }
 
       // 隔行元数据明确时：在 YUV→RGBA 前做简易去隔行/场重复（CLIENT_VIDEO_INTERLACED_POLICY）
+      // ── ★ 5-WHY 加固：建立解码减速反馈（Backpressure） ────────────────────────
+      const double pressure = poolPressure();
+      if (pressure > 0.5) {
+        static QHash<QString, int> s_pressureLog;
+        if (++s_pressureLog[m_streamTag] <= 5 || (s_pressureLog[m_streamTag] % 100 == 0)) {
+          qWarning().noquote() << QStringLiteral(
+                                      "[H264][%1][Backpressure] ★ 帧池积压严重 pressure=%2 "
+                                      "busySlots=%3 ★ 主线程卡顿，解码器将主动丢弃非关键帧以减轻 CPU "
+                                      "负担")
+                                      .arg(m_streamTag)
+                                      .arg(pressure, 0, 'f', 2)
+                                      .arg(static_cast<int>(pressure * kFramePoolSize));
+        }
+
+        // 积压严重时，仅保留关键帧（IDR）的呈现，丢弃 P 帧的 RGBA 转换和 emit
+        // 注意：不能停止 avcodec_send_packet，否则参考链会断；只能停止昂贵的 sws_scale 和信号投递。
+        const bool isKey = (frame->key_frame || (frame->pict_type == AV_PICTURE_TYPE_I));
+        if (!isKey && pressure > 0.7) {
+          m_droppedPFrameCount++;
+          m_statsQualityDropInWindow++;
+          continue;  // 丢弃 P 帧转换
+        }
+      }
+
       VideoInterlacedPolicy::maybeApplyAvFrame(frame, m_streamTag);
 
       if (isSampleFrame) {
@@ -2863,4 +2887,31 @@ QString H264Decoder::buildVideoStreamHealthDetailLine() const {
 void H264Decoder::logVideoStreamHealthContract(const QString& phase) const {
   qInfo().noquote() << "[Client][VideoHealth][Stream] phase=" << phase << " stream=" << m_streamTag
                     << " " << buildVideoStreamHealthDetailLine();
+}
+
+void H264Decoder::releaseFrame(quint64 frameId) {
+  if (frameId == 0)
+    return;
+  // 遍历寻找匹配 frameId 的槽位并释放
+  for (int i = 0; i < kFramePoolSize; ++i) {
+    if (m_slotAudit[i].lastFid.load(std::memory_order_acquire) == frameId) {
+      SlotStatus prev = m_slotAudit[i].status.exchange(SlotStatus::Idle, std::memory_order_acq_rel);
+      if (prev == SlotStatus::Queued || prev == SlotStatus::Reading) {
+        // 正常释放
+      }
+      return;
+    }
+  }
+}
+
+double H264Decoder::poolPressure() const {
+  int busy = 0;
+  for (int i = 0; i < kFramePoolSize; ++i) {
+    SlotStatus s = m_slotAudit[i].status.load(std::memory_order_acquire);
+    // Queued: 在 Qt 事件队列中；Reading: QML 正在渲染；Decoding: 解码器正在写
+    if (s == SlotStatus::Queued || s == SlotStatus::Reading || s == SlotStatus::Decoding) {
+      busy++;
+    }
+  }
+  return static_cast<double>(busy) / kFramePoolSize;
 }
