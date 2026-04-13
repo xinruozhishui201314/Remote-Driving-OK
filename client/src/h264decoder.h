@@ -88,6 +88,8 @@ class H264Decoder : public QObject {
   void frameReadyDmaBuf(SharedDmaBufFrame handle, quint64 frameId);
   /** 丢包/seq 重同步等：建议向发送端请求 IDR（libdatachannel Track::requestKeyframe） */
   void senderKeyframeSuggested();
+  /** ★ WHY5 修复：请求发送 RTCP NACK 包 */
+  void nackPacketsRequested(const QByteArray &rtcpPacket);
   /**
    * 码流/解码配置风险（如多 slice + thread_count>1 易水平条纹）。
    * 解码线程发出；订阅方须 QueuedConnection。mitigationApplied=已关闭解码器并强制单线程，需 IDR。
@@ -121,7 +123,7 @@ class H264Decoder : public QObject {
   bool m_playoutEnvLogged = false;
 
   static constexpr size_t kRtpHeaderMinLen = 12;
-  static constexpr int kRtpReorderBufferMax = 512;
+  static constexpr int kRtpReorderBufferMax = 64; // 从 512 降低到 64，高丢包时更快跳过空洞（防止 5-10s 黑屏卡顿）
   static constexpr int kRtpJitterThreshold = 50;  // 新增：抖动阈值
 
   // RTP 排序
@@ -146,12 +148,28 @@ class H264Decoder : public QObject {
   struct PendingFrame {
     quint32 timestamp = 0;
     std::vector<QByteArray> nalUnits;
+    std::vector<quint16> rtpSeqs; // v4: 记录本帧包含的 RTP 序列号
     bool complete = false;
+    bool hasKeyframe = false; // ★ 新增：标记本帧是否包含 IDR/SPS/PPS
+    /** 本帧是否由 RTP M 位收尾（时间戳切换触发的 flush 为 false） */
+    bool closedByRtpMarker = false;
   };
   PendingFrame m_pendingFrame;
 
-  void appendNalToFrame(quint32 ts, const uint8_t *nal, size_t nalLen, bool marker);
+  void appendNalToFrame(quint32 ts, quint16 rtpSeq, const uint8_t *nal, size_t nalLen, bool marker);
   void flushPendingFrame();
+
+  // ★ WHY5 修复：NACK 相关
+  QByteArray buildNackPacket(quint32 senderSsrc, quint32 mediaSsrc, const std::vector<quint16> &lostSeqs);
+  void checkAndRequestNacks();
+  /** 记录已请求 NACK 的序列号及其请求时间，用于重试/限频 */
+  struct NackRequest {
+      qint64 lastRequestMs = 0;
+      int retryCount = 0;
+  };
+  QHash<quint16, NackRequest> m_pendingNacks;
+  qint64 m_lastNackSentMs = 0;
+  qint64 m_lastRtpPacketTime = 0;
 
   // SPS/PPS
   QByteArray m_sps;
@@ -203,8 +221,8 @@ class H264Decoder : public QObject {
    */
   bool tryMitigateStripeRiskIfNeeded(int sliceCount, const char *phaseTag);
 
-  void decodeCompleteFrame(const std::vector<QByteArray> &nalUnits);
-  void emitDecodedFrames();
+    void decodeCompleteFrame(const std::vector<QByteArray> &nalUnits, bool bitstreamIncomplete = false);
+    void emitDecodedFrames(bool bitstreamIncomplete = false);
 
   // 色彩转换
   SwsContext *m_sws = nullptr;
@@ -225,9 +243,22 @@ class H264Decoder : public QObject {
    * 3槽方案：解码线程轮转写入 pool[0→1→2→0]；主线程最多持有 1~2 个槽位，
    * 第3个槽位返回解码线程时 refcount==1，detach() 为 no-op，零分配。
    */
-  static constexpr int kFramePoolSize = 3;
+  static constexpr int kFramePoolSize = 60;
   QImage m_framePool[kFramePoolSize];
   int m_framePoolIdx = 0;
+
+  /** v4 新增：槽位生命周期审计，钉死内存竞争/溢出 */
+  enum class SlotStatus : int8_t { Idle = 0, Decoding = 1, Queued = 2, Reading = 3 };
+  struct SlotAudit {
+    std::atomic<SlotStatus> status{SlotStatus::Idle};
+    std::atomic<quint64> lastFid{0};
+    std::atomic<int64_t> lastAcquireMs{0};
+  };
+  SlotAudit m_slotAudit[kFramePoolSize];
+
+  /** v4 新增：解码器跳帧策略审计 */
+  int m_lastSkipFrame = -1;
+  int m_lastSkipLoopFilter = -1;
 
   // ★ 诊断标签：用于区分四路解码器的日志（streamTag = cam_front/rear/left/right）
   QString m_streamTag;
@@ -285,6 +316,8 @@ class H264Decoder : public QObject {
   /** closeDecoder 后重置，便于条纹缓解 / 换路径后再次打 [VideoHealth][Stream] */
   bool m_videoHealthLoggedHwContract = false;
   bool m_videoHealthLoggedSwContract = false;
+  /** ★ 性能优化：若 tryOpen 返回 false 或非硬解，不再每帧尝试，直到 reset/IDR */
+  bool m_hwBridgeTryOpenFailed = false;
 
   /** 每秒统计窗口内：各类「可能致花屏/闪烁」事件计数（与 [H264][Stats] 同行输出） */
   int m_feedTooShortInWindow = 0;
@@ -301,6 +334,11 @@ class H264Decoder : public QObject {
   int m_statsEnsureDecoderFailInWindow = 0;
   int m_statsQualityDropInWindow = 0;
   int m_statsEagainSendInWindow = 0;
+
+  /** 每秒窗口：RTP 空洞丢帧统计 — 量化「不完整码流导致条状」的频率 */
+  int m_statsIncompleteFrameDropInWindow = 0;    // bitstreamIncomplete=true 且被丢弃的帧
+  int m_statsIncompleteFrameEmitInWindow = 0;    // bitstreamIncomplete=true 但未丢弃（允许 emit）
+  int m_statsIncompleteHoleTotalInWindow = 0;    // 本窗口所有空洞包总数（越高→丢包越严重）
 
   /** ★ RTP 序列跳跃历史：存储跳跃前最后 10 个包的 (seq, rtp_timestamp) 用于与 ZLM 侧对齐 */
   struct RtpSeqHistEntry {

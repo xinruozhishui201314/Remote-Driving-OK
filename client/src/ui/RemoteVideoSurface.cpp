@@ -183,66 +183,6 @@ void publishPresentIntegrityIfAllowed(quintptr surfaceKey, const QString &stream
  * CPU QImage→QSG 纹理契约：与 H264Decoder 软解 sws→RGBA8888 + Qt RHI GL_RGBA 对齐；
  * 默认拒绝其它 QImage::Format，避免历史 BGR32/GL_BGRA 在软件 GL 上的 stride 条带问题。
  */
-bool normalizeImageForCpuTexture(QImage &img, const QString &streamTag, quint64 frameId,
-                                 const char *ctxTag) {
-  if (img.format() == QImage::Format_RGBA8888) {
-    const int w = img.width();
-    if (w > 0 && img.bytesPerLine() < w * 4) {
-      static std::atomic<int> s_strideReject{0};
-      const int n = s_strideReject.fetch_add(1, std::memory_order_relaxed);
-      if (n < 24) {
-        qCritical().noquote()
-            << "[Client][UI][RemoteVideoSurface][PresentContract][STRIDE_REJECT] ctx="
-            << QLatin1String(ctxTag) << " stream=" << streamTag << " frameId=" << frameId
-            << " bpl=" << img.bytesPerLine() << " w=" << w << " needBpl>=" << (w * 4)
-            << " " << ClientVideoDiagCache::videoPipelineEnvFingerprint();
-      }
-      MetricsCollector::instance().increment(
-          QStringLiteral("client.video.cpu_present_stride_reject_total"));
-      return false;
-    }
-    return true;
-  }
-
-  const bool strict = ClientVideoStreamHealth::cpuPresentFormatStrict();
-  if (strict) {
-    static std::atomic<int> s_rejectLogs{0};
-    const int n = s_rejectLogs.fetch_add(1, std::memory_order_relaxed);
-    if (n < 48) {
-      qCritical().noquote()
-          << "[Client][UI][RemoteVideoSurface][PresentContract][REJECT] ctx=" << QLatin1String(ctxTag)
-          << " stream=" << streamTag << " frameId=" << frameId
-          << " qimgFmt=" << static_cast<int>(img.format()) << " depth=" << img.depth()
-          << " bpl=" << img.bytesPerLine() << " size=" << img.size()
-          << " strictCpuFmt=1 ref=QImage::Format_RGBA8888+QQuickWindow::createTextureFromImage"
-          << " " << ClientVideoDiagCache::videoPipelineEnvFingerprint()
-          << " ★临时放行：CLIENT_VIDEO_CPU_PRESENT_FORMAT_STRICT=0（自动 convert，可能掩盖上游 bug）";
-    }
-    MetricsCollector::instance().increment(
-        QStringLiteral("client.video.cpu_present_format_reject_total"));
-    return false;
-  }
-
-  QImage c = img.convertToFormat(QImage::Format_RGBA8888);
-  if (c.isNull()) {
-    static std::atomic<int> s_fail{0};
-    if (s_fail.fetch_add(1, std::memory_order_relaxed) < 12) {
-      qCritical() << "[Client][UI][RemoteVideoSurface][PresentContract][CONVERT_FAIL] ctx="
-                  << ctxTag << " stream=" << streamTag << " fromFmt=" << static_cast<int>(img.format());
-    }
-    return false;
-  }
-  static std::atomic<int> s_convLogged{0};
-  if (s_convLogged.fetch_add(1, std::memory_order_relaxed) < 8) {
-    qWarning().noquote()
-        << "[Client][UI][RemoteVideoSurface][PresentContract][CONVERT] ctx=" << QLatin1String(ctxTag)
-        << " stream=" << streamTag << " fromFmt=" << static_cast<int>(img.format())
-        << " → Format_RGBA8888 ★ 上游应改为仅输出 RGBA8888";
-  }
-  img = std::move(c);
-  return true;
-}
-
 /**
  * CLIENT_VIDEO_DEBUG_PNG_DIR：非空则限频落盘 PNG（主线程 commitCpuTextureFrame，避免在 SG 渲染线程写盘）。
  * CLIENT_VIDEO_DEBUG_PNG_INTERVAL_MS：默认 30000；同 surface+stream 独立节流。
@@ -324,85 +264,9 @@ void RemoteVideoSurface::commitCpuTextureFrame(QImage &&image, quint64 frameId,
       m_lastFrameId = frameId;
       m_hasPendingFrame = true;
       m_lastSize = m_frame.size();
-      if (VideoFrameEvidence::shouldLogVideoStage(frameId)) {
-        const QString sid = QStringLiteral("surf=0x%1").arg(quintptr(this), 0, 16);
-        qInfo().noquote() << VideoFrameEvidence::diagLine("RS_APPLY", sid, frameId, m_frame);
-      }
     }
     emit frameGeometryChanged();
     update();
-
-    // ── 主线程：面板/流/DPR/几何/限频 PNG（与 Qt Quick 官方「纹理在 updatePaintNode 创建」解耦） ──
-    const quintptr surfKey = reinterpret_cast<quintptr>(this);
-    qreal dpr = 1.0;
-    if (QQuickWindow *w = window())
-      dpr = w->effectiveDevicePixelRatio();
-    QString st;
-    QString panel;
-    {
-      QMutexLocker lock(&m_mutex);
-      st = m_streamTag;
-      panel = m_panelLabel;
-    }
-    if (m_lastCommittedDpr < 0.0 || qAbs(dpr - m_lastCommittedDpr) > 0.0001) {
-      m_lastCommittedDpr = dpr;
-      qInfo().noquote()
-          << QStringLiteral(
-                 "[Client][UI][RemoteVideoSurface][DPR] surf=0x%1 panel=\"%2\" stream=%3 dpr=%4 "
-                 "itemLogical=%5x%6 ★ Qt devicePixelRatio，条带/缩放对照 doc.qt.io/qt-6/highdpi.html")
-              .arg(surfKey, 0, 16)
-              .arg(panel)
-              .arg(st)
-              .arg(dpr, 0, 'f', 3)
-              .arg(width())
-              .arg(height());
-    }
-    if (!m_itemGeomLoggedOnce.exchange(true)) {
-      const QRectF br = boundingRect();
-      qInfo().noquote()
-          << QStringLiteral("[Client][UI][RemoteVideoSurface][GeomOnce] surf=0x%1 panel=\"%2\" stream=%3 "
-                            "itemLogical=%4x%5 boundingRect=%6x%7 dpr=%8 fillMode=%9")
-              .arg(surfKey, 0, 16)
-              .arg(panel)
-              .arg(st)
-              .arg(width())
-              .arg(height())
-              .arg(br.width(), 0, 'f', 1)
-              .arg(br.height(), 0, 'f', 1)
-              .arg(dpr, 0, 'f', 3)
-              .arg(m_fillMode);
-    } else if (qEnvironmentVariableIntValue("CLIENT_VIDEO_DEBUG_GEOM") != 0 &&
-               takeClientVideoGeomPeriodicSlot(surfKey, 60000)) {
-      const QRectF br = boundingRect();
-      qInfo().noquote()
-          << QStringLiteral("[Client][UI][RemoteVideoSurface][GeomPeriodic] surf=0x%1 panel=\"%2\" stream=%3 "
-                            "itemLogical=%4x%5 boundingRect=%6x%7 dpr=%8 fillMode=%9")
-              .arg(surfKey, 0, 16)
-              .arg(panel)
-              .arg(st)
-              .arg(width())
-              .arg(height())
-              .arg(br.width(), 0, 'f', 1)
-              .arg(br.height(), 0, 'f', 1)
-              .arg(dpr, 0, 'f', 3)
-              .arg(m_fillMode);
-    }
-
-    const QString pngDir = QString::fromUtf8(qgetenv("CLIENT_VIDEO_DEBUG_PNG_DIR")).trimmed();
-    if (!pngDir.isEmpty()) {
-      bool ivOk = false;
-      int intervalMs = qEnvironmentVariableIntValue("CLIENT_VIDEO_DEBUG_PNG_INTERVAL_MS", &ivOk);
-      if (!ivOk || intervalMs <= 0)
-        intervalMs = 30000;
-      if (takeClientVideoDebugPngSlot(surfKey, st, intervalMs)) {
-        QImage pngCopy;
-        {
-          QMutexLocker lock(&m_mutex);
-          pngCopy = m_frame.copy();
-        }
-        writeClientVideoDebugPng(pngCopy, st, panel, frameId, surfKey, pngDir);
-      }
-    }
   } catch (const std::exception &e) {
     qCritical() << "[Client][UI][RemoteVideoSurface] commitCpuTextureFrame std::exception frameId="
                 << frameId << " what=" << e.what();
@@ -522,7 +386,7 @@ void RemoteVideoSurface::applyFrame(QImage image, quint64 frameId, const QString
   }
 
   const QString st = streamTag.isEmpty() ? QStringLiteral("-") : streamTag;
-  if (!normalizeImageForCpuTexture(image, st, frameId, "applyFrame"))
+  if (!VideoFrameEvidence::normalizeImageForCpuTexture(image))
     return;
 
   if (auto cpu = CpuVideoRgba8888Frame::tryAdopt(std::move(image))) {
@@ -723,19 +587,11 @@ QSGNode *RemoteVideoSurface::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeDa
     return keepOrAbandonWithoutNewUpload(boundingRect());
   }
 
-  {
-    const QString st = streamSnap.isEmpty() ? QStringLiteral("-") : streamSnap;
-    quint64 fid = 0;
-    {
-      QMutexLocker lk(&m_mutex);
-      fid = m_lastFrameId;
-    }
-    if (!normalizeImageForCpuTexture(img, st, fid, "updatePaintNode")) {
-      QMutexLocker lk(&m_mutex);
-      m_frame = QImage();
-      m_hasPendingFrame = false;
-      return abandonWithoutTexture();
-    }
+  if (!VideoFrameEvidence::normalizeImageForCpuTexture(img)) {
+    QMutexLocker lk(&m_mutex);
+    m_frame = QImage();
+    m_hasPendingFrame = false;
+    return abandonWithoutTexture();
   }
 
   // 仅在新纹理上传路径打 SG 证据（避免每帧仅改 setRect 时刷屏）
@@ -747,22 +603,6 @@ QSGNode *RemoteVideoSurface::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeDa
   }
   if (newBitmapUpload) s_cpuLogCount++;
   QQuickWindow *win = window();
-  if (newBitmapUpload) {
-    quint64 fid = 0;
-    {
-      QMutexLocker lock(&m_mutex);
-      fid = m_lastFrameId;
-    }
-    if (VideoFrameEvidence::shouldLogVideoStage(fid)) {
-      const QString sid = QStringLiteral("surf=0x%1").arg(quintptr(this), 0, 16);
-      const QRectF br = boundingRect();
-      qInfo().noquote() << VideoFrameEvidence::diagLine("SG_UPLOAD", sid, fid, img, br.width(),
-                                                        br.height());
-    }
-  }
-
-  // ★ 诊断日志：按 stream+frameId 采样（CLIENT_VIDEO_PIPELINE_TRACE）+ 全局前 N 次上传，
-  // 避免四路共用一个计数导致「看不出哪一路」。
   if (newBitmapUpload) {
     quint64 fidLog = 0;
     {

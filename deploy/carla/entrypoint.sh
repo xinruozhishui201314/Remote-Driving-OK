@@ -12,6 +12,8 @@ CARLA_PYTHON_SRC="${CARLA_PYTHON_SRC:-}"
 CARLA_DATASET="${CARLA_DATASET:-/data/carla}"
 
 # 0) Bridge 依赖：remote-driving/carla-with-bridge 镜像已预装 ffmpeg/pip/libjpeg，不执行 apt-get
+mkdir -p /workspace/logs
+chmod 777 /workspace/logs || true
 
 # 1) 配置 Python CARLA（优先 python3.7 避免 python3 用 py2.7 egg 导致 segfault，再尝试 wheel/egg/PyPI）
 CARLA_PY3_OK=0

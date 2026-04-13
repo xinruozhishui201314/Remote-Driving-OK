@@ -79,15 +79,16 @@ public:
 private:
     static std::string s_node_id;
     static std::shared_ptr<spdlog::logger> s_logger;
+    static std::shared_ptr<spdlog::details::thread_pool> s_thread_pool;
 };
 
 // 宏定义：方便快速调用
-#define LOG_TRACE(...) ::vehicle::common::Logger::getLogger()->trace(__VA_ARGS__)
-#define LOG_DEBUG(...) ::vehicle::common::Logger::getLogger()->debug(__VA_ARGS__)
-#define LOG_INFO(...)  ::vehicle::common::Logger::getLogger()->info(__VA_ARGS__)
-#define LOG_WARN(...)  ::vehicle::common::Logger::getLogger()->warn(__VA_ARGS__)
-#define LOG_ERROR(...) ::vehicle::common::Logger::getLogger()->error(__VA_ARGS__)
-#define LOG_CRITICAL(...) ::vehicle::common::Logger::getLogger()->critical(__VA_ARGS__)
+#define LOG_TRACE(...) ::vehicle::common::Logger::trace(__VA_ARGS__)
+#define LOG_DEBUG(...) ::vehicle::common::Logger::debug(__VA_ARGS__)
+#define LOG_INFO(...)  ::vehicle::common::Logger::info(__VA_ARGS__)
+#define LOG_WARN(...)  ::vehicle::common::Logger::warn(__VA_ARGS__)
+#define LOG_ERROR(...) ::vehicle::common::Logger::error(__VA_ARGS__)
+#define LOG_CRITICAL(...) ::vehicle::common::Logger::critical(__VA_ARGS__)
 
 #define LOG_LATENCY(...) ::vehicle::common::Logger::latency(__VA_ARGS__)
 

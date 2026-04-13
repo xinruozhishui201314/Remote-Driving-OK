@@ -142,6 +142,12 @@ class WebRtcClient : public QObject {
   Q_INVOKABLE int drainDecoderFrameReadyEmitDiagCount();
 
   /**
+   * 与 drainPresentSecondStats 同 1Hz tick：自上次调用以来 RTP 入环 tryPush 失败次数（环满/预算满）。
+   * 与 [H264][Stats] holeTotal 对照：iDrop 大→客户端丢；iDrop≈0 且 holeTotal 大→UDP/NACK 链问题。
+   */
+  Q_INVOKABLE int drainIngressTryPushFailDiagCount();
+
+  /**
    * 跨路媒体预算槽位 0..3（由 WebRtcStreamManager 设置，对应 ClientMediaBudget）。
    * 未设置或非 FFmpeg 编译时内部忽略。
    */
@@ -159,6 +165,8 @@ class WebRtcClient : public QObject {
    */
   Q_INVOKABLE bool trySendDataChannelMessage(const QByteArray &data);
   void sendDataChannelMessage(const QByteArray &data);
+  /** ★ WHY5 修复：发送 RTCP 包（如 NACK、PLI） */
+  void sendRtcp(const QByteArray &data);
 
   /** 诊断：返回 videoFrameReady 信号的接收者数量 */
   int receiverCountVideoFrameReady() const;
@@ -312,6 +320,8 @@ class WebRtcClient : public QObject {
   std::unique_ptr<RtpPacketSpscQueue> m_rtpIngressRing;
   /** 合并调度：仅投递一次 drainRtpIngressQueue，避免 Qt 事件队列被 per-packet lambda 撑爆 */
   std::atomic<bool> m_ingressDrainPosted{false};
+  /** tryPush 失败累计（由 drainIngressTryPushFailDiagCount 按秒取走清零） */
+  std::atomic<int> m_ingressTryPushFailSinceLastDrain{0};
   qint64 m_lastTrackKeyframeRequestMs = 0;
   /** RTCP SR → RTP 时钟；与 H264Decoder 共享（仅解码线程读原子） */
   std::unique_ptr<RtpStreamClockContext> m_rtpClock;

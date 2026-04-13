@@ -30,11 +30,10 @@ services:
       - "80:80"        # HTTP/WHEP
       - "1935:1935"    # RTMP
     volumes:
-      # 不挂载 config.ini：ZLM Docker 镜像无内置 config.ini，启动时自动生成默认 secret。
-      # 若挂载 config.ini 且 secret 与 ZLM 内置默认值相同，ZLM 会生成随机 secret 并覆盖挂载文件（即使 :ro），
-      # 导致 backend/client/vehicle 侧使用旧 secret 无法调用 ZLM API（getMediaList 失败）。
-      # 当前配置：不挂载 config.ini，让 ZLM 使用内置默认 secret "35c73f7bb6b4889a715d9eb2d1925cc"。
-      # 挂载数据目录以持久化录制文件和流状态。
+      # 挂载仓库内调优配置（[rtc] maxRtpCacheMS / NACK 等），与 ZLMediaKit 官方 conf 对齐思路：
+      #   https://github.com/ZLMediaKit/ZLMediaKit/blob/master/conf/config.ini
+      # secret 必须与下方 backend / client-dev 的 ZLM_API_SECRET 及本文件 [api] secret 一致。
+      - ./deploy/zlm/config.ini:/opt/media/conf/config.ini:ro
       - zlm-data:/opt/media
     networks: [teleop-network]
     restart: unless-stopped
@@ -154,10 +153,7 @@ services:
       #   - 若客户端在宿主机或外网：使用 http://<HOST_IP>:80 并映射端口
       #   - 可通过宿主机环境变量 ZLM_PUBLIC_BASE 覆盖，例如 ZLM_PUBLIC_BASE=http://192.168.1.100:80
       - ZLM_PUBLIC_BASE=${ZLM_PUBLIC_BASE:-http://zlmediakit:80}
-      # ZLM_API_SECRET：ZLM Docker 镜像启动时自动生成的随机 secret（保存于 zlm-data volume）。
-      # 若需与 ZLM secret 保持一致，请先运行以下命令获取当前 secret：
-      #   docker exec teleop-zlmediakit cat /opt/media/conf/config.ini | grep ^secret=
-      # 若 ZLM volume 已被初始化，需重启后用新 secret 同步更新此配置。
+      # 与 deploy/zlm/config.ini [api] secret 一致（挂载 config 后固定为该值）。
       - ZLM_API_SECRET=j9uH7zT0mawXzTrvqRythA48QvZ8rO2Y
 
       # MQTT
@@ -239,7 +235,7 @@ services:
       # 流媒体（容器内用服务名，勿用 localhost）
       - ZLM_VIDEO_URL=http://zlmediakit:80
       - ZLM_WHEP_URL=http://zlmediakit:80/index/api/webrtc
-      # ZLM API secret：与 ZLM Docker 镜像生成的 secret 一致（volume 已初始化）
+      # 与 deploy/zlm/config.ini [api] secret 一致
       - ZLM_API_SECRET=j9uH7zT0mawXzTrvqRythA48QvZ8rO2Y
 
       # ── FFmpeg 解码线程（正确性优先）──────────────────────────────────────────
@@ -254,6 +250,10 @@ services:
       # CLIENT_VIDEO_PRESENT_COALESCE：合并多解码帧为单次呈现（默认1已开启）。
       #   解码线程比主线程快时，自动丢弃积压帧、只呈现最新帧；降低主线程事件队列压力。
       - CLIENT_VIDEO_PRESENT_COALESCE=1
+      # 与 start-full-chain 会话目录对齐：解码后诊断帧写入 /workspace/logs/<ID>/video_debug/
+      - TELEOP_RUN_ID=${TELEOP_RUN_ID:-}
+      # 显式覆盖日志根目录（可选）；未设时客户端用 TELEOP_RUN_ID 拼会话路径
+      - TELEOP_LOG_ROOT=${TELEOP_LOG_ROOT:-}
     # GPU 设备挂载（硬件 GL 加速，解决视频闪烁根因）：
     # NVIDIA GPU：通过 NVIDIA_VISIBLE_DEVICES 控制可见 GPU（需宿主机安装 nvidia-container-toolkit）
     # Intel/AMD GPU：通过 /dev/dri 访问 DRM 设备（通常无需额外安装）

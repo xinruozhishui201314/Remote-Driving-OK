@@ -10,6 +10,7 @@
 #include <condition_variable>
 #include <vector>
 #include <cstdint>
+#include <chrono>
 
 namespace carla_bridge {
 
@@ -42,6 +43,7 @@ class RtmpPusher {
   std::mutex m_testPidMutex;
   int m_testPatternPid = -1;  // 子进程 pid，用于 stop() 时 SIGTERM
 #endif
+  std::chrono::steady_clock::time_point m_lastPreEncodeSnapshot{};
 };
 
 }  // namespace carla_bridge

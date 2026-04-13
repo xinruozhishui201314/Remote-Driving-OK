@@ -2,10 +2,18 @@
 #include "media/ClientVideoStreamHealth.h"
 
 #include <QByteArray>
+#include <QImage>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
 #include <cstring>
+
+extern "C" {
+#include <libavcodec/avcodec.h>
+#include <libavutil/error.h>
+#include <libavutil/opt.h>
+#include <libswscale/swscale.h>
+}
 
 namespace {
 
@@ -34,6 +42,163 @@ QByteArray makeH264Rtp(quint16 seq, quint32 ts, quint32 ssrc, const QByteArray &
   return makeRtp(seq, ts, ssrc, 0x80, 0x60, payload);
 }
 
+QByteArray makeH264RtpMarker(quint16 seq, quint32 ts, quint32 ssrc, bool marker,
+                             const QByteArray &payload = {}) {
+  const auto b1 = static_cast<uint8_t>((marker ? 0x80 : 0) | 0x60);
+  return makeRtp(seq, ts, ssrc, 0x80, static_cast<uint8_t>(b1), payload);
+}
+
+/** 下一个 Annex B 起始码位置；找不到返回 len。 */
+int nextAnnexBStart(const uint8_t *d, int len, int pos) {
+  for (int i = pos; i + 3 <= len; ++i) {
+    if (d[i] == 0 && d[i + 1] == 0) {
+      if (d[i + 2] == 1)
+        return i;
+      if (i + 4 <= len && d[i + 2] == 0 && d[i + 3] == 1)
+        return i;
+    }
+  }
+  return len;
+}
+
+/** 将 Annex B 码流拆成 NAL（不含起始码）。 */
+QVector<QByteArray> splitAnnexB(const uint8_t *d, int len) {
+  QVector<QByteArray> nals;
+  int pos = 0;
+  while (pos < len) {
+    const int sc = nextAnnexBStart(d, len, pos);
+    if (sc >= len)
+      break;
+    int scLen = 3;
+    if (sc + 3 < len && d[sc + 2] == 0 && d[sc + 3] == 1)
+      scLen = 4;
+    else if (sc + 2 < len && d[sc + 2] == 1)
+      scLen = 3;
+    else
+      break;
+    const int nalStart = sc + scLen;
+    const int next = nextAnnexBStart(d, len, nalStart);
+    if (next > nalStart)
+      nals.append(QByteArray(reinterpret_cast<const char *>(d + nalStart), next - nalStart));
+    pos = next;
+  }
+  return nals;
+}
+
+/**
+ * 将 RGB888 图像编码为单帧 Baseline H.264（Annex B，含 SPS/PPS+IDR），用于模拟车端送入 FFmpeg 前的像素
+ * 与客户端 H264Decoder 之间的「离线闭环」。需运行时存在 libx264。
+ */
+QByteArray encodeRgbToAnnexBH264IdrFrame(const QImage &rgbIn) {
+  QImage rgb = rgbIn;
+  if (rgb.format() != QImage::Format_RGB888)
+    rgb = rgb.convertToFormat(QImage::Format_RGB888);
+  const int w = rgb.width();
+  const int h = rgb.height();
+  if (w < 2 || h < 2 || (w & 1) || (h & 1))
+    return {};
+
+  const AVCodec *codec = avcodec_find_encoder_by_name("libx264");
+  if (!codec)
+    return {};
+
+  AVCodecContext *ctx = avcodec_alloc_context3(codec);
+  if (!ctx)
+    return {};
+  ctx->width = w;
+  ctx->height = h;
+  ctx->time_base = AVRational{1, 30};
+  ctx->framerate = AVRational{30, 1};
+  ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+  ctx->gop_size = 1;
+  ctx->max_b_frames = 0;
+  ctx->profile = FF_PROFILE_H264_BASELINE;
+  ctx->level = 30;
+  av_opt_set(ctx->priv_data, "preset", "ultrafast", 0);
+  av_opt_set(ctx->priv_data, "tune", "zerolatency", 0);
+
+  if (avcodec_open2(ctx, codec, nullptr) < 0) {
+    avcodec_free_context(&ctx);
+    return {};
+  }
+
+  AVFrame *frame = av_frame_alloc();
+  frame->format = ctx->pix_fmt;
+  frame->width = w;
+  frame->height = h;
+  if (av_frame_get_buffer(frame, 0) < 0) {
+    av_frame_free(&frame);
+    avcodec_free_context(&ctx);
+    return {};
+  }
+
+  SwsContext *sws = sws_getContext(w, h, AV_PIX_FMT_RGB24, w, h, AV_PIX_FMT_YUV420P, SWS_BILINEAR,
+                                   nullptr, nullptr, nullptr);
+  if (!sws) {
+    av_frame_free(&frame);
+    avcodec_free_context(&ctx);
+    return {};
+  }
+  uint8_t *srcSlice[4] = {rgb.bits(), nullptr, nullptr, nullptr};
+  int srcStride[4] = {rgb.bytesPerLine(), 0, 0, 0};
+  sws_scale(sws, srcSlice, srcStride, 0, h, frame->data, frame->linesize);
+  sws_freeContext(sws);
+
+  frame->pts = 0;
+  if (avcodec_send_frame(ctx, frame) < 0) {
+    av_frame_free(&frame);
+    avcodec_free_context(&ctx);
+    return {};
+  }
+  av_frame_free(&frame);
+
+  AVPacket *pkt = av_packet_alloc();
+  QByteArray acc;
+  for (;;) {
+    const int ret = avcodec_receive_packet(ctx, pkt);
+    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+      break;
+    if (ret < 0)
+      break;
+    acc.append(reinterpret_cast<const char *>(pkt->data), pkt->size);
+    av_packet_unref(pkt);
+  }
+  av_packet_free(&pkt);
+  avcodec_free_context(&ctx);
+  return acc;
+}
+
+/** 与车端 pre_encode PPM 一致：P6 全帧可经 QImage 加载（RGB 顺序）。 */
+QImage sourceImageForPreEncodeClientTest() {
+  const QByteArray ppmPath = qgetenv("TELEOP_PRE_ENCODE_TEST_PPM");
+  if (!ppmPath.isEmpty()) {
+    QImage loaded;
+    if (loaded.load(QString::fromLocal8Bit(ppmPath)))
+      return loaded.convertToFormat(QImage::Format_RGB888);
+  }
+  QImage img(64, 48, QImage::Format_RGB888);
+  img.fill(Qt::black);
+  for (int y = 0; y < img.height(); ++y) {
+    auto *line = img.bits() + y * img.bytesPerLine();
+    for (int x = 0; x < img.width() / 2; ++x) {
+      line[x * 3 + 0] = 220;
+      line[x * 3 + 1] = 40;
+      line[x * 3 + 2] = 40;
+    }
+    for (int x = img.width() / 2; x < img.width(); ++x) {
+      line[x * 3 + 0] = 60;
+      line[x * 3 + 1] = 60;
+      line[x * 3 + 2] = 240;
+    }
+  }
+  return img;
+}
+
+bool colorClose(QRgb a, QRgb b, int tol) {
+  return qAbs(qRed(a) - qRed(b)) <= tol && qAbs(qGreen(a) - qGreen(b)) <= tol &&
+         qAbs(qBlue(a) - qBlue(b)) <= tol;
+}
+
 }  // namespace
 
 class TestH264Decoder : public QObject {
@@ -52,6 +217,12 @@ class TestH264Decoder : public QObject {
   void rtp_with_extension_header_no_crash();
   void video_stream_health_dma_effective_respects_software_gl();
   void video_stream_health_force_single_thread_under_software_gl();
+
+  /**
+   * 用与 pre_encode 同类的 RGB 源图 → libx264 Annex B → RTP(H264 PT96) → H264Decoder，验证客户端解码出画。
+   * 可选：TELEOP_PRE_ENCODE_TEST_PPM 指向车端落盘的 P6 PPM，做「真 pre_encode 文件」回归。
+   */
+  void pre_encode_style_rgb_roundtrip_client_decode_path();
 
  private:
   QByteArray m_savedPt;
@@ -181,6 +352,62 @@ void TestH264Decoder::video_stream_health_force_single_thread_under_software_gl(
   restoreEnvVar("LIBGL_ALWAYS_SOFTWARE", lib);
   restoreEnvVar("CLIENT_VIDEO_ALLOW_MULTITHREAD_DECODE_UNDER_SOFTWARE_GL", mult);
   ClientVideoStreamHealth::debugResetPolicyCacheForTest();
+}
+
+void TestH264Decoder::pre_encode_style_rgb_roundtrip_client_decode_path() {
+  QImage src = sourceImageForPreEncodeClientTest();
+  QVERIFY2(!src.isNull() && src.width() >= 2 && src.height() >= 2, "source image");
+  if ((src.width() & 1) || (src.height() & 1))
+    src = src.copy(0, 0, src.width() & ~1, src.height() & ~1);
+
+  const QByteArray annexB = encodeRgbToAnnexBH264IdrFrame(src);
+  if (annexB.isEmpty())
+    QSKIP("libx264 encoder unavailable or encode failed (install ffmpeg with libx264 for this test)");
+
+  const QVector<QByteArray> nals =
+      splitAnnexB(reinterpret_cast<const uint8_t *>(annexB.constData()),
+                  static_cast<int>(annexB.size()));
+  QVERIFY2(!nals.isEmpty(), "split Annex B NALs");
+
+  int lastVcl = -1;
+  for (int i = 0; i < nals.size(); ++i) {
+    if (nals[i].isEmpty())
+      continue;
+    const int t = static_cast<uint8_t>(nals[i][0]) & 0x1f;
+    if (t == 1 || t == 5)
+      lastVcl = i;
+  }
+  QVERIFY2(lastVcl >= 0, "expected at least one VCL NAL in IDR frame");
+
+  H264Decoder dec(QStringLiteral("pre_encode_roundtrip"));
+  QSignalSpy spy(&dec, &H264Decoder::frameReady);
+
+  const quint32 ssrc = 0xCAFEBABEu;
+  const quint32 rtpTs = 3000;
+  quint16 seq = 1;
+  for (int i = 0; i < nals.size(); ++i) {
+    const bool marker = (i == lastVcl);
+    const QByteArray rtp = makeH264RtpMarker(seq++, rtpTs, ssrc, marker, nals[i]);
+    dec.feedRtp(reinterpret_cast<const uint8_t *>(rtp.constData()), static_cast<size_t>(rtp.size()),
+                0);
+  }
+
+  if (spy.count() == 0)
+    QVERIFY2(spy.wait(8000), "frameReady not received within timeout");
+  QCOMPARE(spy.count(), 1);
+  const QImage out = spy.at(0).at(0).value<QImage>();
+  QVERIFY(!out.isNull());
+  QCOMPARE(out.width(), src.width());
+  QCOMPARE(out.height(), src.height());
+
+  const QImage srcRgb = src.convertToFormat(QImage::Format_ARGB32);
+  const QImage outRgb = out.convertToFormat(QImage::Format_ARGB32);
+  const int tol = 48;
+  QVERIFY2(colorClose(srcRgb.pixel(4, 4), outRgb.pixel(4, 4), tol),
+            "left region color diverges (lossy codec — large tolerance)");
+  QVERIFY2(
+      colorClose(srcRgb.pixel(srcRgb.width() - 5, 4), outRgb.pixel(outRgb.width() - 5, 4), tol),
+      "right region color diverges");
 }
 
 QTEST_MAIN(TestH264Decoder)

@@ -30,6 +30,15 @@
  *   建议同时 `CLIENT_VIDEO_EVIDENCE_CHAIN=1`（或 `CLIENT_VIDEO_PIPELINE_TRACE=1`）便于自动对齐 rowHash。
  *   日志 tag: [H264][FrameDump]
  *
+ * CLIENT_VIDEO_STRIPE_ALERT_CAPTURE
+ *   非 0 / true / 1：当解码路径条状启发式非 Clean 时，额外将当前帧 PNG 落盘到
+ *   <CLIENT_VIDEO_SAVE_FRAME_DIR 或默认临时目录>/stripe-alerts/ ，文件名含 verdict（fp_top|suspect）
+ *   与 sh/t/m/b 数值，便于与日志 [H264][STRIPE_VERDICT]、同 fid 的 DECODE_OUT 对齐。
+ *   与 CLIENT_VIDEO_SAVE_FRAME 独立；专用于「误报 vs 真损坏」取证。
+ *
+ * CLIENT_VIDEO_STRIPE_ALERT_CAPTURE_MAX
+ *   每路 stream 最多保存张数，默认 24，上限 500。
+ *
  * CLIENT_VIDEO_H264_PARAM_DIAG
  *   非 0：在 SPS/PPS 变化时解析并打印 profile/level 与 PPS 中
  *   deblocking_filter_control_present_flag（ITU-T H.264 7.3.2.2）。
@@ -41,6 +50,10 @@ namespace H264ClientDiag {
 
 void maybeDumpDecodedFrame(const QImage &frameRgba8888, const QString &streamTag, quint64 frameId,
                            int *inOutSavedCount);
+
+/** 条状告警专用 PNG（需 CLIENT_VIDEO_STRIPE_ALERT_CAPTURE）；按 stream 计数上限 STRIPE_ALERT_CAPTURE_MAX */
+void maybeDumpStripeAlertCapture(const QImage &frameRgba8888, const QString &streamTag, quint64 frameId,
+                                 const QString &verdictTag, int shift, int fineTop, int fineMid, int fineBot);
 
 void logParameterSetsIfRequested(const QString &streamTag, const QByteArray &spsNalWithHeader,
                                  const QByteArray &ppsNalWithHeader);

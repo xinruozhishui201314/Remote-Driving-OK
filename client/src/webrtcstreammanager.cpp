@@ -83,20 +83,21 @@ bool videoRuntimeQueuedLagSloEnabled() {
 }
 
 QString fmtPresentArm(const QString &abbr, WebRtcClient *c, const WebRtcPresentSecondStats &s,
-                      int decEmit) {
+                      int decEmit, int ingressTryPushFailDelta) {
   if (!c)
     return QString();
   const QSize vs = c->diagnosticPresentSize();
   const QString vsz =
       vs.isValid() ? QStringLiteral("%1x%2").arg(vs.width()).arg(vs.height()) : QStringLiteral("-");
   const QString dEstr = (decEmit < 0) ? QStringLiteral("-") : QString::number(decEmit);
+  const QString iDropStr =
+      (ingressTryPushFailDelta < 0) ? QStringLiteral("-") : QString::number(ingressTryPushFailDelta);
   // dE = 解码线程 emit frameReady 次数（与 H264Decoder 原子计数同源）；n = 主线程
   // QVideoSink::setVideoFrame 成功次数 h = 当前 pendingVideoHandlerDepth；rg = RTP 入环包数（与
-  // totPend 中 rtpRing 同源） vse=主线程视频槽每秒进入次数；fc=合帧 flush 每秒实际 present
-  // 次数（非合帧路径 fc=0 为常态）
+  // totPend 中 rtpRing 同源） iDrop=本秒入环失败(环/预算满)；vse=主线程视频槽每秒进入次数；fc=合帧
   return QStringLiteral(
-             " %1{n%2,sl%3,mxP%4,umax%5,vsz%6,bO%7,bS%8,ns%9,iv%10,c%11,h%12,rg%13,dE%14,skR%15,"
-             "vse%16,fc%17}")
+             " %1{n%2,sl%3,mxP%4,umax%5,vsz%6,bO%7,bS%8,ns%9,iv%10,c%11,h%12,rg%13,iDrop%14,dE%15,"
+             "skR%16,vse%17,fc%18}")
       .arg(abbr)
       .arg(s.framesToSink)
       .arg(s.slowPresent)
@@ -110,6 +111,7 @@ QString fmtPresentArm(const QString &abbr, WebRtcClient *c, const WebRtcPresentS
       .arg(c->isConnected() ? 1 : 0)
       .arg(c->pendingVideoHandlerDepth())
       .arg(c->rtpDecodeQueueDepth())
+      .arg(iDropStr)
       .arg(dEstr)
       .arg(s.skippedPresentRateLimit)
       .arg(s.videoSlotEntries)
@@ -447,6 +449,11 @@ void WebRtcStreamManager::emitVideoPresent1HzSummary() {
   const int decL = m_left ? m_left->drainDecoderFrameReadyEmitDiagCount() : -1;
   const int decRi = m_right ? m_right->drainDecoderFrameReadyEmitDiagCount() : -1;
 
+  const int idF = m_front ? m_front->drainIngressTryPushFailDiagCount() : -1;
+  const int idR = m_rear ? m_rear->drainIngressTryPushFailDiagCount() : -1;
+  const int idL = m_left ? m_left->drainIngressTryPushFailDiagCount() : -1;
+  const int idRi = m_right ? m_right->drainIngressTryPushFailDiagCount() : -1;
+
   const WebRtcPresentSecondStats sf =
       m_front ? m_front->drainPresentSecondStats() : WebRtcPresentSecondStats{};
   const WebRtcPresentSecondStats sr =
@@ -489,10 +496,10 @@ void WebRtcStreamManager::emitVideoPresent1HzSummary() {
           .arg(totPend)
           .arg(sumHandler)
           .arg(sumRtpRing);
-  line += fmtPresentArm(QStringLiteral("Fr"), m_front, sf, decF);
-  line += fmtPresentArm(QStringLiteral("Re"), m_rear, sr, decR);
-  line += fmtPresentArm(QStringLiteral("Le"), m_left, sl, decL);
-  line += fmtPresentArm(QStringLiteral("Ri"), m_right, sri, decRi);
+  line += fmtPresentArm(QStringLiteral("Fr"), m_front, sf, decF, idF);
+  line += fmtPresentArm(QStringLiteral("Re"), m_rear, sr, decR, idR);
+  line += fmtPresentArm(QStringLiteral("Le"), m_left, sl, decL, idL);
+  line += fmtPresentArm(QStringLiteral("Ri"), m_right, sri, decRi, idRi);
   line += QStringLiteral(
       " | present=QVideoSink|RemoteSurface+SceneGraph "
       "doc=https://doc.qt.io/qt-6/qvideosink.html#setVideoFrame");

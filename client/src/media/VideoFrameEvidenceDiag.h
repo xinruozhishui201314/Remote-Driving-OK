@@ -54,6 +54,12 @@
  * 呈现路径完整性（V2，默认开；与 VideoFrameFingerprintCache + RemoteVideoSurface 联动）：
  *   CLIENT_VIDEO_PRESENT_INTEGRITY_CHECK=0|false|off — 关闭纹理尺寸 / 解码指纹 vs SG 对比与 EventBus 告警
  *
+ * 条状误报 vs 真损坏（与 PNG 对齐）：
+ *   1) 日志搜 [H264][STRIPE_VERDICT]：verdict=fp_top → 多为顶 16 行启发式；suspect → 中/底频段或 shift 命中。
+ *   2) 设 CLIENT_VIDEO_STRIPE_ALERT_CAPTURE=1，解码告警帧写入 <SAVE_DIR>/stripe-alerts/*.png，文件名含 verdict 与
+ *      sh/t/m/b；用肉眼对照：仅上部平、中下正常 → 误报；整幅错位/条带 → 真损坏。
+ *   3) 可选 CLIENT_VIDEO_SAVE_FRAME=png 做常规落盘，与 stripe-alerts 互补。
+ *
  * 同一 frameId 下对比各 stage 的 w/h、fmt、bpl、rowHash：
  * - 若 DECODE_OUT == MAIN_PRESENT == RS_APPLY == SG_UPLOAD → 像素在客户端未损坏，疑 UI
  * 遮挡/合成/DPR
@@ -183,6 +189,24 @@ inline quint32 crc32IeeeOverImageBytes(const QImage &img) {
       crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
   }
   return ~crc;
+}
+
+/**
+ * ★ 性能优化：将原本在主线程的 QImage 格式规范化（convertToFormat 等）卸载至后台线程。
+ * 确保输出为 QImage::Format_RGBA8888 且 stride 对齐 (>=4*w)。
+ */
+inline bool normalizeImageForCpuTexture(QImage &img) {
+  if (img.isNull())
+    return false;
+  const int w = img.width();
+  if (w <= 0)
+    return false;
+  if (img.format() == QImage::Format_RGBA8888 && img.bytesPerLine() >= w * 4)
+    return true;
+  
+  // 仅在格式或步长不符时触发，这通常是高开销操作，应避免在主线程执行
+  img = img.convertToFormat(QImage::Format_RGBA8888);
+  return !img.isNull() && img.bytesPerLine() >= w * 4;
 }
 
 inline void mixRowPrefixFnv(uint32_t &crc, const uchar *row, int bytesInRow, int maxPrefix = 64) {
@@ -367,6 +391,211 @@ inline bool wantsFullImageCrcForFrame(quint64 frameId) {
   if (frameId <= static_cast<quint64>(earlyMax))
     return true;
   return (frameId % static_cast<quint64>(period)) == 0u;
+}
+
+/**
+ * 实时条状检测器：采样首行与次行，对比是否存在微小水平位移（典型 stride 错误表现）
+ * 返回值：0=未检测到；>0=检测到的偏移像素数；<0=检测过程中出错或置信度低
+ */
+inline int detectStripeHorizontalShift(const QImage &img) {
+  if (img.isNull() || img.width() < 128 || img.height() < 2)
+    return 0;
+  if (img.format() != QImage::Format_RGBA8888 && img.format() != QImage::Format_RGB32)
+    return 0;
+
+  const int w = img.width();
+  const int h = img.height();
+  const uint32_t *line0 = reinterpret_cast<const uint32_t *>(img.constScanLine(0));
+  const uint32_t *line1 = reinterpret_cast<const uint32_t *>(img.constScanLine(1));
+  if (!line0 || !line1)
+    return 0;
+
+  // 典型 stride 错位表现为下一行相对于上一行偏移了若干像素（通常是 1 或 -1）
+  // 我们在中间区域对比 line0[x] 与 line1[x+offset]
+  auto calcPairDiff = [&](const uint32_t* rowA, const uint32_t* rowB, int offset) -> uint64_t {
+    uint64_t diff = 0;
+    const int startX = 32;
+    const int endX = w - 32;
+    int count = 0;
+    for (int x = startX; x < endX; ++x) {
+      if (x + offset < 0 || x + offset >= w) continue;
+      uint32_t p0 = rowA[x];
+      uint32_t p1 = rowB[x + offset];
+      int r = std::abs((int)((p0 >> 16) & 0xFF) - (int)((p1 >> 16) & 0xFF));
+      int g = std::abs((int)((p0 >> 8) & 0xFF) - (int)((p1 >> 8) & 0xFF));
+      int b = std::abs((int)(p0 & 0xFF) - (int)(p1 & 0xFF));
+      diff += (r + g + b);
+      count++;
+    }
+    return count > 0 ? diff / count : 0xFFFFFFFFu;
+  };
+
+  // 采样多对相邻行，提高检测置信度
+  const int pairs[] = {0, 1, h/4, h/4+1, h/2, h/2+1, 3*h/4, 3*h/4+1};
+  int totalShift = 0;
+  int detectedCount = 0;
+
+  for (int i = 0; i < 8; i += 2) {
+    const uint32_t *lA = reinterpret_cast<const uint32_t *>(img.constScanLine(pairs[i]));
+    const uint32_t *lB = reinterpret_cast<const uint32_t *>(img.constScanLine(pairs[i+1]));
+    
+    uint64_t d0 = calcPairDiff(lA, lB, 0);
+    uint64_t dL = calcPairDiff(lA, lB, -1);
+    uint64_t dR = calcPairDiff(lA, lB, 1);
+
+    if (d0 > 15 && (dL < d0 / 2 || dR < d0 / 2)) {
+      totalShift += (dL < dR) ? -1 : 1;
+      detectedCount++;
+    }
+  }
+
+  if (detectedCount >= 2) {
+    return (totalShift > 0) ? 1 : -1;
+  }
+  return 0;
+}
+
+/**
+ * 细粒度条状检测：计算多行的 FNV 哈希并对比。
+ * 如果出现规律性的哈希重复（如每 2 行哈希相同）或哈希全同（如 sws 未填满），则返回非 0。
+ */
+inline int detectStripeFineGrained(const QImage &img) {
+  if (img.isNull() || img.height() < 16) return 0;
+  
+  const int h = img.height();
+  const int bpl = img.bytesPerLine();
+  const uchar* bits = img.constBits();
+  if (!bits || bpl <= 0) return 0;
+  
+  // 采样前 16 行
+  uint32_t hashes[16];
+  for (int i = 0; i < 16; ++i) {
+    uint32_t hval = 2166136261u;
+    mixRowPrefixFnv(hval, bits + i * bpl, qMin(bpl, 256)); // 采每行前 256 字节
+    hashes[i] = hval;
+  }
+  
+  // 检查是否所有行都相同（sws 挂了或内存全 0/全同）
+  bool allSame = true;
+  for (int i = 1; i < 16; ++i) {
+    if (hashes[i] != hashes[0]) {
+      allSame = false;
+      break;
+    }
+  }
+  if (allSame) return 100; // 特殊值：全同行
+  
+  // 检查奇偶行相同（典型 2-row stride 错误或 interlacing 处理不当）
+  bool alternatingSame = true;
+  for (int i = 0; i < 14; i += 2) {
+    if (hashes[i] != hashes[i+1]) {
+      alternatingSame = false;
+      break;
+    }
+  }
+  if (alternatingSame) return 200; // 特殊值：奇偶行相同
+  
+  return 0;
+}
+
+/**
+ * 与 detectStripeFineGrained 相同算法，但从 startRow 起连续最多 16 行采样（用于与顶部频段对照，
+ * 区分「天空/纯色顶边」误报与整幅损坏）。
+ * 若 startRow < 0 或剩余行数 < 16 则返回 0（不判）。
+ */
+inline int detectStripeFineGrainedFromRow(const QImage &img, int startRow) {
+  if (img.isNull() || img.height() < 16)
+    return 0;
+  const int h = img.height();
+  if (startRow < 0 || startRow > h - 16)
+    return 0;
+  const int bpl = img.bytesPerLine();
+  const uchar *bits = img.constBits();
+  if (!bits || bpl <= 0)
+    return 0;
+
+  uint32_t hashes[16];
+  for (int i = 0; i < 16; ++i) {
+    uint32_t hval = 2166136261u;
+    mixRowPrefixFnv(hval, bits + (startRow + i) * bpl, qMin(bpl, 256));
+    hashes[i] = hval;
+  }
+  bool allSame = true;
+  for (int i = 1; i < 16; ++i) {
+    if (hashes[i] != hashes[0]) {
+      allSame = false;
+      break;
+    }
+  }
+  if (allSame)
+    return 100;
+  bool alternatingSame = true;
+  for (int i = 0; i < 14; i += 2) {
+    if (hashes[i] != hashes[i + 1]) {
+      alternatingSame = false;
+      break;
+    }
+  }
+  if (alternatingSame)
+    return 200;
+  return 0;
+}
+
+/** 条状启发式裁决：结合顶/中/底三频段与水平位移，区分误报与疑真损坏 */
+enum class StripeHeuristicVerdict : quint8 { Clean = 0, FpTopBand = 1, SuspectCorrupt = 2 };
+
+struct StripeHeuristicReport {
+  StripeHeuristicVerdict verdict = StripeHeuristicVerdict::Clean;
+  int horizontalShift = 0;
+  int fineTop = 0;
+  int fineMid = 0;
+  int fineBot = 0;
+  int midRow = 0;
+  int botRow = 0;
+};
+
+inline StripeHeuristicReport analyzeStripeHeuristic(const QImage &img) {
+  StripeHeuristicReport r;
+  r.horizontalShift = detectStripeHorizontalShift(img);
+  r.fineTop = detectStripeFineGrained(img);
+  const int h = img.height();
+  r.midRow = (h >= 16) ? (h / 2) : 0;
+  r.botRow = (h >= 16) ? (h - 16) : 0;
+  r.fineMid = (h >= 16) ? detectStripeFineGrainedFromRow(img, r.midRow) : 0;
+  r.fineBot = (h >= 16) ? detectStripeFineGrainedFromRow(img, r.botRow) : 0;
+
+  if (r.horizontalShift == 0 && r.fineTop == 0 && r.fineMid == 0 && r.fineBot == 0)
+    r.verdict = StripeHeuristicVerdict::Clean;
+  else if (r.horizontalShift != 0 || r.fineMid != 0 || r.fineBot != 0)
+    r.verdict = StripeHeuristicVerdict::SuspectCorrupt;
+  else
+    r.verdict = StripeHeuristicVerdict::FpTopBand;
+  return r;
+}
+
+inline QString stripeVerdictTag(StripeHeuristicVerdict v) {
+  switch (v) {
+    case StripeHeuristicVerdict::Clean:
+      return QStringLiteral("clean");
+    case StripeHeuristicVerdict::FpTopBand:
+      return QStringLiteral("fp_top");
+    case StripeHeuristicVerdict::SuspectCorrupt:
+      return QStringLiteral("suspect");
+  }
+  return QStringLiteral("?");
+}
+
+inline QString stripeVerdictHintZh(StripeHeuristicVerdict v) {
+  switch (v) {
+    case StripeHeuristicVerdict::Clean:
+      return QStringLiteral("无启发式命中");
+    case StripeHeuristicVerdict::FpTopBand:
+      return QStringLiteral(
+          "多为顶边天空/纯色误报；对照 stripe-alerts 下 PNG 若仅上部平、下部正常即可确认");
+    case StripeHeuristicVerdict::SuspectCorrupt:
+      return QStringLiteral("疑 stride/解码或整幅异常；stripe-alerts PNG 应全帧检查");
+  }
+  return {};
 }
 
 }  // namespace VideoFrameEvidence

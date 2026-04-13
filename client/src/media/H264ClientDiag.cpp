@@ -2,6 +2,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QHash>
 #include <QSaveFile>
 #include <QStandardPaths>
 #include <QtGlobal>
@@ -272,6 +273,63 @@ void maybeDumpDecodedFrame(const QImage &frameRgba8888, const QString &streamTag
 
   if (anyOk)
     ++(*inOutSavedCount);
+}
+
+bool stripeAlertCaptureEnabled() {
+  return envTruthy(qgetenv("CLIENT_VIDEO_STRIPE_ALERT_CAPTURE"));
+}
+
+int stripeAlertCaptureMaxPerStream() {
+  bool ok = false;
+  const int n = qEnvironmentVariableIntValue("CLIENT_VIDEO_STRIPE_ALERT_CAPTURE_MAX", &ok);
+  if (!ok || n <= 0)
+    return 24;
+  return qMin(n, 500);
+}
+
+void maybeDumpStripeAlertCapture(const QImage &frameRgba8888, const QString &streamTag, quint64 frameId,
+                                 const QString &verdictTag, int shift, int fineTop, int fineMid, int fineBot) {
+  if (!stripeAlertCaptureEnabled() || frameRgba8888.isNull())
+    return;
+
+  static QHash<QString, int> s_savedByStream;
+  const int cap = stripeAlertCaptureMaxPerStream();
+  if (s_savedByStream.value(streamTag, 0) >= cap)
+    return;
+
+  const QString dirPath = QDir(saveFrameDir()).filePath(QStringLiteral("stripe-alerts"));
+  QDir dir;
+  if (!dir.mkpath(dirPath)) {
+    qWarning() << "[H264][StripeAlertCapture] mkdir failed:" << dirPath;
+    return;
+  }
+
+  const QString tag = sanitizedTag(streamTag);
+  const QString vt = verdictTag.isEmpty() ? QStringLiteral("unknown") : verdictTag;
+  const QString pngPath =
+      QStringLiteral("%1/%2_f%3_%4_sh%5_t%6_m%7_b%8.png")
+          .arg(dirPath, tag)
+          .arg(frameId, 0, 10)
+          .arg(vt)
+          .arg(shift)
+          .arg(fineTop)
+          .arg(fineMid)
+          .arg(fineBot);
+
+  const QImage img = frameRgba8888.format() == QImage::Format_RGBA8888
+                         ? frameRgba8888
+                         : frameRgba8888.convertToFormat(QImage::Format_RGBA8888);
+  if (!img.save(pngPath, "PNG")) {
+    qWarning() << "[H264][StripeAlertCapture] PNG save failed:" << pngPath;
+    return;
+  }
+
+  ++s_savedByStream[streamTag];
+  qInfo().noquote()
+      << "[H264][StripeAlertCapture] ★ saved PNG verdict=" << vt << " path=" << pngPath
+      << " stream=" << streamTag << " frameId=" << frameId << " shift=" << shift << " top=" << fineTop
+      << " mid=" << fineMid << " bot=" << fineBot
+      << " ★ 对照同 fid 的 [H264][STRIPE_VERDICT] 与 DECODE_OUT；fp_top+PNG 仅顶平→误报 suspect+全帧坏→真损坏";
 }
 
 void logParameterSetsIfRequested(const QString &streamTag, const QByteArray &spsNalWithHeader,

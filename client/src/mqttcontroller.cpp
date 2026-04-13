@@ -18,13 +18,13 @@
 namespace {
 // 入站 MQTT 原始日志（Paho 回调 / mosquitto_sub）默认每 N 条记 1 条，避免 10~50Hz 遥测刷屏。
 // CLIENT_MQTT_TRACE_MESSAGES=1 全量；CLIENT_MQTT_MESSAGE_LOG_SAMPLE_RATE 覆盖 N（≤0 视为默认）。
-constexpr int kDefaultMqttInboundLogEveryN = 50;
+constexpr int kDefaultMqttInboundLogEveryN = 200;
 
 bool shouldLogMqttInboundMessage(quint64 &seq) {
   ++seq;
   if (qEnvironmentVariableIntValue("CLIENT_MQTT_TRACE_MESSAGES") != 0)
     return true;
-  if (seq <= 5u)
+  if (seq <= 3u)
     return true;
   bool ok = false;
   const int rate = qEnvironmentVariableIntValue("CLIENT_MQTT_MESSAGE_LOG_SAMPLE_RATE", &ok);
@@ -289,7 +289,10 @@ void MqttController::sendControlCommand(const QJsonObject &command) {
     return;
   }
   if (!m_isConnected && !dcReady && webrtcPeerUp) {
-    qDebug() << "[CLIENT][Control] MQTT 未连、DataChannel 未就绪；若仅视频已连请等待 DC 或依赖 MQTT 恢复";
+    static int s_logCount = 0;
+    if (++s_logCount % 400 == 1) {
+      qDebug() << "[CLIENT][Control] MQTT 未连、DataChannel 未就绪；若仅视频已连请等待 DC 或依赖 MQTT 恢复 (throttled 1/400)";
+    }
   }
 
   const auto prep = MqttControlEnvelope::prepareForSend(command, m_currentVin,
@@ -338,7 +341,10 @@ void MqttController::sendControlCommandAuto(const QJsonObject &command) {
     m_activeChannel = ChannelType::MQTT;
     m_mqttCount++;
   } else {
-    qWarning() << "[CLIENT][Control] 无可用通道，未发送";
+    static int s_logCount = 0;
+    if (++s_logCount % 400 == 1) {
+      qWarning() << "[CLIENT][Control] 无可用通道，未发送 (throttled 1/400)";
+    }
   }
 }
 
@@ -777,8 +783,8 @@ void MqttController::onMessageReceived(const QByteArray &topic, const QByteArray
                         << " ★编码侧已消费 hint（日志/MQTT 闭环）";
     }
 
-    // 日志记录（降频：每100条或每10秒；重要 ack 仍每次都记）
-    bool shouldLog = (messageCount % 100 == 0) || (logTimer.elapsed() >= 10000) || isAckMessage ||
+    // 日志记录（降频：每 300 条或每 30s；重要 ack 仍每次都记）
+    bool shouldLog = (messageCount % 300 == 0) || (logTimer.elapsed() >= 30000) || isAckMessage ||
                      isEncoderHintAck;
 
     if (shouldLog) {

@@ -17,6 +17,7 @@ class TestH264ClientDiag : public QObject {
   void maybeDump_default_env_no_writes();
   void maybeDump_png_writes_file_and_increments_count();
   void maybeDump_respects_max();
+  void stripeAlertCapture_writes_png_when_enabled();
 
   void logParams_env_off_no_crash();
   void logParams_empty_sps_no_crash();
@@ -42,6 +43,8 @@ void TestH264ClientDiag::clearFrameDumpEnv() {
   qunsetenv("CLIENT_VIDEO_SAVE_FRAME");
   qunsetenv("CLIENT_VIDEO_SAVE_FRAME_DIR");
   qunsetenv("CLIENT_VIDEO_SAVE_FRAME_MAX");
+  qunsetenv("CLIENT_VIDEO_STRIPE_ALERT_CAPTURE");
+  qunsetenv("CLIENT_VIDEO_STRIPE_ALERT_CAPTURE_MAX");
 }
 
 void TestH264ClientDiag::clearParamDiagEnv() { qunsetenv("CLIENT_VIDEO_H264_PARAM_DIAG"); }
@@ -108,6 +111,25 @@ void TestH264ClientDiag::maybeDump_respects_max() {
   H264ClientDiag::maybeDumpDecodedFrame(img, QStringLiteral("m"), 1ULL, &n);
   H264ClientDiag::maybeDumpDecodedFrame(img, QStringLiteral("m"), 2ULL, &n);
   QCOMPARE(n, 1);
+}
+
+void TestH264ClientDiag::stripeAlertCapture_writes_png_when_enabled() {
+  clearFrameDumpEnv();
+  QTemporaryDir tmp;
+  QVERIFY(tmp.isValid());
+  qputenv("CLIENT_VIDEO_SAVE_FRAME_DIR", tmp.path().toUtf8());
+  qputenv("CLIENT_VIDEO_STRIPE_ALERT_CAPTURE", QByteArrayLiteral("1"));
+  qputenv("CLIENT_VIDEO_STRIPE_ALERT_CAPTURE_MAX", QByteArrayLiteral("2"));
+  QImage img(16, 16, QImage::Format_RGBA8888);
+  img.fill(Qt::cyan);
+  H264ClientDiag::maybeDumpStripeAlertCapture(img, QStringLiteral("cam_front"), 42ULL,
+                                              QStringLiteral("suspect"), 0, 100, 0, 0);
+  const QDir alertDir(tmp.path() + QStringLiteral("/stripe-alerts"));
+  QVERIFY(alertDir.exists());
+  const auto pngs = alertDir.entryList(QStringList{QStringLiteral("*.png")}, QDir::Files);
+  QCOMPARE(pngs.size(), 1);
+  QVERIFY(pngs.first().contains(QStringLiteral("_f42_")));
+  QVERIFY(pngs.first().contains(QStringLiteral("suspect")));
 }
 
 void TestH264ClientDiag::logParams_env_off_no_crash() {

@@ -23,7 +23,7 @@ enum class SignalState { Underuse, Normal, Overuse };
 
 struct BitrateDecision {
   uint32_t targetBitrateKbps = 5000;
-  uint32_t targetFps = 30;
+  uint32_t targetFps = 10;
   VideoResolution resolution = VideoResolution::R720P;
   QualityLevel quality = QualityLevel::Medium;
   QString reason;

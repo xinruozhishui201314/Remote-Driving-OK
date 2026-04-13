@@ -117,11 +117,11 @@ BitrateDecision AdaptiveBitrateController::makeBitrateDecision(uint32_t bitrate,
     d.quality = QualityLevel::High;
   } else if (bitrate >= 4000) {
     d.resolution = VideoResolution::R720P;
-    d.targetFps = 30;
+    d.targetFps = 10;
     d.quality = QualityLevel::Medium;
   } else if (bitrate >= 1500) {
     d.resolution = VideoResolution::R480P;
-    d.targetFps = 30;
+    d.targetFps = 10;
     d.quality = QualityLevel::Low;
   } else {
     d.resolution = VideoResolution::R360P;

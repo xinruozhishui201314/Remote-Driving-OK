@@ -890,5 +890,6 @@ Module {
         }
         Method { name: "diagnosticPresentSize"; type: "QSize" }
         Method { name: "drainDecoderFrameReadyEmitDiagCount"; type: "int" }
+        Method { name: "drainIngressTryPushFailDiagCount"; type: "int" }
     }
 }

@@ -194,13 +194,16 @@ def _ffmpeg_libx264_bitrate_args():
 
 def _ffmpeg_libx264_slice_args():
     """限制每帧 slice 数，降低客户端 H.264 多 slice × FFmpeg 多线程解码时的水平带状风险。
-    CARLA_X264_SLICES：默认 1（单 slice）；仅调试多 slice 行为时调大（上限 16）。"""
+    CARLA_X264_SLICES：强制为 1；消除水平条纹的根本手段。
+    同时强制 threads=1 以确保 x264 不会因为并行化自动开启多 slice。"""
     try:
         n = int(os.environ.get("CARLA_X264_SLICES", "1"))
+        if n > 1:
+            print(f"[WARNING] 忽略 CARLA_X264_SLICES={n} 以防止视频条纹，强制设为 1")
+            n = 1
     except ValueError:
         n = 1
-    n = max(1, min(n, 16))
-    return ["-x264-params", f"slices={n}"]
+    return ["-x264-params", "slices=1:threads=1"]
 
 
 def to_bgr(carla_image):
@@ -213,6 +216,84 @@ def to_bgr(carla_image):
     except Exception as e:
         _warn("CARLA", "to_bgr failed: %s", e)
         raise
+
+
+def _teleop_snapshot_interval_sec():
+    """与客户端 / C++ 推流侧一致：TELEOP_VIDEO_SNAPSHOT_INTERVAL_SEC，默认 10。"""
+    try:
+        v = int(os.environ.get("TELEOP_VIDEO_SNAPSHOT_INTERVAL_SEC", "10"))
+        return v if v > 0 else 10
+    except ValueError:
+        return 10
+
+
+def _teleop_pre_encode_snapshot_enabled():
+    """默认开启；TELEOP_VIDEO_SNAPSHOT_PRE_ENCODE=0/false/no/off 关闭。"""
+    v = (os.environ.get("TELEOP_VIDEO_SNAPSHOT_PRE_ENCODE") or "").strip().lower()
+    if not v:
+        return True
+    if v in ("0", "false", "no", "off"):
+        return False
+    return True
+
+
+def _teleop_log_root():
+    explicit = (os.environ.get("TELEOP_LOG_ROOT") or "").strip()
+    if explicit:
+        return explicit
+    run_id = (os.environ.get("TELEOP_RUN_ID") or "").strip()
+    if run_id and os.path.isdir("/workspace/logs"):
+        return os.path.join("/workspace/logs", run_id)
+    return "/workspace/logs"
+
+
+def _write_bgr_frame_as_ppm(path, frame_bgr):
+    """将 BGR uint8 (H,W,3) 写成 P6 PPM（RGB），便于与解码侧 PNG 目视对比。"""
+    import numpy as np
+    if frame_bgr is None:
+        return False
+    arr = np.ascontiguousarray(frame_bgr)
+    if arr.ndim != 3 or arr.shape[2] != 3:
+        return False
+    h, w = int(arr.shape[0]), int(arr.shape[1])
+    rgb = arr[:, :, ::-1].copy()
+    with open(path, "wb") as f:
+        f.write(("P6\n%d %d\n255\n" % (w, h)).encode("ascii"))
+        f.write(rgb.tobytes())
+    return True
+
+
+def _maybe_snapshot_pre_encode(stream_id, width, height, frame, snap_state):
+    """编码写入 ffmpeg stdin 之前落盘；snap_state 为 {"t": last_wall_time}。"""
+    if not _teleop_pre_encode_snapshot_enabled():
+        return
+    import time
+    import numpy as np
+    now = time.time()
+    interval = float(_teleop_snapshot_interval_sec())
+    if now - snap_state["t"] < interval:
+        return
+    snap_state["t"] = now
+    safe_id = stream_id.replace("/", "_").replace("\\", "_")
+    root = _teleop_log_root()
+    out_dir = os.path.join(root, "video_debug", "pre_encode")
+    try:
+        os.makedirs(out_dir, mode=0o755, exist_ok=True)
+    except OSError as e:
+        _warn("ZLM", "pre_encode snapshot mkdir failed %s: %s", out_dir, e)
+        return
+    ts = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now))
+    path = os.path.join(out_dir, "%s_%s_w%d_h%d.ppm" % (safe_id, ts, width, height))
+    try:
+        if isinstance(frame, np.ndarray):
+            ok = _write_bgr_frame_as_ppm(path, frame)
+        else:
+            ok = _write_bgr_frame_as_ppm(path, np.asarray(frame))
+        if ok:
+            log_zlm("[VideoDebug] pre_encode snapshot stream_id=%s path=%s", stream_id, path)
+    except Exception as e:
+        _warn("ZLM", "pre_encode snapshot failed stream_id=%s err=%s", stream_id, e)
+
 
 def run_ffmpeg_pusher(stream_id, frame_queue, rtmp_url, width, height, fps, stop_event):
     """从 frame_queue 取 BGR 帧，经 ffmpeg 推 RTMP，直到 stop_event 或队列收到 None."""
@@ -278,6 +359,7 @@ def run_ffmpeg_pusher(stream_id, frame_queue, rtmp_url, width, height, fps, stop
     last_quality_report = time.time()
     last_frame_count = 0
     frames_since_report = 0
+    pre_encode_snap_state = {"t": time.time()}
 
     try:
         while True:
@@ -294,6 +376,7 @@ def run_ffmpeg_pusher(stream_id, frame_queue, rtmp_url, width, height, fps, stop
                 _record_interaction("out", "zlm", stream_id, "push_stop", 0, vin=VIN)
                 break
             try:
+                _maybe_snapshot_pre_encode(stream_id, width, height, frame, pre_encode_snap_state)
                 proc.stdin.write(frame.tobytes())
                 proc.stdin.flush()
                 frames_since_report += 1
@@ -616,6 +699,13 @@ def _put_cam_frame(cam_id, image):
             st = _cam_stats[cam_id]
             st["count"] += 1
             st["last_ts"] = _time.time()
+            # ★ 诊断：每 100 帧验证一次 CARLA 图像的真实尺寸，彻底排除 Reshape Mismatch
+            if st["count"] % 100 == 1:
+                log_zlm("[VideoDiag] 相机回调尺寸验证 stream_id=%s 图像=%dx%d 预期配置=%dx%d", 
+                        cam_id, image.width, image.height, CAMERA_WIDTH, CAMERA_HEIGHT)
+                if image.width != CAMERA_WIDTH or image.height != CAMERA_HEIGHT:
+                    _err("ZLM", "尺寸严重不匹配！CARLA 正在发送 %dx%d 但 ffmpeg 预期 %dx%d！这会导致条状/花屏",
+                         image.width, image.height, CAMERA_WIDTH, CAMERA_HEIGHT)
         frame = to_bgr(image)
         # put_nowait 队列满时抛 Full；捕获后删除最旧帧再重试（最多重试一次）
         try:
@@ -756,6 +846,10 @@ def _spawn_cameras_and_start_pushers_impl():
         # sensor_tick 是秒的倒数，不是 FPS！FPS=15 → sensor_tick = 0.067
         sensor_tick_seconds = 1.0 / CAMERA_FPS if CAMERA_FPS > 0 else 0.1
         cam_bp.set_attribute("sensor_tick", str(sensor_tick_seconds))
+        cam_bp.set_attribute("image_size_x", str(CAMERA_WIDTH))
+        cam_bp.set_attribute("image_size_y", str(CAMERA_HEIGHT))
+
+        log_zlm("环节: 明确设置相机分辨率属性 %dx%d", CAMERA_WIDTH, CAMERA_HEIGHT)
 
         # ── 渲染质量优化（offscreen EGL GPU 加速关键）────────────────────────────────
         # fov: 视野角度，影响画面宽广程度

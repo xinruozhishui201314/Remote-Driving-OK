@@ -27,6 +27,9 @@ services:
       ZLM_RTMP_PORT: "1935"
       VIN: ${CARLA_VIN:-carla-sim-001}
       USE_PYTHON_BRIDGE: ${USE_PYTHON_BRIDGE:-1}
+      # 与全链路脚本会话目录对齐：编码前诊断帧写入 /workspace/logs/<ID>/video_debug/
+      TELEOP_RUN_ID: ${TELEOP_RUN_ID:-}
+      TELEOP_LOG_ROOT: ${TELEOP_LOG_ROOT:-}
       # ── 渲染模式配置 ──────────────────────────────────────────────────────
       # CARLA_SHOW_WINDOW: 0=无头(默认) / 1=窗口模式（需 DISPLAY）
       # CARLA_GPU_RENDER_MODE: offscreen=EGL GPU 无头(默认) / offscreen-x11=X11 DISPLAY / window=显示窗口
@@ -45,8 +48,10 @@ services:
       # 若客户端 libgl_sw=1 仍卡顿/闪烁，优先硬件 GL 或改为更低分辨率，勿只依赖降码率。
       CAMERA_WIDTH: ${CAMERA_WIDTH:-1280}
       CAMERA_HEIGHT: ${CAMERA_HEIGHT:-720}
-      # 每路 H.264 目标码率（kbps）。512≈0.5Mbps/路；720p+512k 偏省带宽，画面可能块效应明显。
-      VIDEO_BITRATE_KBPS: ${VIDEO_BITRATE_KBPS:-512}
+      # 每路 H.264 目标码率（kbps）。从 512k 提高到 2048k，彻底排除码率饥饿导致的条纹
+      VIDEO_BITRATE_KBPS: ${VIDEO_BITRATE_KBPS:-2048}
+      # 与 carla_bridge / rtmp_pusher 一致：单 slice 降低每帧 RTP 包数，利于 NACK 恢复（x264 官方参数 slices）
+      CARLA_X264_SLICES: ${CARLA_X264_SLICES:-1}
       # 车辆与视角：CARLA_VEHICLE_BP 如 vehicle.tesla.model3；SPECTATOR_VIEW_MODE=driver 主视角
       CARLA_VEHICLE_BP: ${CARLA_VEHICLE_BP:-vehicle.*}
       CARLA_SPAWN_INDEX: ${CARLA_SPAWN_INDEX:-0}
@@ -59,6 +64,7 @@ services:
     volumes:
       - ./carla-bridge:/workspace/carla-bridge:ro
       - ./deploy/carla/entrypoint.sh:/workspace/entrypoint.sh:ro
+      - ./logs:/workspace/logs:rw
       - carla_dataset_empty:/data/carla:ro
       - /tmp/.X11-unix:/tmp/.X11-unix:ro
     ports:

@@ -162,11 +162,32 @@ QString diagnosticsTag() {
 bool avFrameIsInterlaced(const AVFrame *frame) { return interlacedFlags(frame); }
 
 void maybeApplyAvFrame(AVFrame *frame, const QString &streamTag) {
-  if (!frame || !interlacedFlags(frame))
+  if (!frame)
     return;
+  if (!interlacedFlags(frame)) {
+    // ★ v4 Hyper-Logging：记录为什么不应用策略，彻底排除此模块嫌疑
+    static QHash<QString, int> s_nonInterlacedLog;
+    if (++s_nonInterlacedLog[streamTag] <= 1 || (s_nonInterlacedLog[streamTag] % 1000 == 0)) {
+        qInfo() << "[Client][Video][InterlacedDiag] stream=" << streamTag << " skip_policy: AVFrame NOT marked as interlaced (flags=" << frame->flags << ")";
+    }
+    return;
+  }
   const Policy p = currentFromEnv();
+  
+  // ── ★ 深入诊断：隔行扫描策略触发 ──────────────────────────────────────────
+  static QHash<QString, int> s_interlacedLog;
+  if (++s_interlacedLog[streamTag] <= 10 || (s_interlacedLog[streamTag] % 100 == 0)) {
+      qWarning().noquote() << QStringLiteral("[Client][Video][InterlacedDiag] stream=%1 fid=?(AVFrame) fmt=%2 sz=%3x%4 "
+                                             "topFirst=%5 interlaced_frame=%6 flags=0x%7 policy=%8 ★检测到隔行元数据，可能导致 fine=200 条状")
+                               .arg(streamTag).arg(frame->format).arg(frame->width).arg(frame->height)
+                               .arg(frame->top_field_first).arg(frame->interlaced_frame).arg(frame->flags, 0, 16)
+                               .arg(static_cast<int>(p));
+  }
+
   if (p == Policy::Off)
     return;
+
+  qInfo() << "[Client][Video][Interlaced] ACTUALLY applying policy=" << static_cast<int>(p) << " to stream=" << streamTag;
 
   if (p == Policy::WarnOnly) {
     static std::atomic<int> s_warn{0};
@@ -181,8 +202,10 @@ void maybeApplyAvFrame(AVFrame *frame, const QString &streamTag) {
 
   const AVPixelFormat fmt = static_cast<AVPixelFormat>(frame->format);
   if (fmt == AV_PIX_FMT_YUV420P || fmt == AV_PIX_FMT_YUVJ420P) {
+    qDebug() << "[Client][Video][Interlaced] Applying processYuv420p policy=" << static_cast<int>(p) << " stream=" << streamTag;
     processYuv420p(frame, p);
   } else if (fmt == AV_PIX_FMT_NV12) {
+    qDebug() << "[Client][Video][Interlaced] Applying processNv12 policy=" << static_cast<int>(p) << " stream=" << streamTag;
     processNv12(frame, p);
   } else {
     static std::atomic<int> s_unsup{0};

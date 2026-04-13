@@ -21,7 +21,7 @@ int videoMaxPresentFps() {
   bool ok = false;
   const int n = qEnvironmentVariableIntValue("CLIENT_VIDEO_MAX_PRESENT_FPS", &ok);
   if (!ok)
-    return 30;
+    return 10;
   return n;
 }
 }  // namespace
@@ -57,6 +57,7 @@ void VideoFramePresentWorker::ingestDecoderFrame(QImage image, quint64 frameId) 
   }
 
   if (!videoPresentCoalesceEnabled()) {
+    VideoFrameEvidence::normalizeImageForCpuTexture(image);
     emitToMainThread(image, frameId);
     return;
   }
@@ -97,8 +98,12 @@ void VideoFramePresentWorker::flushCoalesced() {
   }
 
   const quint64 epochBefore = m_coalescedEpoch.load(std::memory_order_acquire);
-  const QImage img = m_coalescedImage;
+  QImage img = m_coalescedImage;
   const quint64 fid = m_coalescedFrameId;
+
+  // ★ 性能优化：在后台线程完成 QImage 格式规范化，主线程仅做 QVideoFrame 封装与显示
+  VideoFrameEvidence::normalizeImageForCpuTexture(img);
+
   emitToMainThread(img, fid);
   emit flushCoalescedTick();
   m_lastPresentWallMs = QDateTime::currentMSecsSinceEpoch();

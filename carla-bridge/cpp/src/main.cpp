@@ -41,7 +41,7 @@ int main(int argc, char* argv[]) {
   int statusHz = getEnvInt("STATUS_HZ", 50);
   int camW = getEnvInt("CAMERA_WIDTH", 640);
   int camH = getEnvInt("CAMERA_HEIGHT", 480);
-  int camFps = getEnvInt("CAMERA_FPS", 15);
+  int camFps = getEnvInt("CAMERA_FPS", 10);
 
   std::cout << "[Bridge] 视频源: testsrc（ffmpeg 测试图案，非 CARLA 画面）" << std::endl;
   std::cout << "[Bridge] CARLA=" << carlaHost << ":" << carlaPort

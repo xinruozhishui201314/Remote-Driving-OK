@@ -8,6 +8,7 @@ namespace vehicle::common {
 
 std::string Logger::s_node_id = "unknown";
 std::shared_ptr<spdlog::logger> Logger::s_logger;
+std::shared_ptr<spdlog::details::thread_pool> Logger::s_thread_pool;
 
 void Logger::init(const std::string& node_id, const std::string& level) {
     // Plan 5.2: Fix node_id to be descriptive
@@ -15,11 +16,13 @@ void Logger::init(const std::string& node_id, const std::string& level) {
 
     try {
         // Plan 11: 严格 JSON 格式 (移除颜色码)
-        auto tp = std::make_shared<spdlog::details::thread_pool>(8192, 1);
+        // 修复：必须保存 thread_pool 的强引用，否则 async_logger 内的 weak_ptr 会失效导致崩溃
+        // 报错信息：async log: thread pool doesn't exist anymore
+        s_thread_pool = std::make_shared<spdlog::details::thread_pool>(8192, 1);
         auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
         
         // 创建异步 logger
-        s_logger = std::make_shared<spdlog::async_logger>("vehicle", console_sink, tp, spdlog::async_overflow_policy::block);
+        s_logger = std::make_shared<spdlog::async_logger>("vehicle", console_sink, s_thread_pool, spdlog::async_overflow_policy::block);
         
         s_logger->set_level(spdlog::level::from_str(level));
 
@@ -52,11 +55,11 @@ std::shared_ptr<spdlog::logger>& Logger::getLogger() {
     return s_logger;
 }
 
-void Logger::trace(const std::string& msg) { s_logger->trace(msg); }
-void Logger::debug(const std::string& msg) { s_logger->debug(msg); }
-void Logger::info(const std::string& msg) { s_logger->info(msg); }
-void Logger::warn(const std::string& msg) { s_logger->warn(msg); }
-void Logger::error(const std::string& msg) { s_logger->error(msg); }
-void Logger::critical(const std::string& msg) { s_logger->critical(msg); }
+void Logger::trace(const std::string& msg) { if (s_logger) s_logger->trace(msg); }
+void Logger::debug(const std::string& msg) { if (s_logger) s_logger->debug(msg); }
+void Logger::info(const std::string& msg) { if (s_logger) s_logger->info(msg); }
+void Logger::warn(const std::string& msg) { if (s_logger) s_logger->warn(msg); }
+void Logger::error(const std::string& msg) { if (s_logger) s_logger->error(msg); }
+void Logger::critical(const std::string& msg) { if (s_logger) s_logger->critical(msg); }
 
 } // namespace vehicle::common

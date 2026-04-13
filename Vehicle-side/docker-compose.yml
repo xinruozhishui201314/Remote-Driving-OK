@@ -12,6 +12,7 @@ services:
       - MQTT_BROKER_URL=mqtt://mosquitto:1883
       - ZLM_RTMP_URL=rtmp://zlmediakit:1935
       - ZLM_WHIP_URL=http://zlmediakit/index/api/whip
+      # 与仓库 deploy/zlm/config.ini [api] secret 一致
       - ZLM_API_SECRET=j9uH7zT0mawXzTrvqRythA48QvZ8rO2Y
       - VIN=TEST_VEHICLE_001
       - VEHICLE_CONTROL_SECRET=change_me_in_production
@@ -57,8 +58,8 @@ services:
       - "1935:1935"    # RTMP
       - "8554:8554"    # RTSP
     volumes:
-      # 挂载 tuned 配置：secret / rtc.timeoutSec=120 / api.apiDebug=0 等
-      - ./deploy/zlm/config.ini:/opt/media/conf/config.ini:ro
+      # 挂载仓库根目录下的 ZLM 配置（本文件在 Vehicle-side/ 下，路径需指向上一级）
+      - ../deploy/zlm/config.ini:/opt/media/conf/config.ini:ro
       - zlm-data:/opt/media
     networks:
       - vehicle-network

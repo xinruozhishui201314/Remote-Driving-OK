@@ -143,15 +143,15 @@ void DegradationManager::applyLevel(DegradationLevel level) {
 DegradationManager::LevelPolicy DegradationManager::policyForLevel(DegradationLevel level) {
   switch (level) {
     case DegradationLevel::FULL:
-      return {level, "FULL", 20000, 60, VideoResolution::R1080P, true, true, true, 80.0};
+      return {level, "FULL", 20000, 10, VideoResolution::R1080P, true, true, true, 80.0};
     case DegradationLevel::HIGH:
-      return {level, "HIGH", 15000, 60, VideoResolution::R1080P, true, true, true, 80.0};
+      return {level, "HIGH", 15000, 10, VideoResolution::R1080P, true, true, true, 80.0};
     case DegradationLevel::MEDIUM:
-      return {level, "MEDIUM", 8000, 30, VideoResolution::R720P, false, true, true, 60.0};
+      return {level, "MEDIUM", 8000, 10, VideoResolution::R720P, false, true, true, 60.0};
     case DegradationLevel::LOW:
-      return {level, "LOW", 4000, 25, VideoResolution::R480P, false, false, false, 40.0};
+      return {level, "LOW", 4000, 10, VideoResolution::R480P, false, false, false, 40.0};
     case DegradationLevel::MINIMAL:
-      return {level, "MINIMAL", 2000, 15, VideoResolution::R360P, false, false, false, 20.0};
+      return {level, "MINIMAL", 2000, 10, VideoResolution::R360P, false, false, false, 20.0};
     case DegradationLevel::SAFETY_STOP:
       return {level, "SAFETY_STOP", 500, 10, VideoResolution::R360P, false, false, false, 0.0};
   }
