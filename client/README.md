@@ -63,10 +63,8 @@ client/
 
 | 文档 | 用途 |
 |------|------|
-| [`客户端架构设计.md`](./客户端架构设计.md) | 分层与模块边界总述 |
-| [`docs/CALLCHAIN_AND_ARCHITECTURE.md`](docs/CALLCHAIN_AND_ARCHITECTURE.md) | 登录 → 会话 → 拉流 → 控车 → 急停 调用链 |
-| [`docs/GATE_A_CLIENT_CONTROL_SAFETY.md`](docs/GATE_A_CLIENT_CONTROL_SAFETY.md) | 控车与安全相关变更评审要点 |
-| [`docs/ARCHITECTURE_RISK_REVIEW.md`](docs/ARCHITECTURE_RISK_REVIEW.md) | 风险与阻塞项 |
+| [`../docs/CLIENT_ARCHITECTURE.md`](../docs/CLIENT_ARCHITECTURE.md) | 统一架构说明（含分层、调用链、协议与 UI 契约） |
+| [`../docs/TELEOP_SIGNAL_CONTRACT.md`](../docs/TELEOP_SIGNAL_CONTRACT.md) | 控车、状态与媒体端到端契约 |
 
 ## 依赖要求
 

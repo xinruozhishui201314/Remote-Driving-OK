@@ -199,11 +199,11 @@ docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml logs --ta
 |------|------|------|
 | **失败：user not found or no account** | JWT 有效但 Backend 的 `users` 表中无该 `sub`（Keycloak 新建用户未同步） | 自当前版本起 Backend 支持 **JIT 同步**：首次用该用户访问时会自动创建 account+user。请**重新编译并重启 backend**（确保含 JIT 逻辑）后再试；若仍报错，检查 DATABASE_URL、migrations 已执行、JWT 未过期。 |
 
-| 关键字 | 含义 |
-|--------|------|
-| `[Backend][AddVehicle] 503 vehicles insert failed` | 车辆表插入失败，看 `err=` |
-| `[Backend][AddVehicle] 503 account_vehicles insert failed` | 账号绑定插入失败 |
-| `[Backend][AddVehicle] 503 vin_grants insert failed` | 权限表插入失败（如 vin_grants 表不存在或约束冲突） |
+| 关键字　　　　　　　　　　　　　　　　　　　　　　　　　　 | 含义　　　　　　　　　　　　　　　　　　　　　　　 |
+| ------------------------------------------------------------| ----------------------------------------------------|
+| `[Backend][AddVehicle] 503 vehicles insert failed`　　　　 | 车辆表插入失败，看 `err=`　　　　　　　　　　　　　|
+| `[Backend][AddVehicle] 503 account_vehicles insert failed` | 账号绑定插入失败　　　　　　　　　　　　　　　　　 |
+| `[Backend][AddVehicle] 503 vin_grants insert failed`　　　 | 权限表插入失败（如 vin_grants 表不存在或约束冲突） |
 
 **解除绑定（DELETE 成功）时：**
 
