@@ -13,10 +13,22 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMetaObject>
+#include <QStringList>
 #include <QThread>
+#include <QtGlobal>
 
 #include <algorithm>
 #include <cmath>
+
+namespace {
+/** 调试阶段默认开启；显式 CLIENT_TELEOP_TRACE=0 一键关闭。 */
+bool teleopTraceEnvEnabled() {
+  const QByteArray v = qgetenv("CLIENT_TELEOP_TRACE");
+  if (v.isEmpty())
+    return true;
+  return qEnvironmentVariableIntValue("CLIENT_TELEOP_TRACE") != 0;
+}
+}  // namespace
 
 VehicleControlService::VehicleControlService(MqttController* mqtt, VehicleManager* vehicles,
                                              WebRtcStreamManager* webrtc, QObject* parent)
@@ -47,6 +59,12 @@ bool VehicleControlService::initialize() {
   m_controlTimer.setInterval(1000 / m_config.controlRateHz);
   m_secondStart = TimeUtils::nowMs();
   qInfo() << "[Client][VehicleControlService] initialized at" << m_config.controlRateHz << "Hz";
+  if (teleopTraceEnvEnabled()) {
+    qInfo().noquote() << "[Client][Teleop][TRACE] 遥操作/控制环详细日志已开启（调试阶段默认开）；"
+                         "关闭: CLIENT_TELEOP_TRACE=0";
+  } else {
+    qInfo().noquote() << "[Client][Teleop][TRACE] CLIENT_TELEOP_TRACE=0 — 遥操作详细日志已关闭";
+  }
   return true;
 }
 
@@ -79,6 +97,17 @@ void VehicleControlService::controlTick() {
 
   // 1. 读取最新输入（无锁原子读）
   IInputDevice::InputState input = m_latestInput.load();
+
+  if (teleopTraceEnvEnabled()) {
+    static qint64 s_lastTraceMs = 0;
+    const qint64 wallMs = TimeUtils::nowMs();
+    if (wallMs - s_lastTraceMs >= 250) {
+      s_lastTraceMs = wallMs;
+      qInfo().noquote() << "[Client][Teleop][TRACE][tickIn] steer=" << input.steeringAngle
+                        << " thr=" << input.throttle << " brk=" << input.brake << " gear=" << input.gear
+                        << " estop=" << (input.emergencyStop ? 1 : 0);
+    }
+  }
 
   // 急停检查
   if (input.emergencyStop) {
@@ -173,18 +202,20 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
   }
   auto buildJson = [&]() -> QJsonObject {
     QJsonObject json;
+    json[QStringLiteral("type")] = QStringLiteral("drive");
+    json[QStringLiteral("schemaVersion")] = MqttControlEnvelope::controlSchemaVersionString();
     json["steering"] = cmd.steeringAngle;
     json["throttle"] = cmd.throttle;
     json["brake"] = cmd.brake;
     json["gear"] = cmd.gear;
     json["emergency_stop"] = cmd.emergencyStop;
-    json["timestamp"] = static_cast<qint64>(cmd.timestamp);
+    json[QStringLiteral("timestampMs")] = static_cast<qint64>(cmd.timestamp);
     json["seq"] = static_cast<qint64>(cmd.sequenceNumber);
-    // 会话上下文（参与签名，服务端可验证归属）
+    // 会话上下文（参与签名，服务端可验证归属；字段名与 Vehicle-side control_protocol sessionId 一致）
     if (!m_currentVin.isEmpty())
       json["vin"] = m_currentVin;
     if (!m_sessionId.isEmpty())
-      json["session_id"] = m_sessionId;
+      json[QStringLiteral("sessionId")] = m_sessionId;
     json[QStringLiteral("trace_id")] = Tracing::instance().currentTraceId();
     if (m_config.enablePrediction) {
       json["predicted_steering"] = cmd.predictedSteeringAngle;
@@ -197,17 +228,40 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
     return json;
   };
 
+  static qint64 s_lastDriveLogMs = 0;
+  const qint64 wallMs = TimeUtils::nowMs();
+
   if (m_transport) {
     QJsonObject json = buildJson();
     const QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Compact);
     m_transport->sendControlJson(payload);
+    if (wallMs - s_lastDriveLogMs >= 1000) {
+      s_lastDriveLogMs = wallMs;
+      qInfo().noquote() << "[Client][Teleop][DRIVE_1Hz] ch=transport vin=" << m_currentVin
+                        << "steer=" << cmd.steeringAngle << "thr=" << cmd.throttle << "brk=" << cmd.brake
+                        << "gear=" << cmd.gear << "seq=" << cmd.sequenceNumber;
+    }
   } else if (m_mqtt) {
+    if (!m_mqtt->mqttBrokerConnected()) {
+      static int s_mqttSkip = 0;
+      if (++s_mqttSkip == 1 || s_mqttSkip % 400 == 0) {
+        qDebug() << "[Client][VehicleControlService][CHAIN] skip sendCommand: MQTT 未连接 throttled="
+                 << s_mqttSkip << " | 先连 Broker；grep [CLIENT][MQTT][CHAIN]";
+      }
+    } else {
 #ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
-    m_mqtt->sendControlCommand(buildJson());
+      m_mqtt->sendControlCommand(buildJson());
+      if (wallMs - s_lastDriveLogMs >= 1000) {
+        s_lastDriveLogMs = wallMs;
+        qInfo().noquote() << "[Client][Teleop][DRIVE_1Hz] ch=mqtt vin=" << m_currentVin
+                          << "steer=" << cmd.steeringAngle << "thr=" << cmd.throttle << "brk=" << cmd.brake
+                          << "gear=" << cmd.gear << "seq=" << cmd.sequenceNumber;
+      }
 #else
-    // 单测目标不链接 MqttController.cpp；此处仅在 m_mqtt!=nullptr 时需要完整客户端
-    Q_UNUSED(m_mqtt);
+      // 单测目标不链接 MqttController.cpp；此处仅在 m_mqtt!=nullptr 时需要完整客户端
+      Q_UNUSED(m_mqtt);
 #endif
+    }
   }
 
   emit commandSent(cmd);
@@ -229,11 +283,14 @@ void VehicleControlService::sendUiCommand(const QString& type, const QVariantMap
   }
   const QString traceId = Tracing::instance().currentTraceId();
 
+  QStringList payloadKeyList;
+  for (auto it = payload.constBegin(); it != payload.constEnd(); ++it)
+    payloadKeyList.append(it.key());
+
   qInfo().noquote() << "[Client][Control][UI] type=" << type << "traceId=" << traceId.left(16)
-                    << "vin="
-                    << (m_currentVin.isEmpty() && m_vehicles ? m_vehicles->currentVin()
-                                                             : m_currentVin)
-                    << "sessionId=" << m_sessionId.left(12);
+                    << "vin=" << (m_currentVin.isEmpty() && m_vehicles ? m_vehicles->currentVin() : m_currentVin)
+                    << "sessionId=" << m_sessionId.left(12)
+                    << "payload=" << QJsonDocument(QJsonObject::fromVariantMap(payload)).toJson(QJsonDocument::Compact);
 
   if (type == QLatin1String("emergency_stop")) {
     requestEmergencyStop();
@@ -246,6 +303,17 @@ void VehicleControlService::sendUiCommand(const QString& type, const QVariantMap
   }
 
   const qint64 seq = static_cast<qint64>(m_seqCounter.fetch_add(1, std::memory_order_relaxed));
+  
+  // ★ 核心修复：同步 UI 指令状态到 100Hz 控制环路输入（m_latestInput）
+  // 否则控制环路会立即用旧状态（如 gear=0/N）覆盖 UI 发出的新指令。
+  if (type == QLatin1String("gear")) {
+    int g = payload.value(QStringLiteral("value")).toInt();
+    IInputDevice::InputState input = m_latestInput.load();
+    input.gear = g;
+    m_latestInput.store(input);
+    qInfo() << "[Client][Control][UI] gear updated in state machine to" << g;
+  }
+
   const QJsonObject json = MqttControlEnvelope::buildUiCommandEnvelope(
       type, QJsonObject::fromVariantMap(payload), vin, m_sessionId,
       static_cast<qint64>(TimeUtils::wallClockMs()), seq, traceId);
@@ -253,12 +321,21 @@ void VehicleControlService::sendUiCommand(const QString& type, const QVariantMap
 }
 
 void VehicleControlService::sendDriveCommand(double steering, double throttle, double brake) {
-  IInputDevice::InputState input{};
+  IInputDevice::InputState input = m_latestInput.load();
   input.steeringAngle = steering;
   input.throttle = throttle;
   input.brake = brake;
   input.timestamp = TimeUtils::nowUs();
   m_latestInput.store(input);
+  if (teleopTraceEnvEnabled()) {
+    static qint64 s_lastDriveTraceMs = 0;
+    const qint64 wallMs = TimeUtils::nowMs();
+    if (wallMs - s_lastDriveTraceMs >= 100) {
+      s_lastDriveTraceMs = wallMs;
+      qInfo().noquote() << "[Client][Teleop][TRACE][sendDriveCommand] steer=" << steering
+                        << " thr=" << throttle << " brk=" << brake;
+    }
+  }
   pingSafety();
 }
 
@@ -285,11 +362,20 @@ void VehicleControlService::sendRawControlJson(const QJsonObject& obj) {
   if (m_transport) {
     m_transport->sendControlJson(payload);
   } else if (m_mqtt) {
+    if (!m_mqtt->mqttBrokerConnected()) {
+      static int s_raw = 0;
+      if (++s_raw % 200 == 1) {
+        qDebug() << "[Client][VehicleControlService][CHAIN] skip sendRawControlJson: MQTT 未连接 "
+                    "throttled="
+                 << s_raw;
+      }
+    } else {
 #ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
-    m_mqtt->sendControlCommand(obj);
+      m_mqtt->sendControlCommand(obj);
 #else
-    Q_UNUSED(m_mqtt);
+      Q_UNUSED(m_mqtt);
 #endif
+    }
   }
   pingSafety();
 }

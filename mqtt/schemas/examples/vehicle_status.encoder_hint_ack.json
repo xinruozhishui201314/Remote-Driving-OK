@@ -1,0 +1,9 @@
+{
+  "type": "encoder_hint_ack",
+  "vin": "TESTVIN0000000001",
+  "timestamp": 1700000000000,
+  "schemaVersion": "1.2.0",
+  "stream": "TESTVIN0000000001_cam_front",
+  "actionTaken": "logged",
+  "message": "contract golden"
+}

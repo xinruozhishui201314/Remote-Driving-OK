@@ -7,7 +7,17 @@ on:
       - 'backend/api/openapi.yaml'
       - 'backend/src/**'
       - 'mqtt/schemas/**'
+      - 'mqtt/README.md'
+      - 'docs/TELEOP_SIGNAL_CONTRACT.md'
+      - 'client/src/utils/**'
+      - 'client/src/services/**'
+      - 'client/src/core/**'
+      - 'client/src/mqttcontroller.cpp'
+      - 'client/src/webrtcclient.cpp'
+      - 'Vehicle-side/src/**'
+      - 'carla-bridge/**'
       - 'scripts/validate_contract_artifacts.py'
+      - 'scripts/validate_mqtt_schemas.py'
       - 'scripts/validate_api_against_openapi.py'
       - 'scripts/verify-contract-artifacts.sh'
       - 'scripts/verify-contract-v1-cross-service.sh'
@@ -20,7 +30,17 @@ on:
       - 'backend/api/openapi.yaml'
       - 'backend/src/**'
       - 'mqtt/schemas/**'
+      - 'mqtt/README.md'
+      - 'docs/TELEOP_SIGNAL_CONTRACT.md'
+      - 'client/src/utils/**'
+      - 'client/src/services/**'
+      - 'client/src/core/**'
+      - 'client/src/mqttcontroller.cpp'
+      - 'client/src/webrtcclient.cpp'
+      - 'Vehicle-side/src/**'
+      - 'carla-bridge/**'
       - 'scripts/validate_contract_artifacts.py'
+      - 'scripts/validate_mqtt_schemas.py'
       - 'scripts/validate_api_against_openapi.py'
       - 'scripts/verify-contract-artifacts.sh'
       - 'scripts/verify-contract-v1-cross-service.sh'
@@ -44,6 +64,8 @@ jobs:
         run: pip install -r scripts/requirements-contract.txt
       - name: validate_contract_artifacts.py
         run: python3 scripts/validate_contract_artifacts.py
+      - name: validate_mqtt_schemas.py (repo scan)
+        run: PYTHONPATH=mqtt/schemas python3 scripts/validate_mqtt_schemas.py
 
   cross-service-openapi:
     name: OpenAPI vs Backend routes (V1)

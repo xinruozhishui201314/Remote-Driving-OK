@@ -6,6 +6,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 # 可选：带 carla 的 compose
 COMPOSE_CARLA="docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.carla.yml"
@@ -69,7 +71,8 @@ check_carla_logs() {
 # 3) 发送 start_stream (carla-sim-001)，等待 Bridge 开始推流
 send_start_stream_and_wait() {
   log_section "3/6 发送 MQTT start_stream vin=$VIN_CARLA 并等待推流"
-  local msg="{\"type\":\"start_stream\",\"vin\":\"$VIN_CARLA\",\"timestamp\":0}"
+  local msg
+  msg="$(mqtt_json_start_stream "$VIN_CARLA")"
   if command -v mosquitto_pub &>/dev/null; then
     mosquitto_pub -h 127.0.0.1 -p 1883 -t vehicle/control -m "$msg" 2>/dev/null && log_ok "已发送 start_stream (宿主机 mosquitto_pub)"
   else

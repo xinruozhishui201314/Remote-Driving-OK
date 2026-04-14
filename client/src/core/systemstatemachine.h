@@ -18,6 +18,7 @@ class EventBus;
  *   AUTHENTICATING ──auth_success──> READY
  *   READY ──start_session──> PRE_FLIGHT ──preflight_ok──> DRIVING
  *   DRIVING ──network_degrade──> DEGRADED ──network_recover──> DRIVING
+ *   PRE_FLIGHT ──emergency_stop──> READY（安全看门狗/异常时中止会话）
  *   DRIVING/DEGRADED ──emergency_stop──> EMERGENCY
  *   DRIVING/DEGRADED/EMERGENCY ──stop_session──> STOPPING ──> IDLE
  *   任意状态 ──reset──> IDLE
@@ -82,7 +83,7 @@ class SystemStateMachine : public QObject {
 
   /**
    * 车端遥测/心跳是否参与 SafetyMonitor 的严格看门狗（心跳丢失→急停、死手等）。
-   * READY/IDLE 等「未进入远驾会话」状态为 false：由 MQTT 连通性刷新心跳，避免仅看视频时误报。
+   * READY/PRE_FLIGHT/IDLE 等为 false；进入 DRIVING/DEGRADED 后由车端 status（MQTT）刷新心跳。
    */
   bool vehicleTelemetryHeartbeatRequired() const;
 

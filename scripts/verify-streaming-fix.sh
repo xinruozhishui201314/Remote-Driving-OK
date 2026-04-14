@@ -6,6 +6,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -36,7 +38,7 @@ if [[ -z "$MQTT_CONTAINER" ]]; then
   echo -e "${RED}未找到 MQTT 容器${NC}"
   exit 1
 fi
-docker exec "$MQTT_CONTAINER" mosquitto_pub -h mosquitto -p 1883 -t "vehicle/control" -m '{"type":"start_stream","vin":"123456789","timestampMs":0}' || true
+docker exec "$MQTT_CONTAINER" mosquitto_pub -h mosquitto -p 1883 -t "vehicle/control" -m "$(mqtt_json_start_stream "123456789")" || true
 echo "已发送"
 
 # 4. 等待推流就绪（最多 18s，与客户端 8*3s 重试对齐）

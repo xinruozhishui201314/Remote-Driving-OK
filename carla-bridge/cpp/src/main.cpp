@@ -43,7 +43,11 @@ int main(int argc, char* argv[]) {
   int camH = getEnvInt("CAMERA_HEIGHT", 480);
   int camFps = getEnvInt("CAMERA_FPS", 10);
 
+#ifdef ENABLE_LIBCARLA
+  std::cout << "[Bridge] LibCarla 已启用：车辆控制走 CARLA ApplyControl/GetVelocity；推流仍取决于 RtmpPusher（无相机绑定时可能需 testsrc 或另接 Python 桥）" << std::endl;
+#else
   std::cout << "[Bridge] 视频源: testsrc（ffmpeg 测试图案，非 CARLA 画面）" << std::endl;
+#endif
   std::cout << "[Bridge] CARLA=" << carlaHost << ":" << carlaPort
             << " MQTT=" << mqttBroker << ":" << mqttPort
             << " ZLM=" << zlmHost << ":" << zlmRtmp << " VIN=" << vin << std::endl;
@@ -95,6 +99,12 @@ int main(int argc, char* argv[]) {
       std::cerr << "[Bridge][MainLoop] carla.setStreaming exception: " << e.what() << std::endl;
     }
 
+    try {
+      carla.integrateSpeedStep(dt);
+    } catch (const std::exception& e) {
+      std::cerr << "[Bridge][MainLoop] carla.integrateSpeedStep exception: " << e.what() << std::endl;
+    }
+
     double speedKmh = 0.0;
     try {
       carla.getVelocity(speedKmh);
@@ -112,7 +122,7 @@ int main(int argc, char* argv[]) {
 
     try {
       mqtt.publishStatus(speedKmh, current.gear, current.steering, current.throttle, current.brake,
-                        current.remote_enabled, mode);
+                        current.remote_enabled, current.streaming, mode);
     } catch (const std::exception& e) {
       std::cerr << "[Bridge][MainLoop] mqtt.publishStatus exception: " << e.what() << std::endl;
     }
@@ -120,7 +130,10 @@ int main(int argc, char* argv[]) {
     // ★ 精确定位：周期性打印当前发布的 remote_enabled，便于确认车端实际下发值
     if (++loopCount >= kLogInterval) {
       loopCount = 0;
-      std::cout << "[Bridge] 当前发布 vehicle/status remote_enabled=" << (current.remote_enabled ? "true" : "false") << " driving_mode=" << mode << std::endl;
+      std::cout << "[Bridge][STATUS_5s] remote=" << (current.remote_enabled ? "1" : "0") << " mode=" << mode
+                << " pub_speed_kmh=" << speedKmh << " ui_cmd_kmh=" << current.ui_speed_kmh
+                << " steer=" << current.steering << " gear=" << current.gear
+                << " stream=" << (current.streaming ? "1" : "0") << std::endl;
     }
 
     // ★ 异常计数监控：每 10 次循环打印一次，便于判断模块是否持续异常

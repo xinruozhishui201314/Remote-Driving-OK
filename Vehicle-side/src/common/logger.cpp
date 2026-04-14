@@ -11,6 +11,10 @@ std::shared_ptr<spdlog::logger> Logger::s_logger;
 std::shared_ptr<spdlog::details::thread_pool> Logger::s_thread_pool;
 
 void Logger::init(const std::string& node_id, const std::string& level) {
+    // 如果已经初始化过且 logger 依然有效，跳过重复初始化（除非显式 shutdown 后重试）
+    if (s_logger && s_thread_pool) {
+        return;
+    }
     // Plan 5.2: Fix node_id to be descriptive
     s_node_id = node_id.empty() ? "vehicle-side" : node_id;
 

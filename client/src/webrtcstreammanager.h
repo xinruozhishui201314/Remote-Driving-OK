@@ -9,6 +9,9 @@
 
 #include <atomic>
 
+class QNetworkAccessManager;
+class QNetworkReply;
+
 class VehicleManager;
 class MqttController;
 
@@ -60,6 +63,14 @@ class WebRtcStreamManager : public QObject {
    * 若 whepUrl 为空则用 ZLM_VIDEO_URL 环境变量。
    */
   Q_INVOKABLE virtual void connectFourStreams(const QString &whepUrl = QString());
+  /**
+   * 在 ZLM getMediaList 上出现本车四路 {vin}_cam_* 后再 connectFourStreams（轮询，超时则仍拉流兜底）。
+   * @param pollIntervalMs 探测间隔
+   * @param maxWaitMs 最长等待；超时后调用 connectFourStreams 交由 WebRTC 重试 stream not found
+   */
+  Q_INVOKABLE void scheduleConnectFourStreamsWhenZlmReady(const QString &whepUrl = QString(),
+                                                          int pollIntervalMs = 1000,
+                                                          int maxWaitMs = 45000);
   /** 断开四路 */
   Q_INVOKABLE virtual void disconnectAll();
 
@@ -127,6 +138,7 @@ class WebRtcStreamManager : public QObject {
   bool m_runtimeQueuedLagSloBreached = false;
 
  private slots:
+  void onZlmReadyTimerTick();
   /** 与 disconnectWaveId 同窗去重后拉取 ZLM getMediaList 写日志（可由环境变量
    * CLIENT_DISABLE_ZLM_WAVE_SNAPSHOT=1 关闭） */
   void onZlmSnapshotRequested(int disconnectWaveId, const QString &stream, int peerStateEnum);
@@ -136,6 +148,15 @@ class WebRtcStreamManager : public QObject {
  private:
   void fetchZlmMediaListSnapshotForWave(int disconnectWaveId, const QString &triggerStream,
                                         int peerStateEnum);
+  void cancelZlmReadySchedule();
+
+  QString m_streamsConnectedVin;
+  QTimer *m_zlmReadyTimer = nullptr;
+  QNetworkAccessManager *m_zlmReadyNam = nullptr;
+  QNetworkReply *m_zlmReadyReply = nullptr;
+  QString m_zlmReadyWhep;
+  qint64 m_zlmReadyDeadlineMs = 0;
+  bool m_zlmReadyPollInFlight = false;
 };
 
 #endif  // WEBRTCSTREAMMANAGER_H

@@ -43,7 +43,7 @@ Rectangle {
             radius: 7
             color: {
                 var webrtc = statusBar.videoStreamsConnected()
-                var mqtt = statusBar.mqttController && statusBar.mqttController.isConnected
+                var mqtt = statusBar.mqttController && statusBar.mqttController.mqttBrokerConnected
                 if (webrtc && mqtt) {
                     return ThemeModule.Theme.colorGood  // 绿色
                 } else if (webrtc || mqtt) {
@@ -58,7 +58,7 @@ Rectangle {
             SequentialAnimation on opacity {
                 running: {
                     var webrtc = statusBar.videoStreamsConnected()
-                    var mqtt = statusBar.mqttController && statusBar.mqttController.isConnected
+                    var mqtt = statusBar.mqttController && statusBar.mqttController.mqttBrokerConnected
                     return webrtc && mqtt
                 }
                 loops: Animation.Infinite
@@ -115,11 +115,11 @@ Rectangle {
             
             Text {
                 text: {
-                    var connected = statusBar.mqttController && statusBar.mqttController.isConnected
+                    var connected = statusBar.mqttController && statusBar.mqttController.controlChannelReady
                     return connected ? "✓" : "✗"
                 }
                 color: {
-                    var connected = statusBar.mqttController && statusBar.mqttController.isConnected
+                    var connected = statusBar.mqttController && statusBar.mqttController.controlChannelReady
                     return connected ? ThemeModule.Theme.colorGood : ThemeModule.Theme.colorDanger
                 }
                 font.pixelSize: 14

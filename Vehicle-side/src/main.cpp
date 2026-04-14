@@ -10,6 +10,7 @@
 #include "zlm_control_channel.h"
 #include "vehicle_config.h"
 #include "control_protocol.h"
+#include "common/logger.h"  // 添加日志头文件以支持优雅关闭
 
 #ifdef ENABLE_ROS2
 #include "ros2_bridge.h"
@@ -218,6 +219,9 @@ int main(int argc, char *argv[])
 #ifdef ENABLE_ROS2
     rclcpp::shutdown();
 #endif
+
+    // 优雅关闭日志系统，防止 async_logger 线程池在程序退出时崩溃
+    vehicle::common::Logger::shutdown();
 
     std::cout << "[Vehicle-side] shutdown complete" << std::endl;
     return 0;

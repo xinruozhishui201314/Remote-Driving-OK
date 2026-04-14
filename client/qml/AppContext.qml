@@ -60,6 +60,13 @@ QtObject {
     readonly property string windowFramePolicyReason: (typeof rd_windowFramePolicyReason !== "undefined")
                                                       ? String(rd_windowFramePolicyReason) : ""
 
+    /**
+     * 遥操作排障详细日志（键盘/焦点/控制环对齐）。调试阶段默认开启；
+     * 一键关闭：CLIENT_TELEOP_TRACE=0（与 C++ 同源，见 client_app_bootstrap.cpp）。
+     */
+    readonly property bool teleopTraceEnabled: (typeof rd_teleopTraceEnabled !== "undefined")
+                                             && (rd_teleopTraceEnabled === true)
+
     // ─────────────────────────────────────────────────────────────────
     // 便捷状态属性
     // ─────────────────────────────────────────────────────────────────
@@ -81,8 +88,11 @@ QtObject {
 
     readonly property bool isMqttConnected: {
         var mqtt = mqttController
-        return mqtt !== null && mqtt.isConnected === true
+        return mqtt !== null && mqtt.mqttBrokerConnected === true
     }
+
+    /** ConnectionsDialog 点「连接」后置位；main.qml 在 mqttBrokerConnectionChanged(true) 时发 start_stream 再清零 */
+    property bool pendingRequestStreamAfterMqttConnect: false
 
     // ─────────────────────────────────────────────────────────────────
     // 视频连接状态便捷方法

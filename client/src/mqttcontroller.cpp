@@ -36,6 +36,11 @@ bool shouldLogMqttInboundMessage(quint64 &seq) {
 
 quint64 s_mqttPahoInboundSeq = 0;
 quint64 s_mqttSubInboundSeq = 0;
+
+bool mqttChainVerbose() {
+  static const int v = qEnvironmentVariableIntValue("CLIENT_MQTT_CHAIN_DIAG");
+  return v != 0;
+}
 }  // namespace
 
 MqttController::MqttController(QObject *parent) : QObject(parent) {
@@ -48,8 +53,21 @@ MqttController::MqttController(QObject *parent) : QObject(parent) {
   connect(m_reconnectTimer, &QTimer::timeout, this, &MqttController::onReconnectTimer);
 }
 
+bool MqttController::controlChannelReady() const {
+  return m_isConnected;
+}
+
 bool MqttController::isConnected() const {
-  return m_isConnected || (m_webrtcClient && m_webrtcClient->isConnected());
+  return controlChannelReady();
+}
+
+void MqttController::bumpControlChannelState() {
+  const bool ready = m_isConnected;
+  if (ready == m_controlChannelReadyCache)
+    return;
+  m_controlChannelReadyCache = ready;
+  emit controlChannelReadyChanged();
+  emit connectionStatusChanged(ready);
 }
 
 MqttController::~MqttController() {
@@ -111,32 +129,78 @@ void MqttController::setCurrentVin(const QString &vin) {
 
 void MqttController::connectToBroker() {
   if (m_isConnected) {
-    qDebug() << "[CLIENT][MQTT] 已连接，跳过 connectToBroker";
+    qDebug() << "[CLIENT][MQTT][CHAIN] phase=SKIP already_connected url=" << m_brokerUrl;
+    return;
+  }
+  if (m_brokerConnectInFlight) {
+    qInfo().noquote() << "[CLIENT][MQTT][CHAIN] phase=SKIP in_flight (duplicate connectToBroker) url="
+                      << m_brokerUrl;
     return;
   }
 
-  qDebug() << "[CLIENT][MQTT] 连接 broker vin=" << m_currentVin << " brokerUrl=" << m_brokerUrl;
+  QUrl url(m_brokerUrl);
+  QString host = url.host();
+  int port = url.port(1883);
+  if (host.isEmpty()) {
+    qCritical().noquote()
+        << "[CLIENT][MQTT][CHAIN] phase=URL_INVALID raw_brokerUrl=" << m_brokerUrl
+        << " | 环节: 解析后 host 为空；请使用 mqtt://HOST:1883 或 tcp://HOST:1883（Docker 内服务名在宿主机客户端上不可解析）";
+    emit mqttConnectResolved(false, QStringLiteral("invalid_broker_url_empty_host|%1").arg(m_brokerUrl));
+    emit errorOccurred(QStringLiteral("MQTT 地址无效：解析后主机名为空。请检查 mqtt://IP:1883"));
+    return;
+  }
+
+  m_brokerConnectInFlight = true;
+  ++m_connectWatchdogGeneration;
+  const quint64 watchdogGen = m_connectWatchdogGeneration;
+
+  qInfo().noquote() << "[CLIENT][MQTT][CHAIN] phase=ATTEMPT gen=" << watchdogGen << " vin=" << m_currentVin
+                    << " host=" << host << " port=" << port << " controlTopic=" << m_controlTopic
+                    << " statusTopic=" << m_statusTopic
+#ifdef ENABLE_MQTT_PAHO
+                    << " backend=Paho"
+#else
+                    << " backend=mosquitto_sub+pub"
+#endif
+                    << " | grep [CLIENT][MQTT][CHAIN] 跟踪全链路";
+
+  QTimer::singleShot(15000, this, [this, watchdogGen]() {
+    if (watchdogGen != m_connectWatchdogGeneration)
+      return;
+    if (m_isConnected) {
+      m_brokerConnectInFlight = false;
+      return;
+    }
+    m_brokerConnectInFlight = false;
+    qCritical().noquote()
+        << "[CLIENT][MQTT][CHAIN] phase=TIMEOUT gen=" << watchdogGen << " url=" << m_brokerUrl
+        << " | 15s 内未进入已连接：检查 broker 是否监听、端口映射、防火墙、以及宿主机能否访问该 host";
+    emit mqttConnectResolved(
+        false, QStringLiteral("connect_timeout_15s|url=%1|see_logs_CLIENT_MQTT_CHAIN").arg(m_brokerUrl));
+    emit errorOccurred(
+        QStringLiteral("MQTT 连接超时(15s)。请确认 Mosquitto 已启动且地址/端口可从本机访问（docker 内需映射 1883）"));
+  });
 
 #ifdef ENABLE_MQTT_PAHO
   try {
-    // 解析 broker URL
-    QUrl url(m_brokerUrl);
-    QString host = url.host();
-    int port = url.port(1883);
     QString address = QString("%1:%2").arg(host).arg(port);
+    if (mqttChainVerbose()) {
+      qInfo() << "[CLIENT][MQTT][CHAIN] phase=PAHO_CREATE clientId=" << m_clientId << " server=" << address;
+    }
 
-    // 创建 MQTT 客户端
     m_client =
         std::make_unique<mqtt::async_client>(address.toStdString(), m_clientId.toStdString());
 
-    // 设置回调
     m_client->set_connected_handler([this](const std::string &) {
-      qDebug() << "[CLIENT][MQTT] 连接成功 vin=" << m_currentVin;
+      qInfo().noquote() << "[CLIENT][MQTT][CHAIN] phase=PAHO_TCP_OK vin=" << m_currentVin
+                        << " → invoking onConnected (subscribe + m_isConnected)";
       QMetaObject::invokeMethod(this, "onConnected", Qt::QueuedConnection);
     });
 
-    m_client->set_connection_lost_handler([this](const std::string &) {
-      qWarning() << "[CLIENT][MQTT] 连接丢失 vin=" << m_currentVin;
+    m_client->set_connection_lost_handler([this](const std::string &cause) {
+      const QString qcause = QString::fromStdString(cause);
+      qWarning().noquote() << "[CLIENT][MQTT][CHAIN] phase=CONNECTION_LOST vin=" << m_currentVin
+                           << " cause=" << (qcause.isEmpty() ? QStringLiteral("(empty)") : qcause);
       QMetaObject::invokeMethod(this, "onDisconnected", Qt::QueuedConnection);
     });
 
@@ -150,49 +214,43 @@ void MqttController::connectToBroker() {
                                 Q_ARG(QByteArray, topic.toUtf8()), Q_ARG(QByteArray, payload));
     });
 
-    // 连接选项
     mqtt::connect_options connOpts;
     connOpts.set_clean_session(true);
     connOpts.set_automatic_reconnect(true);
-    // 设置 Keep-Alive 间隔（60秒），防止 NAT 超时断开连接
     connOpts.set_keep_alive_interval(60);
-    // 设置连接超时（10秒）
     connOpts.set_connect_timeout(10);
 
-    // 纯异步连接：connected_handler 回调已注册，不阻塞主线程
+    if (mqttChainVerbose()) {
+      qInfo() << "[CLIENT][MQTT][CHAIN] phase=PAHO_CONNECT_ASYNC connect_timeout_s=10 keepalive_s=60";
+    }
     m_client->connect(connOpts);
 
   } catch (const mqtt::exception &exc) {
-    QString error = QString("MQTT connection error: %1").arg(exc.what());
-    qWarning() << error;
-    emit errorOccurred(error);
+    ++m_connectWatchdogGeneration;
+    m_brokerConnectInFlight = false;
+    const QString err = QStringLiteral("MQTT Paho 异常: %1").arg(exc.what());
+    qCritical().noquote() << "[CLIENT][MQTT][CHAIN] phase=PAHO_EXCEPTION " << err;
+    emit mqttConnectResolved(false, QStringLiteral("paho_exception|%1").arg(exc.what()));
+    emit errorOccurred(err);
   }
 #else
-  // 无 Paho 时使用 mosquitto_sub 接收消息
-  qDebug() << "[MQTT] 使用 mosquitto_sub 接收消息（ENABLE_MQTT_PAHO 未定义）";
-  QUrl url(m_brokerUrl);
-  QString host = url.host();
-  int port = url.port(1883);
-  if (host.isEmpty()) {
-    qWarning() << "[MQTT] brokerUrl 无效，无法连接";
-    emit errorOccurred("MQTT broker URL 无效");
-    return;
-  }
-
-  // 延迟连接，确保状态更新
-  QTimer::singleShot(500, this, [this, host, port]() {
-    updateConnectionStatus(true);
+  qInfo() << "[CLIENT][MQTT][CHAIN] phase=MOSQUITTO_SUB_SCHEDULE delay_ms=500 (无 Paho：订阅靠子进程)";
+  QTimer::singleShot(500, this, [this, watchdogGen]() {
+    if (watchdogGen != m_connectWatchdogGeneration)
+      return;
     onConnected();
   });
 #endif
 }
 
 void MqttController::disconnectFromBroker() {
+  ++m_connectWatchdogGeneration;
+  m_brokerConnectInFlight = false;
   if (!m_isConnected) {
     return;
   }
 
-  qDebug() << "Disconnecting from MQTT broker";
+  qInfo() << "[CLIENT][MQTT][CHAIN] phase=USER_DISCONNECT url=" << m_brokerUrl;
 
 #ifdef ENABLE_MQTT_PAHO
   try {
@@ -281,18 +339,19 @@ void MqttController::sendLightCommand(const QString &lightType, bool active) {
 }
 
 void MqttController::sendControlCommand(const QJsonObject &command) {
-  const bool dcReady = m_webrtcClient && m_webrtcClient->isDataChannelOpen();
-  const bool webrtcPeerUp = m_webrtcClient && m_webrtcClient->isConnected();
-  if (!m_isConnected && !dcReady && !webrtcPeerUp) {
-    qWarning() << "[CLIENT][Control] ✗ 无法发送控制指令: MQTT 未连且 WebRTC 未连接";
-    emit errorOccurred("控制通道未连接（请连接车端或视频流）");
-    return;
-  }
-  if (!m_isConnected && !dcReady && webrtcPeerUp) {
-    static int s_logCount = 0;
-    if (++s_logCount % 400 == 1) {
-      qDebug() << "[CLIENT][Control] MQTT 未连、DataChannel 未就绪；若仅视频已连请等待 DC 或依赖 MQTT 恢复 (throttled 1/400)";
+  if (!m_isConnected) {
+    static int s_mqttOffWarn = 0;
+    if (++s_mqttOffWarn == 1 || s_mqttOffWarn % 200 == 0) {
+      qWarning() << "[CLIENT][Control] ✗ 无法发送：MQTT 未连接（车端/carla-bridge 仅订阅 "
+                    "vehicle/control；ZLM DataChannel 不转发车控）"
+                 << " throttled=" << s_mqttOffWarn
+                 << " | 查 [CLIENT][MQTT][CHAIN] 与 mqttBrokerConnected";
     }
+    if (s_mqttOffWarn == 1) {
+      emit errorOccurred(
+          QStringLiteral("请先连接 MQTT 再发送车控指令（视频连通不能替代 MQTT）"));
+    }
+    return;
   }
 
   const auto prep = MqttControlEnvelope::prepareForSend(command, m_currentVin,
@@ -307,45 +366,15 @@ void MqttController::sendControlCommand(const QJsonObject &command) {
 }
 
 void MqttController::sendControlCommandAuto(const QJsonObject &command) {
-  const bool dcReady = m_webrtcClient && m_webrtcClient->isDataChannelOpen();
-  ChannelType useChannel = m_preferredChannel;
-
-  if (useChannel == ChannelType::AUTO) {
-    useChannel = dcReady ? ChannelType::DATA_CHANNEL : ChannelType::MQTT;
-  }
-
-  if (useChannel == ChannelType::DATA_CHANNEL && dcReady) {
-    const QByteArray payload = QJsonDocument(command).toJson(QJsonDocument::Compact);
-    if (m_webrtcClient->trySendDataChannelMessage(payload)) {
-      m_activeChannel = ChannelType::DATA_CHANNEL;
-      m_dataChannelCount++;
-      return;
-    }
-    qDebug() << "[CLIENT][Control] DataChannel 选路但 trySend 失败，回退 MQTT";
-  }
-  if (useChannel == ChannelType::WEBSOCKET) {
-    // WebSocket 暂未实现，回退到 MQTT
-    qDebug() << "[CLIENT][Control] WebSocket 通道暂未实现，回退到 MQTT";
-    useChannel = ChannelType::MQTT;
-  }
-  if (useChannel == ChannelType::MQTT && m_isConnected) {
-    sendControlCommandViaMqtt(command);
-    m_activeChannel = ChannelType::MQTT;
-    m_mqttCount++;
-    return;
-  }
-  // 回退：首选 DataChannel 不可用时用 MQTT
-  if (m_isConnected) {
-    qDebug() << "[CLIENT][Control] 使用 MQTT 发送（DataChannel 不可用或未选）";
-    sendControlCommandViaMqtt(command);
-    m_activeChannel = ChannelType::MQTT;
-    m_mqttCount++;
-  } else {
+  if (!m_isConnected) {
     static int s_logCount = 0;
     if (++s_logCount % 400 == 1) {
-      qWarning() << "[CLIENT][Control] 无可用通道，未发送 (throttled 1/400)";
+      qWarning() << "[CLIENT][Control] MQTT 未连接，车控未发送 (throttled 1/400)";
     }
+    return;
   }
+  (void)m_preferredChannel;
+  sendControlCommandViaMqtt(command);
 }
 
 void MqttController::sendControlCommandViaDataChannel(const QJsonObject &command) {
@@ -363,21 +392,31 @@ void MqttController::sendControlCommandViaMqtt(const QJsonObject &command) {
     qWarning() << "[CLIENT][Control] MQTT 未连接，无法发送";
     return;
   }
-  publishMessage(m_controlTopic, command);
+  const QString typ = command.value(QStringLiteral("type")).toString();
+  const int qos = (typ == QStringLiteral("start_stream") || typ == QStringLiteral("stop_stream")) ? 1
+                                                                                                    : 0;
+  if (publishMessage(m_controlTopic, command, qos)) {
+    m_activeChannel = ChannelType::MQTT;
+    m_mqttCount++;
+  }
 }
 
 void MqttController::setWebRtcClient(WebRtcClient *client) {
   if (m_webrtcClient == client) {
     return;
   }
-  // 断开旧连接，防止快速重连时信号槽累积导致槽被多次触发
   if (m_webrtcClient) {
     disconnect(m_webrtcClient, &WebRtcClient::connectionStatusChanged, this, nullptr);
+    disconnect(m_webrtcClient, &WebRtcClient::dataChannelOpenChanged, this, nullptr);
   }
   m_webrtcClient = client;
   if (m_webrtcClient) {
-    connect(m_webrtcClient, &WebRtcClient::connectionStatusChanged, this,
-            [this]() { emit connectionStatusChanged(isConnected()); });
+    connect(m_webrtcClient, &WebRtcClient::connectionStatusChanged, this, [this]() {
+      qDebug() << "[CLIENT][Control] WebRTC 媒体状态变化（车控仍仅走 MQTT）";
+    });
+    connect(m_webrtcClient, &WebRtcClient::dataChannelOpenChanged, this, [this]() {
+      qDebug() << "[CLIENT][Control] DataChannel 状态变化（车控仍仅走 MQTT；hint 等仍可用）";
+    });
   }
   qDebug() << "[CLIENT][Control] WebRTC 客户端已设置，DataChannel 可用时将优先使用";
 }
@@ -422,21 +461,30 @@ QString MqttController::getActiveChannelType() const {
 }
 
 void MqttController::requestStreamStart() {
-  const bool anyChannel = m_isConnected || (m_webrtcClient && m_webrtcClient->isConnected());
-  qDebug() << "[CLIENT][Control] requestStreamStart m_isConnected=" << m_isConnected
-           << " dataChannelOk=" << (m_webrtcClient && m_webrtcClient->isConnected())
+  qDebug() << "[CLIENT][Control] requestStreamStart mqtt=" << m_isConnected
            << " m_currentVin=" << m_currentVin;
-  if (!anyChannel) {
-    qWarning() << "[CLIENT][Control] ✗ 未连接，无法发送 start_stream（请先连接车端或视频流）";
+  if (!m_isConnected) {
+    qWarning() << "[CLIENT][Control] ✗ 无法发送 start_stream：MQTT 未连接";
+    emit errorOccurred(
+        QStringLiteral("请先连接 MQTT 再请求推流（车端/carla-bridge 仅订阅 vehicle/control）"));
+    return;
+  }
+  if (m_currentVin.isEmpty()) {
+    qWarning() << "[CLIENT][Control] ✗ 无法发送 start_stream：VIN 为空";
+    emit errorOccurred(QStringLiteral("请先选择车辆后再连接视频（start_stream 需带 VIN）"));
     return;
   }
   sendControlCommand(MqttControlEnvelope::buildStartStream(QDateTime::currentMSecsSinceEpoch()));
-  qDebug() << "[CLIENT][MQTT] ✓ 已调用 sendControlCommand(start_stream)，等待车端推流（约 5~15s）";
+  qInfo() << "[CLIENT][MQTT] start_stream 已提交（MQTT QoS1）；等待车端推流注册到 ZLM（通常数秒至数十秒）";
 }
 
 void MqttController::requestStreamStop() {
   if (!m_isConnected) {
-    qDebug() << "[CLIENT][MQTT] 未连接，跳过 stop_stream";
+    qDebug() << "[CLIENT][MQTT] MQTT 未连接，跳过 stop_stream";
+    return;
+  }
+  if (m_currentVin.isEmpty()) {
+    qWarning() << "[CLIENT][MQTT] VIN 为空，跳过 stop_stream";
     return;
   }
   sendControlCommand(MqttControlEnvelope::buildStopStream(QDateTime::currentMSecsSinceEpoch()));
@@ -472,15 +520,26 @@ void MqttController::requestRemoteControl(bool enable) {
            << " m_isConnected=" << (m_isConnected ? "true" : "false")
            << " m_currentVin=" << m_currentVin << " m_controlTopic=" << m_controlTopic;
 
-  const bool anyChannel = m_isConnected || (m_webrtcClient && m_webrtcClient->isConnected());
-  if (!anyChannel) {
-    qWarning() << "[REMOTE_CONTROL][SEND] ✗ 未发送：控制通道未连接";
+  if (!m_isConnected) {
+    qWarning() << "[REMOTE_CONTROL][SEND] ✗ 未发送：MQTT 未连接（远驾指令仅走 vehicle/control）";
+    emit errorOccurred(
+        QStringLiteral("远驾接管未发送：请先连接 MQTT（视频/DataChannel 不能替代 MQTT）"));
     return;
   }
-  sendControlCommand(
-      MqttControlEnvelope::buildRemoteControl(enable, QDateTime::currentMSecsSinceEpoch()));
-  qDebug() << "[REMOTE_CONTROL][SEND] <<< 已调用 publishMessage(topic=" << m_controlTopic
-           << ") 请查看上方是否有 ✓ 发布成功";
+  try {
+    sendControlCommand(
+        MqttControlEnvelope::buildRemoteControl(enable, QDateTime::currentMSecsSinceEpoch()));
+  } catch (const std::exception &e) {
+    qCritical() << "[REMOTE_CONTROL][SEND] ✗ 异常:" << e.what();
+    emit errorOccurred(QStringLiteral("remote_control 发送异常: %1").arg(e.what()));
+    return;
+  } catch (...) {
+    qCritical() << "[REMOTE_CONTROL][SEND] ✗ 未知异常";
+    emit errorOccurred(QStringLiteral("remote_control 发送未知异常"));
+    return;
+  }
+  qDebug() << "[REMOTE_CONTROL][SEND] <<< 已调用 sendControlCommand(remote_control) topic="
+           << m_controlTopic << " 请确认车端收到";
 }
 
 void MqttController::sendDriveCommand(double steering, double throttle, double brake, int gear) {
@@ -488,53 +547,77 @@ void MqttController::sendDriveCommand(double steering, double throttle, double b
                                                      QDateTime::currentMSecsSinceEpoch()));
 }
 
-void MqttController::publishMessage(const QString &topic, const QJsonObject &payload) {
+bool MqttController::publishMessage(const QString &topic, const QJsonObject &payload, int qos) {
   QJsonDocument doc(payload);
   QByteArray data = doc.toJson(QJsonDocument::Compact);
+  const int q = (qos >= 1) ? 1 : 0;
 
 #ifdef ENABLE_MQTT_PAHO
   try {
     if (m_client && m_client->is_connected()) {
       mqtt::message_ptr msg =
           mqtt::make_message(topic.toStdString(), std::string(data.data(), data.length()));
-      // QoS 0：fire-and-forget，不阻塞主线程；控制指令容忍偶发丢包
-      msg->set_qos(0);
-      m_client->publish(msg);  // 纯异步，不调用 ->wait()
-    } else {
-      qWarning() << "[CLIENT][MQTT] ✗ Paho 未连接，未发送 topic=" << topic;
+      msg->set_qos(q);
+      m_client->publish(msg);
+      return true;
     }
+    qWarning() << "[CLIENT][MQTT] ✗ Paho 未连接，未发送 topic=" << topic;
+    return false;
   } catch (const mqtt::exception &exc) {
     qWarning() << "[CLIENT][MQTT] ✗ Paho 发布失败 topic=" << topic << " error=" << exc.what();
     emit errorOccurred(QString("MQTT publish error: %1").arg(exc.what()));
+    return false;
   }
 #else
-  // 无 Paho fallback：startDetached 不阻塞主线程（fire-and-forget）
   QUrl url(m_brokerUrl);
   QString host = url.host();
   int port = url.port(1883);
   if (host.isEmpty()) {
     qWarning() << "[CLIENT][MQTT] ✗ brokerUrl 无效，无法发送 topic=" << topic;
-    return;
+    return false;
   }
   QStringList args;
   args << "-h" << host << "-p" << QString::number(port) << "-t" << topic << "-m"
        << QString::fromUtf8(data);
-  bool ok = QProcess::startDetached(QStringLiteral("mosquitto_pub"), args);
+  if (q >= 1)
+    args << QStringLiteral("-q") << QStringLiteral("1");
+  const bool ok = QProcess::startDetached(QStringLiteral("mosquitto_pub"), args);
   if (!ok) {
     qWarning() << "[CLIENT][MQTT] ✗ mosquitto_pub startDetached 失败 topic=" << topic
                << "(请安装 mosquitto-clients 或编译 ENABLE_MQTT_PAHO)";
   }
+  return ok;
 #endif
 }
 
 void MqttController::onConnected() {
-  m_isConnected = true;
-  // 重置重连计数器
+  ++m_connectWatchdogGeneration;
+  m_brokerConnectInFlight = false;
+
+#ifndef ENABLE_MQTT_PAHO
+  {
+    QUrl u(m_brokerUrl);
+    if (u.host().isEmpty()) {
+      qCritical().noquote()
+          << "[CLIENT][MQTT][CHAIN] phase=ON_CONNECTED_ABORT brokerUrl_invalid raw=" << m_brokerUrl;
+      updateConnectionStatus(false);
+      emit mqttConnectResolved(false, QStringLiteral("on_connected_empty_host|%1").arg(m_brokerUrl));
+      return;
+    }
+  }
+#endif
+
+  // ★ 必须通过 updateConnectionStatus 触发 mqttBrokerConnectionChanged / controlChannelReadyChanged
+  // （旧代码仅写 m_isConnected 会导致 QML 收不到「已连接」信号，表现为视频有而车控全失败）
+  updateConnectionStatus(true);
+
   m_reconnectAttempts = 0;
   m_reconnectScheduled = false;
-  qDebug() << "[CLIENT][MQTT] 已连接 m_currentVin=" << m_currentVin
-           << " m_controlTopic=" << m_controlTopic
-           << "（发送 start_stream/remote_control 时将带此 VIN，若为空请先选车）";
+  qInfo().noquote() << "[CLIENT][MQTT][CHAIN] phase=SESSION_UP m_currentVin=" << m_currentVin
+                    << " m_controlTopic=" << m_controlTopic
+                    << " m_statusTopic=" << m_statusTopic
+                    << " | 下一环节: 订阅 status；车控发布 topic=" << m_controlTopic
+                    << " | QML 请监听 mqttBrokerConnectionChanged(true)";
 #ifdef ENABLE_MQTT_PAHO
   try {
     if (m_client) {
@@ -703,7 +786,9 @@ void MqttController::onConnected() {
 }
 
 void MqttController::onDisconnected() {
-  qDebug() << "MQTT disconnected, scheduling reconnect...";
+  qWarning().noquote() << "[CLIENT][MQTT][CHAIN] phase=BROKER_SESSION_DOWN vin=" << m_currentVin
+                     << " url=" << m_brokerUrl << " → updateConnectionStatus(false)+scheduleReconnect";
+  m_brokerConnectInFlight = false;
   updateConnectionStatus(false);
   scheduleReconnect();
 }
@@ -714,9 +799,14 @@ void MqttController::scheduleReconnect() {
   }
 
   if (m_reconnectAttempts >= m_maxReconnectAttempts) {
-    qWarning() << "[CLIENT][MQTT] 达到最大重连次数 (" << m_maxReconnectAttempts
-               << ")，停止自动重连，请检查网络和 broker";
+    qCritical().noquote()
+        << "[CLIENT][MQTT][CHAIN] phase=RECONNECT_EXHAUSTED attempts=" << m_maxReconnectAttempts
+        << " url=" << m_brokerUrl;
     emit errorOccurred("MQTT 连接失败，已达到最大重连次数");
+    emit mqttConnectResolved(
+        false, QStringLiteral("max_reconnect_exhausted|n=%1|url=%2")
+                   .arg(m_maxReconnectAttempts)
+                   .arg(m_brokerUrl));
     return;
   }
 
@@ -777,7 +867,8 @@ void MqttController::onMessageReceived(const QByteArray &topic, const QByteArray
                         << status.value(QStringLiteral("vin")).toString()
                         << " stream=" << status.value(QStringLiteral("stream")).toString()
                         << " actionTaken=" << status.value(QStringLiteral("actionTaken")).toString()
-                        << " schemaVersion=" << status.value(QStringLiteral("schemaVersion")).toInt()
+                        << " schemaVersion="
+                        << status.value(QStringLiteral("schemaVersion")).toVariant().toString()
                         << " message=" << status.value(QStringLiteral("message")).toString()
                         << " full=" << ackCompact
                         << " ★编码侧已消费 hint（日志/MQTT 闭环）";
@@ -830,8 +921,9 @@ void MqttController::onError(const QString &error) {
 }
 
 void MqttController::updateConnectionStatus(bool connected) {
-  if (m_isConnected != connected) {
-    m_isConnected = connected;
-    emit connectionStatusChanged(isConnected());
-  }
+  if (m_isConnected == connected)
+    return;
+  m_isConnected = connected;
+  emit mqttBrokerConnectionChanged(m_isConnected);
+  bumpControlChannelState();
 }

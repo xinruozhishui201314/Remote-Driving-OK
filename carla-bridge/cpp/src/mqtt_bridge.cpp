@@ -1,5 +1,6 @@
 #include "mqtt_bridge.h"
 #include "json_parse.h"
+#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <chrono>
@@ -97,6 +98,21 @@ void MqttBridge::onMessage(const std::string& topic, const std::string& payload)
     }
     return;
   }
+  if (msg.type == "speed") {
+    if (vinOk && msg.ui_speed_kmh >= 0.0) {
+      std::lock_guard<std::mutex> lock(m_stateMutex);
+      m_state.ui_speed_kmh = std::max(0.0, std::min(100.0, msg.ui_speed_kmh));
+      std::cout << "[Control] 环节: 收到 type=speed ui_speed_kmh=" << m_state.ui_speed_kmh << std::endl;
+      if (m_controlCb) {
+        try {
+          m_controlCb("speed", m_state);
+        } catch (const std::exception& e) {
+          std::cerr << "[MQTT][Control] m_controlCb exception: " << e.what() << std::endl;
+        }
+      }
+    }
+    return;
+  }
   if (msg.type == "remote_control") {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     bool oldVal = m_state.remote_enabled;
@@ -113,6 +129,7 @@ void MqttBridge::onMessage(const std::string& topic, const std::string& payload)
         std::cerr << "[MQTT][Control] m_controlCb exception: " << e.what() << std::endl;
       }
     }
+    publishRemoteControlAck(m_state.remote_enabled);
     return;
   }
   if (msg.type == "drive" || (msg.steering != 0 || msg.throttle != 0 || msg.brake != 0 || msg.gear != 1)) {
@@ -122,33 +139,67 @@ void MqttBridge::onMessage(const std::string& topic, const std::string& payload)
     m_state.brake = std::max(0.0, std::min(1.0, msg.brake));
     if (msg.gear >= -1 && msg.gear <= 2) m_state.gear = msg.gear;
     if (msg.type == "drive") {
-      std::cout << "[Control] 环节: 收到 type=drive steering=" << m_state.steering << " throttle=" << m_state.throttle
-                << " brake=" << m_state.brake << " gear=" << m_state.gear << std::endl;
+      static auto s_lastDriveLog = std::chrono::steady_clock::time_point{};
+      const auto now = std::chrono::steady_clock::now();
+      if (s_lastDriveLog.time_since_epoch().count() == 0 ||
+          std::chrono::duration_cast<std::chrono::milliseconds>(now - s_lastDriveLog).count() >= 500) {
+        s_lastDriveLog = now;
+        std::cout << "[Bridge][Control][DRIVE_500ms] steer=" << m_state.steering << " thr=" << m_state.throttle
+                  << " brk=" << m_state.brake << " gear=" << m_state.gear
+                  << " ui_cmd_kmh=" << m_state.ui_speed_kmh << " remote=" << (m_state.remote_enabled ? "1" : "0")
+                  << " stream=" << (m_state.streaming ? "1" : "0") << std::endl;
+      }
     }
   }
 }
 
+void MqttBridge::publishRemoteControlAck(bool remoteEnabled) {
+  if (!m_client || !m_connected.load()) return;
+  auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  const std::string mode = remoteEnabled ? "远驾" : "自驾";
+  std::ostringstream json;
+  json << "{\"type\":\"remote_control_ack\""
+       << ",\"schemaVersion\":\"1.2.0\""
+       << ",\"timestamp\":" << ts
+       << ",\"vin\":\"" << m_vin << "\""
+       << ",\"remote_control_enabled\":" << (remoteEnabled ? "true" : "false")
+       << ",\"driving_mode\":\"" << mode << "\"}";
+  try {
+    mqtt::message_ptr msg = mqtt::make_message(m_statusTopic, json.str());
+    msg->set_qos(1);
+    m_client->publish(msg);
+  } catch (const std::exception& e) {
+    std::cerr << "[MQTT] publish remote_control_ack 失败: " << e.what() << std::endl;
+  }
+}
+
 void MqttBridge::publishStatus(double speedKmh, int gear, double steering, double throttle, double brake,
-                              bool remoteEnabled, const std::string& drivingMode) {
+                              bool remoteEnabled, bool streaming, const std::string& drivingMode) {
   if (!m_client || !m_connected.load()) return;
   auto ts = std::chrono::duration_cast<std::chrono::milliseconds>(
       std::chrono::system_clock::now().time_since_epoch()).count();
   std::ostringstream json;
-  json << "{\"type\":\"remote_control_ack\""
-       << ",\"timestamp\":" << ts
+  json << "{\"type\":\"vehicle_status\""
+       << ",\"schemaVersion\":\"1.2.0\""
        << ",\"vin\":\"" << m_vin << "\""
+       << ",\"timestamp\":" << ts
+       << ",\"speed\":" << std::fixed << std::setprecision(6) << speedKmh
+       << ",\"battery\":99.9"
+       << ",\"brake\":" << brake
+       << ",\"throttle\":" << throttle
+       << ",\"steering\":" << steering
+       << ",\"gear\":" << gear
+       << ",\"odometer\":0.0"
+       << ",\"temperature\":25"
+       << ",\"voltage\":48"
        << ",\"remote_control_enabled\":" << (remoteEnabled ? "true" : "false")
        << ",\"driving_mode\":\"" << drivingMode << "\""
-       << ",\"speed\":" << std::fixed << std::setprecision(6) << speedKmh
-       << ",\"gear\":" << gear
-       << ",\"steering\":" << steering
-       << ",\"throttle\":" << throttle
-       << ",\"brake\":" << brake
-       << ",\"battery\":99.9,\"odometer\":0.0,\"voltage\":48.0,\"current\":0.0,\"temperature\":25.0}";
+       << ",\"streaming\":" << (streaming ? "true" : "false") << "}";
   try {
     mqtt::message_ptr msg = mqtt::make_message(m_statusTopic, json.str());
     msg->set_qos(0);
-    m_client->publish(msg)->wait();
+    m_client->publish(msg);
   } catch (const std::exception& e) {
     std::cerr << "[MQTT] publish status 失败: " << e.what() << std::endl;
   }
@@ -163,7 +214,8 @@ void MqttBridge::disconnect() {}
 void MqttBridge::getState(ControlState& out) const { (void)out; }
 void MqttBridge::setState(const ControlState&) {}
 void MqttBridge::onMessage(const std::string&, const std::string&) {}
-void MqttBridge::publishStatus(double, int, double, double, double, bool, const std::string&) {}
+void MqttBridge::publishRemoteControlAck(bool) {}
+void MqttBridge::publishStatus(double, int, double, double, double, bool, bool, const std::string&) {}
 
 #endif
 

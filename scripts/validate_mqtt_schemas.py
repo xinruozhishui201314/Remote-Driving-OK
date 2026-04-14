@@ -29,11 +29,26 @@ SCHEMAS_DIR = os.path.join(PROJECT_ROOT, "mqtt/schemas")
 sys.path.insert(0, SCHEMAS_DIR)
 
 try:
+    from jsonschema import Draft7Validator
     from vehicle_control import VehicleControlSchema
     from vehicle_status import VehicleStatusSchema
 except ImportError as e:
-    print(f"无法导入 MQTT Schema: {e}")
+    print(f"无法导入 MQTT Schema / jsonschema: {e}")
     sys.exit(1)
+
+_CONTROL_V = Draft7Validator(VehicleControlSchema.SCHEMA)
+_STATUS_V = Draft7Validator(VehicleStatusSchema.SCHEMA)
+
+_STATUS_TYPES = frozenset(
+    {"vehicle_status", "remote_control_ack", "encoder_hint_ack", "offline"}
+)
+
+
+def classify_mqtt_message(msg: Dict[str, any]) -> str:
+    t = msg.get("type")
+    if t in _STATUS_TYPES:
+        return "vehicle_status"
+    return "vehicle_control"
 
 
 def extract_messages_from_file(file_path: str) -> List[Dict[str, any]]:
@@ -82,79 +97,16 @@ def validate_against_schema(
     schema_type: str,  # "vehicle_control" 或 "vehicle_status"
 ) -> List[Tuple[str, str, str]]:
     """
-    验证消息是否与 Schema 一致，返回 (文件, 问题, 详情) 列表。
+    使用 Draft-07 jsonschema 校验消息；返回 (文件, 问题, 详情) 列表。
     """
-    issues = []
-    schema = VehicleControlSchema.SCHEMA if schema_type == "vehicle_control" else VehicleStatusSchema.SCHEMA
-    schema_required = set(schema.get("required", []))
-    schema_props = schema.get("properties", {})
-    additional_allowed = schema.get("additionalProperties", True)
+    issues: List[Tuple[str, str, str]] = []
+    validator = _CONTROL_V if schema_type == "vehicle_control" else _STATUS_V
 
     for msg in messages:
-        msg_keys = extract_fields(msg)
-        # 1. 必填字段缺失
-        missing = schema_required - msg_keys
-        if missing:
-            issues.append((
-                "",
-                "missing_required",
-                f"必填字段缺失: {sorted(missing)}"
-            ))
-        # 2. 多余字段（若 additionalProperties=False）
-        if not additional_allowed:
-            extra = msg_keys - set(schema_props.keys())
-            if extra:
-                issues.append((
-                    "",
-                    "extra_fields",
-                    f"多余字段: {sorted(extra)}"
-                ))
-        # 3. 类型与范围检查（简化：仅检查存在字段是否符合 schema 中的 type/min/max/enum）
-        for k, v in msg.items():
-            if k not in schema_props:
-                continue
-            prop_schema = schema_props[k]
-            expected_type = prop_schema.get("type")
-            actual_type = type(v).__name__
-            if expected_type == "number" and actual_type not in ("int", "float"):
-                issues.append((
-                    "",
-                    "type_mismatch",
-                    f"字段 {k} 类型应为 number，实际 {actual_type}"
-                ))
-            if expected_type == "boolean" and actual_type != "bool":
-                issues.append((
-                    "",
-                    "type_mismatch",
-                    f"字段 {k} 类型应为 boolean，实际 {actual_type}"
-                ))
-            if expected_type == "integer" and actual_type != "int":
-                issues.append((
-                    "",
-                    "type_mismatch",
-                    f"字段 {k} 类型应为 integer，实际 {actual_type}"
-                ))
-            # 最小/最大值检查
-            if "minimum" in prop_schema and isinstance(v, (int, float)) and v < prop_schema["minimum"]:
-                issues.append((
-                    "",
-                    "value_out_of_range",
-                    f"字段 {k} 值 {v} 小于最小值 {prop_schema['minimum']}"
-                ))
-            if "maximum" in prop_schema and isinstance(v, (int, float)) and v > prop_schema["maximum"]:
-                issues.append((
-                    "",
-                    "value_out_of_range",
-                    f"字段 {k} 值 {v} 大于最大值 {prop_schema['maximum']}"
-                ))
-            # 枚举检查
-            if "enum" in prop_schema:
-                if v not in prop_schema["enum"]:
-                    issues.append((
-                        "",
-                        "enum_mismatch",
-                        f"字段 {k} 值 {v} 不在允许列表 {prop_schema['enum']}"
-                    ))
+        errs = sorted(validator.iter_errors(msg), key=lambda e: list(e.path))
+        if errs:
+            issues.append(("", "schema_violation", f"{errs[0].message} @ {list(errs[0].path)}"))
+
     return issues
 
 
@@ -176,6 +128,9 @@ def scan_directory(
         for fn in filenames:
             if fn.endswith(".py") or fn.endswith(".cpp") or fn.endswith(".h"):
                 fp = os.path.join(dirpath, fn)
+                fp_slash = fp.replace("\\", "/")
+                if "/deps/" in fp_slash or "/build/" in fp_slash or "/.git/" in fp_slash:
+                    continue
                 msgs = extract_messages_from_file(fp)
                 if msgs:
                     results.append((fp, msgs))
@@ -211,16 +166,12 @@ def main() -> int:
     for fp, msgs in results:
         if not msgs:
             continue
-        # 根据 "type" 字段判断 schema 类型
-        sample = msgs[0]
-        schema_type = "vehicle_control" if sample.get("type") in [
-            "start_stream", "stop_stream", "remote_control", "remote_control_ack"
-        ] else "vehicle_status"
-
-        issues = validate_against_schema(msgs, schema_type)
-        for issue in issues:
-            rel_path = os.path.relpath(fp, PROJECT_ROOT)
-            all_issues.append((rel_path, schema_type, issue[0], issue[1]))
+        rel_path = os.path.relpath(fp, PROJECT_ROOT)
+        for msg in msgs:
+            schema_type = classify_mqtt_message(msg)
+            issues = validate_against_schema([msg], schema_type)
+            for issue in issues:
+                all_issues.append((rel_path, schema_type, issue[0], issue[1]))
 
     # 输出
     if not all_issues:

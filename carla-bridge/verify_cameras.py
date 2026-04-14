@@ -18,12 +18,12 @@ CARLA_PORT = int(os.environ.get("CARLA_PORT", "2000"))
 CAMERA_WIDTH = int(os.environ.get("CAMERA_WIDTH", "640"))
 CAMERA_HEIGHT = int(os.environ.get("CAMERA_HEIGHT", "480"))
 
-# 与 carla_bridge 一致
+# 与 carla_bridge 一致（左右 yaw：外视 -90 / +90，见 carla_bridge.py 注释）
 CAMERA_CONFIGS = [
     ("cam_front", 2.5, 0.0, 1.2, 0),
     ("cam_rear", -2.5, 0.0, 1.2, 180),
-    ("cam_left", 0.0, -1.2, 1.2, 90),
-    ("cam_right", 0.0, 1.2, 1.2, -90),
+    ("cam_left", 0.0, -1.2, 1.2, -90),
+    ("cam_right", 0.0, 1.2, 1.2, 90),
 ]
 
 

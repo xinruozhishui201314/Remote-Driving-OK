@@ -17,6 +17,7 @@
 #include <QScreen>
 #include <QSurfaceFormat>
 #include <QVariant>
+#include <QtGlobal>
 
 #include <atomic>
 #include <cstdio>
@@ -638,6 +639,13 @@ void registerContextProperties(QQmlContext *ctx, AuthManager *authManager,
                           QVariant(g_lastWindowFramePolicyResult.decisionReason));
   ctx->setContextProperty(QStringLiteral("rd_videoIntegrityBannerBridge"),
                           videoIntegrityBannerBridge);
+  // 遥操作排障：QML 键盘/焦点与 C++ 控制环对齐日志；调试阶段默认开启，CLIENT_TELEOP_TRACE=0 关闭
+  {
+    const QByteArray teleopTraceEnv = qgetenv("CLIENT_TELEOP_TRACE");
+    const bool teleopTraceOn =
+        teleopTraceEnv.isEmpty() ? true : (qEnvironmentVariableIntValue("CLIENT_TELEOP_TRACE") != 0);
+    ctx->setContextProperty(QStringLiteral("rd_teleopTraceEnabled"), QVariant(teleopTraceOn));
+  }
 }
 
 void logQmlEngineImportPaths(const QQmlEngine *engine) {

@@ -6,6 +6,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -68,7 +70,7 @@ fi
 # 4. 发送测试 remote_control 消息
 echo ""
 echo -e "${BLUE}[步骤 4/6] 发送测试 remote_control 消息${NC}"
-TEST_MSG='{"type":"remote_control","enable":true,"timestamp":'$(date +%s000)',"vin":"123456789"}'
+TEST_MSG="$(mqtt_json_remote_control "123456789" true)"
 echo "  消息内容: $TEST_MSG"
 if docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$TEST_MSG" 2>&1; then
     echo -e "  ${GREEN}✓ 消息已发送${NC}"

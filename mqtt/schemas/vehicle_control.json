@@ -1,79 +1,234 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:teleop:schemas:vehicle_control:1.1.0",
+  "$id": "urn:teleop:schemas:vehicle_control:1.2.0",
   "title": "MQTT vehicle/control message",
-  "version": "1.1.0",
-  "description": "版本1.1.0：新增emergency_brake、seq、timestamp、sessionId字段，保持与1.0.0兼容",
-  "type": "object",
-  "required": ["type", "vin", "schemaVersion"],
-  "properties": {
-    "schemaVersion": {
+  "version": "1.2.0",
+  "description": "Wire-format JSON on vehicle/control. Use timestampMs (ms epoch) and schemaVersion semver string. See docs/TELEOP_SIGNAL_CONTRACT.md.",
+  "oneOf": [
+    { "$ref": "#/definitions/remote_control" },
+    { "$ref": "#/definitions/start_stream" },
+    { "$ref": "#/definitions/stop_stream" },
+    { "$ref": "#/definitions/drive" },
+    { "$ref": "#/definitions/steering" },
+    { "$ref": "#/definitions/throttle" },
+    { "$ref": "#/definitions/brake" },
+    { "$ref": "#/definitions/gear" },
+    { "$ref": "#/definitions/target_speed" },
+    { "$ref": "#/definitions/emergency_stop" },
+    { "$ref": "#/definitions/sweep" },
+    { "$ref": "#/definitions/mode_light" },
+    { "$ref": "#/definitions/ui_envelope" }
+  ],
+  "definitions": {
+    "semver": {
       "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "description": "Schema版本号，用于版本协商和向后兼容",
-      "default": "1.0.0",
-      "examples": ["1.0.0", "1.1.0"]
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
     },
-    "type": {
+    "vin_req": {
       "type": "string",
-      "enum": ["start_stream", "stop_stream", "remote_control", "remote_control_ack", "emergency_stop"]
+      "minLength": 1
     },
-    "vin": {
-      "type": "string",
-      "minLength": 1,
-      "description": "目标VIN"
+    "remote_control": {
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "enable"],
+      "properties": {
+        "type": { "const": "remote_control" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "enable": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "start_stream": {
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs"],
+      "properties": {
+        "type": { "const": "start_stream" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "stop_stream": {
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs"],
+      "properties": {
+        "type": { "const": "stop_stream" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" }
+      },
+      "additionalProperties": false
+    },
+    "drive": {
+      "type": "object",
+      "required": [
+        "type",
+        "vin",
+        "schemaVersion",
+        "seq",
+        "timestampMs",
+        "steering",
+        "throttle",
+        "brake",
+        "gear",
+        "emergency_stop"
+      ],
+      "properties": {
+        "type": { "const": "drive" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "steering": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "throttle": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "brake": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "gear": { "type": "integer" },
+        "emergency_stop": { "type": "boolean" },
+        "sessionId": { "type": "string" },
+        "trace_id": { "type": "string" },
+        "nonce": { "type": "string" },
+        "signature": { "type": "string" },
+        "predicted_steering": { "type": "number" },
+        "prediction_horizon_ms": { "type": "number" }
+      },
+      "additionalProperties": false
     },
     "steering": {
-      "type": "number",
-      "minimum": -1.0,
-      "maximum": 1.0,
-      "description": "方向盘，-1~1"
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "value"],
+      "properties": {
+        "type": { "const": "steering" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "value": { "type": "number", "minimum": -1.0, "maximum": 1.0 }
+      },
+      "additionalProperties": false
     },
     "throttle": {
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 1.0,
-      "description": "油门，0~1"
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "value"],
+      "properties": {
+        "type": { "const": "throttle" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "value": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      },
+      "additionalProperties": false
     },
     "brake": {
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 1.0,
-      "description": "制动，0~1"
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "value"],
+      "properties": {
+        "type": { "const": "brake" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "value": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      },
+      "additionalProperties": false
     },
     "gear": {
-      "type": "integer",
-      "enum": [-1, 0, 1, 2, 3, 4],
-      "description": "档位，-1:R, 0:N, 1:P, 2:D, 3:L, 4:M"
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "value"],
+      "properties": {
+        "type": { "const": "gear" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "value": { "type": "integer" }
+      },
+      "additionalProperties": false
     },
-    "remote_enabled": {
-      "type": "boolean",
-      "default": true,
-      "description": "是否启用远程控制"
+    "target_speed": {
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "value"],
+      "properties": {
+        "type": { "const": "target_speed" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "value": { "type": "number", "minimum": 0.0, "maximum": 100.0 }
+      },
+      "additionalProperties": false
     },
-    "streaming": {
-      "type": "boolean",
-      "default": false,
-      "description": "是否在推流（仅用于状态同步）"
+    "emergency_stop": {
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "enable"],
+      "properties": {
+        "type": { "const": "emergency_stop" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "enable": { "type": "boolean" }
+      },
+      "additionalProperties": false
     },
-    "emergency_brake": {
-      "type": "boolean",
-      "default": false,
-      "description": "急停命令（v1.1.0新增）"
+    "sweep": {
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "sweepType", "active"],
+      "properties": {
+        "type": { "const": "sweep" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "sweepType": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "additionalProperties": false
     },
-    "seq": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "消息序号（防重放，v1.1.0新增）"
+    "mode_light": {
+      "type": "object",
+      "required": ["type", "vin", "schemaVersion", "seq", "timestampMs", "subType", "lightType", "active"],
+      "properties": {
+        "type": { "const": "mode" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "timestampMs": { "type": "integer" },
+        "subType": { "const": "light" },
+        "lightType": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "additionalProperties": false
     },
-    "timestamp": {
-      "type": "integer",
-      "description": "客户端时间戳（毫秒，v1.1.0新增）"
-    },
-    "sessionId": {
-      "type": "string",
-      "description": "会话ID（用于关联，v1.1.0新增）"
+    "ui_envelope": {
+      "type": "object",
+      "required": [
+        "type",
+        "payload",
+        "vin",
+        "schemaVersion",
+        "sessionId",
+        "timestampMs",
+        "seq",
+        "trace_id"
+      ],
+      "properties": {
+        "type": { "type": "string", "minLength": 1 },
+        "payload": { "type": "object" },
+        "vin": { "$ref": "#/definitions/vin_req" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "sessionId": { "type": "string" },
+        "timestampMs": { "type": "integer" },
+        "seq": { "type": "integer", "minimum": 0 },
+        "trace_id": { "type": "string" }
+      },
+      "additionalProperties": false
     }
-  },
-  "additionalProperties": false
+  }
 }

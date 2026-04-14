@@ -354,7 +354,7 @@ bool handle_control_json(VehicleController* controller,
         int gear = 1;
         std::string vin;
         std::string sessionId;
-        int schemaVersion = 0;
+        std::string schemaVersionStr;
         long long seq = 0;
         long long timestampMs = 0;
         std::string nonce;  // Plan §9.2: Extract nonce for security/audit
@@ -363,7 +363,8 @@ bool handle_control_json(VehicleController* controller,
 
         // 提取数字与控制字段
         std::regex type_regex("\"type\"\\s*:\\s*\"([^\"]+)\"");
-        std::regex num_regex("\"(schemaVersion|seq|timestampMs|steering|throttle|brake|gear)\"\\s*:\\s*([+-]?\\d+\\.?\\d*)");
+        std::regex schema_ver_regex("\"schemaVersion\"\\s*:\\s*\"([^\"]+)\"");
+        std::regex num_regex("\"(seq|timestampMs|steering|throttle|brake|gear)\"\\s*:\\s*([+-]?\\d+\\.?\\d*)");
         std::regex vin_regex("\"vin\"\\s*:\\s*\"([^\"]+)\"");
         std::regex session_regex("\"sessionId\"\\s*:\\s*\"([^\"]+)\"");
         std::regex nonce_regex("\"nonce\"\\s*:\\s*\"([^\"]+)\"");  // Plan §9.2
@@ -377,6 +378,16 @@ bool handle_control_json(VehicleController* controller,
             LOG_CTRL_DEBUG("Message type extracted: {}", typeStr);
         } else {
             LOG_CTRL_WARN("No 'type' field found in JSON payload");
+        }
+
+        if (typeStr.empty()) {
+            LOG_CTRL_WARN("vehicle/control missing required \"type\" (see docs/TELEOP_SIGNAL_CONTRACT.md)");
+            LOG_EXIT_WITH_VALUE("false: missing_type");
+            return false;
+        }
+
+        if (std::regex_search(jsonPayload, match, schema_ver_regex)) {
+            schemaVersionStr = match[1].str();
         }
 
         // 提取消息中的 VIN（用于 start_stream/stop_stream 的 VIN 过滤）
@@ -733,10 +744,7 @@ bool handle_control_json(VehicleController* controller,
             const std::string val = match[2].str();
 
             try {
-                if (key == "schemaVersion") {
-                    schemaVersion = std::stoi(val);
-                    LOG_CTRL_TRACE("schemaVersion: {}", schemaVersion);
-                } else if (key == "seq") {
+                if (key == "seq") {
                     seq = static_cast<long long>(std::stoll(val));
                     LOG_CTRL_TRACE("seq: {}", seq);
                 } else if (key == "timestampMs") {
@@ -768,6 +776,19 @@ bool handle_control_json(VehicleController* controller,
             it = match.suffix().first;
         }
 
+        // 兼容手工/脚本仍使用 "timestamp" 字段名（与 timestampMs 同义，毫秒）
+        if (timestampMs == 0) {
+            std::regex ts_legacy("\"timestamp\"\\s*:\\s*(\\d+)");
+            std::smatch lm;
+            if (std::regex_search(jsonPayload, lm, ts_legacy)) {
+                try {
+                    timestampMs = static_cast<long long>(std::stoll(lm[1].str()));
+                    LOG_CTRL_TRACE("legacy timestamp field mapped to timestampMs={}", timestampMs);
+                } catch (const std::exception&) {
+                }
+            }
+        }
+
         if (std::regex_search(jsonPayload, match, vin_regex)) {
             vin = match[1].str();
         }
@@ -782,10 +803,24 @@ bool handle_control_json(VehicleController* controller,
         }
 
         // Plan 5.1 & 9.2: Audit logging of key fields
-        LOG_CTRL_INFO("Control cmd parsed: schema={}, seq={}, ts={}, vin={}, sid={}, nonce={}, sig={}",
-                     schemaVersion, seq, timestampMs, vin, sessionId,
+        LOG_CTRL_INFO("Control cmd parsed: schemaVersion={}, seq={}, ts={}, vin={}, sid={}, nonce={}, sig={}",
+                     (schemaVersionStr.empty() ? "null" : schemaVersionStr), seq, timestampMs, vin, sessionId,
                      (nonce.empty() ? "null" : nonce.substr(0, 8) + "..."),
                      (signature.empty() ? "null" : signature.substr(0, 8) + "..."));
+
+        bool emergencyStopCmd = false;
+        {
+            std::regex es_regex("\"emergency_stop\"\\s*:\\s*(true|false)");
+            std::smatch es_match;
+            if (std::regex_search(jsonPayload, es_match, es_regex)) {
+                emergencyStopCmd = (es_match[1].str() == "true");
+            }
+        }
+        if (emergencyStopCmd) {
+            brake = 1.0;
+            throttle = 0.0;
+            LOG_CTRL_INFO("emergency_stop=true in drive payload: forcing brake=1 throttle=0");
+        }
 
         // 档位值：-1=R, 0=N, 1=D, 2=P
         int validGear = (gear == -1 || gear == 0 || gear == 1 || gear == 2) ? gear : 1;

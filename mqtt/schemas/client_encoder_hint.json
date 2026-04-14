@@ -11,8 +11,11 @@
       "const": "client_video_encoder_hint"
     },
     "schemaVersion": {
-      "type": "integer",
-      "minimum": 1
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" }
+      ],
+      "description": "Prefer semver string (e.g. 1.0.0); legacy clients may send integer 1"
     },
     "stream": {
       "type": "string",

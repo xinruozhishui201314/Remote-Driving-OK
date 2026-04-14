@@ -7,7 +7,7 @@
  * 控制命令 HMAC-SHA256 签名与验证（《客户端架构设计》§3 安全要求）。
  *
  * 签名覆盖字段：steering, throttle, brake, gear, emergency_stop,
- *               timestamp, seq, session_id, vin
+ *               timestampMs, seq, sessionId, vin
  * 签名密钥 = HMAC-SHA256(sessionId | vin | token)，在 setCredentials 时派生。
  *
  * 发送方（客户端）：

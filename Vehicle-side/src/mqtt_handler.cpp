@@ -269,7 +269,7 @@ void MqttHandler::processClientEncoderHint(const std::string &jsonPayload)
         if (!m_vin.empty())
             json << ",\"vin\":\"" << m_vin << "\"";
         json << ",\"type\":\"encoder_hint_ack\"";
-        json << ",\"schemaVersion\":\"1.0.0\"";
+        json << ",\"schemaVersion\":\"1.2.0\"";
         json << ",\"originalType\":\"client_video_encoder_hint\"";
         json << ",\"stream\":\"" << stream_esc << "\"";
         json << ",\"actionTaken\":\"logged\"";
@@ -326,7 +326,8 @@ void MqttHandler::processControlCommand(const std::string &jsonPayload)
     // 使用正则表达式提取关键字段
     std::regex type_regex("\"type\"\\s*:\\s*\"([^\"]+)\"");
     std::regex seq_regex("\"seq\"\\s*:\\s*(\\d+)");
-    std::regex ts_regex("\"timestamp\"\\s*:\\s*(\\d+)");
+    std::regex ts_ms_regex("\"timestampMs\"\\s*:\\s*(\\d+)");
+    std::regex ts_wall_regex("\"timestamp\"\\s*:\\s*(\\d+)");
 
     std::smatch type_match, seq_match, ts_match;
     bool isRemoteControl = false;
@@ -334,7 +335,8 @@ void MqttHandler::processControlCommand(const std::string &jsonPayload)
     uint32_t seq = 0;
     int64_t timestamp = 0;
     bool hasSeq = std::regex_search(jsonPayload, seq_match, seq_regex);
-    bool hasTs = std::regex_search(jsonPayload, ts_match, ts_regex);
+    bool hasTs = std::regex_search(jsonPayload, ts_match, ts_ms_regex) ||
+                 std::regex_search(jsonPayload, ts_match, ts_wall_regex);
 
     if (hasSeq) {
         try {
@@ -477,12 +479,11 @@ void MqttHandler::publishStatus()
         // 构建标准 JSON 消息（确保格式正确和兼容性）
         std::ostringstream json;
         json << std::fixed << std::setprecision(6);  // 设置浮点数精度（6位小数，避免科学计数法）
-        json << "{";
+        json << "{\"type\":\"vehicle_status\",\"schemaVersion\":\"1.2.0\"";
 
         bool first = true;
 
-        // 添加时间戳（第一个字段，便于排序）
-        json << "\"timestamp\":" << std::chrono::duration_cast<std::chrono::milliseconds>(
+        json << ",\"timestamp\":" << std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
         first = false;
 
@@ -679,8 +680,8 @@ void MqttHandler::publishRemoteControlAck(bool enabled)
         // 构建确认消息 JSON
         std::ostringstream json;
         json << std::fixed << std::setprecision(6);
-        json << "{";
-        json << "\"timestamp\":" << std::chrono::duration_cast<std::chrono::milliseconds>(
+        json << "{\"schemaVersion\":\"1.2.0\"";
+        json << ",\"timestamp\":" << std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count();
 
         // 如果设置了 VIN，添加到消息中
@@ -688,7 +689,6 @@ void MqttHandler::publishRemoteControlAck(bool enabled)
             json << ",\"vin\":\"" << m_vin << "\"";
         }
 
-        // 添加远驾接管确认字段
         json << ",\"type\":\"remote_control_ack\"";
         json << ",\"remote_control_enabled\":" << (enabled ? "true" : "false");
         json << ",\"driving_mode\":\"" << drivingModeStr << "\"";

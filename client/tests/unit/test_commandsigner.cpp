@@ -32,13 +32,13 @@ void TestCommandSigner::sign_and_verify_roundtrip() {
 
   QJsonObject o;
   o[QStringLiteral("vin")] = QStringLiteral("VIN_X");
-  o[QStringLiteral("session_id")] = QStringLiteral("sess_y");
+  o[QStringLiteral("sessionId")] = QStringLiteral("sess_y");
   o[QStringLiteral("steering")] = 0.1;
   o[QStringLiteral("throttle")] = 0.2;
   o[QStringLiteral("brake")] = 0.0;
   o[QStringLiteral("gear")] = 1;
   o[QStringLiteral("emergency_stop")] = false;
-  o[QStringLiteral("timestamp")] = 12345;
+  o[QStringLiteral("timestampMs")] = 12345;
   o[QStringLiteral("seq")] = 7;
 
   QVERIFY(s.sign(o));
@@ -53,13 +53,13 @@ void TestCommandSigner::verify_fails_on_tamper() {
   s.setCredentials(QStringLiteral("A"), QStringLiteral("B"), QStringLiteral("C"));
   QJsonObject o;
   o[QStringLiteral("vin")] = QStringLiteral("A");
-  o[QStringLiteral("session_id")] = QStringLiteral("B");
+  o[QStringLiteral("sessionId")] = QStringLiteral("B");
   o[QStringLiteral("steering")] = 0.0;
   o[QStringLiteral("throttle")] = 0.0;
   o[QStringLiteral("brake")] = 0.0;
   o[QStringLiteral("gear")] = 0;
   o[QStringLiteral("emergency_stop")] = false;
-  o[QStringLiteral("timestamp")] = 1;
+  o[QStringLiteral("timestampMs")] = 1;
   o[QStringLiteral("seq")] = 1;
   QVERIFY(s.sign(o));
   o[QStringLiteral("throttle")] = 0.99;
@@ -108,13 +108,13 @@ void TestCommandSigner::verify_malformed_hex_hmac_fails() {
   s.setCredentials(QStringLiteral("v"), QStringLiteral("s"), QStringLiteral("t"));
   QJsonObject o;
   o[QStringLiteral("vin")] = QStringLiteral("v");
-  o[QStringLiteral("session_id")] = QStringLiteral("s");
+  o[QStringLiteral("sessionId")] = QStringLiteral("s");
   o[QStringLiteral("steering")] = 0.0;
   o[QStringLiteral("throttle")] = 0.0;
   o[QStringLiteral("brake")] = 0.0;
   o[QStringLiteral("gear")] = 0;
   o[QStringLiteral("emergency_stop")] = false;
-  o[QStringLiteral("timestamp")] = 1;
+  o[QStringLiteral("timestampMs")] = 1;
   o[QStringLiteral("seq")] = 1;
   QVERIFY(s.sign(o));
   o[QStringLiteral("hmac")] = QStringLiteral("ZZ");  // invalid hex
@@ -128,13 +128,13 @@ void TestCommandSigner::verify_wrong_hmac_byte_length_fails() {
   s.setCredentials(QStringLiteral("v"), QStringLiteral("s"), QStringLiteral("t"));
   QJsonObject o;
   o[QStringLiteral("vin")] = QStringLiteral("v");
-  o[QStringLiteral("session_id")] = QStringLiteral("s");
+  o[QStringLiteral("sessionId")] = QStringLiteral("s");
   o[QStringLiteral("steering")] = 0.0;
   o[QStringLiteral("throttle")] = 0.0;
   o[QStringLiteral("brake")] = 0.0;
   o[QStringLiteral("gear")] = 0;
   o[QStringLiteral("emergency_stop")] = false;
-  o[QStringLiteral("timestamp")] = 1;
+  o[QStringLiteral("timestampMs")] = 1;
   o[QStringLiteral("seq")] = 1;
   QVERIFY(s.sign(o));
   o[QStringLiteral("hmac")] = QStringLiteral("00");  // one byte vs 32-byte digest hex

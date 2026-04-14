@@ -136,6 +136,14 @@ Rectangle {
         layoutDiag.logLayout("onCompleted")
         if (layoutDiag.isLayoutDebugEnabled)
             layoutDiag.startLayoutLogBurst()
+        Qt.callLater(function () { drivingInterface.forceActiveFocus() })
+    }
+
+    onActiveFocusChanged: {
+        if (!AppContext.teleopTraceEnabled)
+            return
+        console.log("[Client][UI][Teleop][FOCUS] DrivingInterface.activeFocus=" + activeFocus
+                    + "（false 时常为 TextField/按钮抢焦点，键盘控车不生效；点一下视频区或空白后再试）")
     }
     onWidthChanged: if (layoutDiag.isLayoutDebugEnabled)
         layoutDiag.logLayout("widthChanged")
@@ -213,6 +221,7 @@ Rectangle {
         property alias streamStopped: teleopState.streamStopped
         property alias isDebugMode: teleopState.isDebugMode
         property alias lastDiagTime: teleopState.lastDiagTime
+        readonly property alias reportedSpeedKmh: teleopState.reportedSpeedKmh
 
         function sendControlCommand(type, payload) {
             drivingInterface.sendControlCommand(type, payload)
@@ -255,5 +264,8 @@ Rectangle {
     focus: true
     Keys.onPressed: function (event) {
         keyHandler.handlePressed(event)
+    }
+    Keys.onReleased: function (event) {
+        keyHandler.handleReleased(event)
     }
 }

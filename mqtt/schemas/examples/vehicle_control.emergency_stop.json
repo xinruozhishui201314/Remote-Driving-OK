@@ -1,6 +1,8 @@
 {
-  "schemaVersion": "1.1.0",
   "type": "emergency_stop",
   "vin": "TESTVIN0000000001",
-  "sessionId": "sess-contract-test"
+  "schemaVersion": "1.2.0",
+  "seq": 2,
+  "timestampMs": 1700000000001,
+  "enable": true
 }

@@ -221,8 +221,10 @@ docker ps | grep -E "teleop|remote-driving"
 
 **解决**：
 ```bash
-# 发送启动推流指令
-docker exec teleop-mosquitto mosquitto_pub -h localhost -t vehicle/command -m '{"type":"start_stream"}'
+# 发送启动推流指令（主题应为 vehicle/control；载荷须含 vin / schemaVersion / timestampMs / seq）
+source scripts/lib/mqtt_control_json.sh
+docker exec teleop-mosquitto mosquitto_pub -h localhost -p 1883 -t vehicle/control \
+  -m "$(mqtt_json_start_stream carla-sim-001)"
 
 # 等待 10 秒后检查
 sleep 10

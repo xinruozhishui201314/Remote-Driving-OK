@@ -60,11 +60,12 @@ docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml logs vehi
 如果推流进程不存在，重新发送 `start_stream` 消息：
 
 ```bash
-# 服务名为 teleop-mosquitto（与 docker-compose.yml 一致）
+# 服务名为 teleop-mosquitto（与 docker-compose.yml 一致）；在仓库根 source 规范载荷生成脚本
+source scripts/lib/mqtt_control_json.sh
 docker compose -f docker-compose.yml exec -T teleop-mosquitto mosquitto_pub \
   -h localhost -p 1883 \
   -t "vehicle/control" \
-  -m '{"type":"start_stream","vin":"carla-sim-001","timestampMs":1770605395525}'
+  -m "$(mqtt_json_start_stream carla-sim-001)"
 ```
 
 等待 5-10 秒后检查推流进程是否启动。
@@ -133,11 +134,12 @@ bash scripts/verify-stream-e2e.sh
 如果推流进程不存在，执行以下命令重新启动：
 
 ```bash
-# 1. 发送 start_stream 消息（CARLA 用 carla-sim-001，车端用对应 VIN）
+# 1. 发送 start_stream（CARLA 用 carla-sim-001，车端用对应 VIN；含 schemaVersion/timestampMs/seq）
+source scripts/lib/mqtt_control_json.sh
 docker compose -f docker-compose.yml exec -T teleop-mosquitto mosquitto_pub \
   -h localhost -p 1883 \
   -t "vehicle/control" \
-  -m '{"type":"start_stream","vin":"carla-sim-001","timestampMs":1770605395525}'
+  -m "$(mqtt_json_start_stream carla-sim-001)"
 
 # 2. 等待 5 秒
 sleep 5

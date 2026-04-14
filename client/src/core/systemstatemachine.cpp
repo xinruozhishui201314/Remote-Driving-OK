@@ -22,7 +22,8 @@ QString SystemStateMachine::currentState() const {
 bool SystemStateMachine::vehicleTelemetryHeartbeatRequired() const {
   QMutexLocker lock(&m_mutex);
   switch (m_current) {
-    case SystemState::PRE_FLIGHT:
+    // PRE_FLIGHT：仅等待车端确认远驾/检查项，尚未正式控车；若此处要求 status 心跳，
+    // 会在「仅视频通、MQTT 断」时误急停且 EMERGENCY_STOP 无法从 PRE_FLIGHT 转移（历史缺陷）。
     case SystemState::DRIVING:
     case SystemState::DEGRADED:
       return true;
@@ -88,6 +89,12 @@ void SystemStateMachine::setupTransitions() {
   });
   addTransition(S::PRE_FLIGHT, T::PREFLIGHT_FAIL, S::READY);
   addTransition(S::PRE_FLIGHT, T::STOP_SESSION, S::READY);
+  addTransition(S::PRE_FLIGHT, T::EMERGENCY_STOP, S::READY, nullptr, [this]() {
+    qCritical().noquote()
+        << "[Client][FSM] EMERGENCY_STOP during PRE_FLIGHT -> READY (abort session / safety)";
+    emit emergencyActivated(QStringLiteral("EMERGENCY_STOP during PRE_FLIGHT (session aborted)"));
+    publishEmergencyEvent("EMERGENCY_STOP_PRE_FLIGHT");
+  });
   addTransition(S::PRE_FLIGHT, T::RESET, S::IDLE);
 
   // ── DRIVING ──────────────────────────────────────────────────────────────

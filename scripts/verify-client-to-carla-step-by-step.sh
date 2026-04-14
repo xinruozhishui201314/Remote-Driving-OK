@@ -15,6 +15,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.carla.yml"
 BACKEND_URL="${BACKEND_URL:-http://127.0.0.1:8081}"
@@ -133,7 +135,7 @@ echo ""
 # 第 4 项：控制通道 — MQTT 发布 start_stream
 # ---------------------------------------------------------------------------
 log_section "4/7 控制通道：MQTT 发布 start_stream（topic=vehicle/control, vin=$VIN_CARLA）"
-mqtt_pub "{\"type\":\"start_stream\",\"vin\":\"$VIN_CARLA\",\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_start_stream "$VIN_CARLA")"
 log_ok "已发送 start_stream"
 log_note "实车：Vehicle-side 订阅 vehicle/control，收到 start_stream 后启动推流"
 echo ""
@@ -164,8 +166,8 @@ echo ""
 # 第 6 项：控制指令 — remote_control + drive
 # ---------------------------------------------------------------------------
 log_section "6/7 控制指令：MQTT remote_control + drive（模拟驾驶操作）"
-mqtt_pub "{\"type\":\"remote_control\",\"vin\":\"$VIN_CARLA\",\"enable\":true,\"timestampMs\":0}"
-mqtt_pub "{\"type\":\"drive\",\"vin\":\"$VIN_CARLA\",\"steering\":0.05,\"throttle\":0.1,\"brake\":0,\"gear\":1,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_remote_control "$VIN_CARLA" true)"
+mqtt_pub "$(mqtt_json_drive "$VIN_CARLA" 0.05 0.1 0 1 false)"
 log_ok "已发送 remote_control 与 drive"
 if command -v mosquitto_sub &>/dev/null; then
   if timeout 6 mosquitto_sub -h 127.0.0.1 -p 1883 -t "vehicle/status" -C 1 -W 6 2>/dev/null | grep -q "steering\|throttle"; then
@@ -183,7 +185,7 @@ echo ""
 # 第 7 项：停止推流（可选，验证 stop_stream）
 # ---------------------------------------------------------------------------
 log_section "7/7 停止推流：MQTT stop_stream（验证按需推流闭环）"
-mqtt_pub "{\"type\":\"stop_stream\",\"vin\":\"$VIN_CARLA\",\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_stop_stream "$VIN_CARLA")"
 log_ok "已发送 stop_stream（流可能短暂仍存在，属正常）"
 log_note "实车：Vehicle-side 收到 stop_stream 后停止推流"
 echo ""

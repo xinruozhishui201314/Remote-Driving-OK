@@ -46,6 +46,7 @@
 #include <QTimer>
 
 #include <cstdio>
+#include <exception>
 #include <memory>
 
 #if defined(__linux__) && defined(__GLIBC__)
@@ -255,8 +256,50 @@ int main(int argc, char *argv[]) {
                      vs->setVideoConnected(wsm->anyConnected());
                    });
   vehicleStatus->setVideoConnected(webrtcStreamManager->anyConnected());
-  QObject::connect(mqttController.get(), &MqttController::connectionStatusChanged,
+  QObject::connect(mqttController.get(), &MqttController::mqttBrokerConnectionChanged,
                    vehicleStatus.get(), &VehicleStatus::setMqttConnected);
+  vehicleStatus->setMqttConnected(mqttController->mqttBrokerConnected());
+
+  // 车端 MQTT 确认远驾后：PRE_FLIGHT → DRIVING，安全模块仅在 DRIVING/DEGRADED 要求 status 心跳
+  QObject::connect(
+      vehicleStatus.get(), &VehicleStatus::remoteControlEnabledChanged, &app,
+      [fsm = systemStateMachine.get(), vs = vehicleStatus.get()](bool enabled) {
+        try {
+          if (!enabled || !fsm || !vs)
+            return;
+          if (fsm->stateEnum() != SystemStateMachine::SystemState::PRE_FLIGHT)
+            return;
+          if (!fsm->fire(SystemStateMachine::Trigger::PREFLIGHT_OK)) {
+            qWarning().noquote() << "[Client][Session] PREFLIGHT_OK 未应用（FSM 状态已变）";
+          } else {
+            qInfo().noquote() << "[Client][Session] PREFLIGHT_OK：车端已确认远驾，进入 DRIVING";
+          }
+        } catch (const std::exception &e) {
+          qCritical() << "[Client][Session] remoteControlEnabledChanged:" << e.what();
+        } catch (...) {
+          qCritical() << "[Client][Session] remoteControlEnabledChanged: unknown exception";
+        }
+      });
+  QObject::connect(systemStateMachine.get(), &SystemStateMachine::stateChanged, &app,
+                   [fsm = systemStateMachine.get(),
+                    vs = vehicleStatus.get()](const QString &newName, const QString & /*old*/) {
+                     try {
+                       if (newName != QLatin1String("PRE_FLIGHT") || !fsm || !vs)
+                         return;
+                       if (!vs->remoteControlEnabled())
+                         return;
+                       if (!fsm->fire(SystemStateMachine::Trigger::PREFLIGHT_OK)) {
+                         qWarning().noquote()
+                             << "[Client][Session] PRE_FLIGHT 入场时 PREFLIGHT_OK 失败（状态竞态）";
+                       } else {
+                         qInfo().noquote() << "[Client][Session] PRE_FLIGHT：远驾已先确认，进入 DRIVING";
+                       }
+                     } catch (const std::exception &e) {
+                       qCritical() << "[Client][Session] stateChanged PRE_FLIGHT:" << e.what();
+                     } catch (...) {
+                       qCritical() << "[Client][Session] stateChanged PRE_FLIGHT: unknown exception";
+                     }
+                   });
 
   QObject::connect(authManager.get(), &AuthManager::loginSucceeded, teleopSession.get(),
                    &SessionManager::onLoginSucceeded);
@@ -284,9 +327,9 @@ int main(int argc, char *argv[]) {
     }
   });
   QObject::connect(
-      mqttController.get(), &MqttController::connectionStatusChanged,
-      [mc = mqttController.get()]() {
-        if (mc->isConnected()) {
+      mqttController.get(), &MqttController::mqttBrokerConnectionChanged,
+      [](bool brokerUp) {
+        if (brokerUp) {
           MetricsCollector::instance().increment("client.mqtt.connection_success_total");
         } else {
           MetricsCollector::instance().increment("client.mqtt.connection_lost_total");

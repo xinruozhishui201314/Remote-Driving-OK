@@ -11,6 +11,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.carla.yml"
 ZLM_URL="${ZLM_URL:-http://127.0.0.1:80}"
@@ -82,7 +84,7 @@ echo ""
 
 # ---------- 2) start_stream → 四路流 ----------
 log_section "2/4 start_stream → ZLM 四路流"
-mqtt_pub "{\"type\":\"start_stream\",\"vin\":\"$VIN\",\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_start_stream "$VIN")"
 elapsed=0
 while [ $elapsed -lt $WAIT_STREAM ]; do
   if streams_present; then
@@ -101,7 +103,7 @@ echo ""
 
 # ---------- 3) stop_stream → 流停止 ----------
 log_section "3/4 stop_stream → 推流停止"
-mqtt_pub "{\"type\":\"stop_stream\",\"vin\":\"$VIN\",\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_stop_stream "$VIN")"
 sleep 5
 # 流可能不会立即消失（ZLM 有缓存），仅验证 stop 命令已发送且一段时间后流可消失或不再新增
 count_after=$(get_media_list | grep -o '"stream":"[^"]*"' | wc -l)
@@ -114,9 +116,9 @@ echo ""
 
 # ---------- 4) remote_control / drive → vehicle/status ----------
 log_section "4/4 remote_control / drive → vehicle/status 反馈"
-mqtt_pub "{\"type\":\"remote_control\",\"vin\":\"$VIN\",\"enable\":true,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_remote_control "$VIN" true)"
 sleep 1
-mqtt_pub "{\"type\":\"drive\",\"vin\":\"$VIN\",\"steering\":0.1,\"throttle\":0.2,\"brake\":0,\"gear\":1,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_drive "$VIN" 0.1 0.2 0 1 false)"
 # Bridge 发布到 vehicle/status（50Hz），订阅一条即可
 STATUS_FILE="/tmp/verify-carla-status-$$.json"
 rm -f "$STATUS_FILE"

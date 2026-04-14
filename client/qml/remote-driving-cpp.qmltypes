@@ -167,6 +167,22 @@ Module {
             index: 4
             isReadonly: true
         }
+        Property {
+            name: "mqttBrokerConnected"
+            type: "bool"
+            read: "mqttBrokerConnected"
+            notify: "mqttBrokerConnectionChanged"
+            index: 5
+            isReadonly: true
+        }
+        Property {
+            name: "controlChannelReady"
+            type: "bool"
+            read: "controlChannelReady"
+            notify: "controlChannelReadyChanged"
+            index: 6
+            isReadonly: true
+        }
         Signal {
             name: "brokerUrlChanged"
             Parameter { name: "url"; type: "QString" }
@@ -186,6 +202,18 @@ Module {
         Signal {
             name: "connectionStatusChanged"
             Parameter { name: "connected"; type: "bool" }
+        }
+        Signal {
+            name: "mqttBrokerConnectionChanged"
+            Parameter { name: "connected"; type: "bool" }
+        }
+        Signal {
+            name: "controlChannelReadyChanged"
+        }
+        Signal {
+            name: "mqttConnectResolved"
+            Parameter { name: "succeeded"; type: "bool" }
+            Parameter { name: "detail"; type: "QString" }
         }
         Signal {
             name: "statusReceived"

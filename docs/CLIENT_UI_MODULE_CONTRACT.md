@@ -2,7 +2,7 @@
 
 | 字段 | 值 |
 |------|-----|
-| 文档版本 | 1.6 |
+| 文档版本 | 1.7 |
 | 契约版本 | **DrivingFacade v3**（根：`facade`；`facade.teleop`；**`facade.appServices`**：`internal/*` 与 **五件套** 统一服务窄面） |
 | 适用路径 | `client/qml/DrivingInterface.qml`、`client/qml/DrivingFacade/*`（独立 URI **`DrivingFacade 1.0`**，见 §1.3）、`client/qml/components/driving/*`（含 `driving/internal/*`，规则见 §1.2） |
 | 与 project_spec | 驾驶舱客户端能力见 `project_spec.md` 第 3/5 章；**契约分级与 CI 映射**见 **§12**；本文档为 **QML 模块边界** 补充，冲突时以 `project_spec.md` 为准 |
@@ -30,6 +30,7 @@
 **`internal/` 与契约关系（v3）**：
 
 - **`internal/*` 禁止** `import RemoteDriving 1.0`、**禁止** 出现 `AppContext.`；**必须**通过 **`property Item facade`**（由 `DrivingInterface` 传入根 item）读取 **`facade.appServices.*`**（见 §3.6）。五件套对 `import RemoteDriving` 的例外见 §1.1。
+- **`QtObject` 根与匿名子对象**：`QtObject` **没有**用于挂载匿名子节点的 **default property**。若组件内需 **`Connections`**、**`Timer`**、**`Binding`** 等作为「子块」声明，根类型须为 **`Item`**（推荐 `width/height: 0`、`visible: false`，不参与布局与绘制），或把这些对象移到已有 **`Item`/`Rectangle`** 的父组件中。违反时运行期常见表现为子类型 **unavailable** 链与 **`QML_LOAD_EMPTY_ROOT`（exit 93）**；`verify-client-ui-module-contract.sh` 对 **`internal/*.qml` 含 `Connections` 且根为 `QtObject`** 会直接失败。
 - **例外**：纯布局切片（`LayoutMetrics`、`DrivingLayoutDiagnostics`）无服务依赖，**可不**声明 `facade`；`DrivingVideoDiagnostics` 的 `dump(facade, teleop, shell)` **首参**为 facade。
 - **依赖 `appServices` 的类型**：`TeleopPresentationState`、`TeleopKeyboardHandler` **须**含 `property Item facade` 并由 `DrivingInterface` 赋值。
 - **对外稳定面**：§2 五件套仍 **只** 接收 `facade`；根上 §3.1–§3.5 与 `teleopBinder` 不变；**新增**只读 `appServices`（§3.6）。
@@ -60,7 +61,7 @@
 |------|------|----------|
 | `internal/LayoutMetrics.qml` | 布局常量与 `mainRowAvailH/W` 等 | 根 `facade.*` 布局 §3.1 的物理存放处；经根 **alias** 暴露；无 `facade` 属性 |
 | `internal/DrivingLayoutDiagnostics.qml` | `logLayout` / `logLayoutFull`、布局诊断 Timer | [`DrivingInterface.logLayout` / `logLayoutFull`](../client/qml/DrivingInterface.qml) 转发至此 |
-| `internal/TeleopPresentationState.qml` | §3.3 状态绑定（车端/MQTT 经 `facade.appServices`） | `property Item facade` + `teleopBinder` **alias**；**无** `AppContext` |
+| `internal/TeleopPresentationState.qml` | §3.3 状态绑定（车端/MQTT 经 `facade.appServices`） | `property Item facade` + `teleopBinder` **alias**；**无** `AppContext`；根 **`Item`**（承载 `Connections`，见 §1.2 `QtObject` 约束） |
 | `internal/TeleopKeyboardHandler.qml` | 快捷键逻辑 | `property Item facade`；死手经 `facade.appServices.safetyMonitor` |
 | `internal/DrivingVideoDiagnostics.qml` | `dump(facade, teleop, shell)` | `--debug` 诊断；`facade.appServices.webrtcStreamManager` |
 | `internal/qmldir` | 供 `import "components/driving/internal"` 解析 | 与 `driving/qmldir`（五件套）分离 |
@@ -315,7 +316,7 @@ Drv.DrivingLayoutShell {
 ## 7. 相关脚本与验证
 
 - `./scripts/verify-driving-layout.sh`：在 `DrivingInterface.qml`、`components/driving/*.qml` 与 `internal/DrivingLayoutDiagnostics.qml` 上联合静态检查布局 id 与关键约束。
-- `./scripts/verify-client-ui-module-contract.sh`：DrivingFacade **v3**、**§1.3 `DrivingFacade` 子目录 `qmldir` + `DrivingStageHost` 显式 `import DrivingFacade 1.0`**、`appServicesBridge`/`appServices`、`teleopBinder`、`driving/qmldir` 五件套、`internal/qmldir`、**五件套 `*.qml` 禁止 `import RemoteDriving` 与 `AppContext.`**、**`internal/*.qml` 同上**、`TeleopPresentationState`/`TeleopKeyboardHandler` 含 `property Item facade`、**仅 `DrivingInterface.qml` 可 import `internal`**、`driving/**` **无 `rd_*`**、**禁止 canonical 链引用遗留 `DrivingInterface.*`**（已串联进 `verify-client-ui-and-video-coverage.sh`）。
+- `./scripts/verify-client-ui-module-contract.sh`：DrivingFacade **v3**、**§1.3 `DrivingFacade` 子目录 `qmldir` + `DrivingStageHost` 显式 `import DrivingFacade 1.0`**、`appServicesBridge`/`appServices`、`teleopBinder`、`driving/qmldir` 五件套、`internal/qmldir`、**五件套 `*.qml` 禁止 `import RemoteDriving` 与 `AppContext.`**、**`internal/*.qml` 同上**、`TeleopPresentationState`/`TeleopKeyboardHandler` 含 `property Item facade`、**`internal/*.qml` 根为 `QtObject` 且含 `Connections` 则失败**（§1.2）、**仅 `DrivingInterface.qml` 可 import `internal`**、`driving/**` **无 `rd_*`**、**禁止 canonical 链引用遗留 `DrivingInterface.*`**（已串联进 `verify-client-ui-and-video-coverage.sh`）。
 - `./scripts/verify-qmltypes-match-generated.sh`：构建 `RemoteDrivingClient` 后 **`git diff --exit-code`** 检查 `remote-driving-cpp.qmltypes` 与 **`DrivingFacade/driving-facade.qmltypes`**；可选 `VERIFY_QMLTYPES_DRIFT=1` 串联进 `verify-client-ui-quality-chain.sh` / `verify-client-qt-ui-google-style.sh`。**`./scripts/verify-qml-changes.sh`** 编译成功后亦做同项检查。
 - `./scripts/regenerate-client-qmltypes.sh`：刷新上述两份生成物（`regenerate-remote-driving-qmltypes.sh` 为兼容入口）。
 - `./scripts/verify-qml-appcontext-imports.sh`：扫描 `shell/`、`components/`、`components/driving/`（一层）使用 `AppContext` 的文件；**`internal/` 不在此脚本扫描**（由上一脚本禁止 `AppContext`）。
@@ -334,3 +335,4 @@ Drv.DrivingLayoutShell {
 | 1.3 | 2026-04-10 | **DrivingFacade v3**：§3.6 `facade.appServices`；`internal/*` 禁 `RemoteDriving`/`AppContext`，经 `facade` 注入；§6/§7/门禁脚本对齐 |
 | 1.4 | 2026-04-10 | §3.6 扩展 `videoStreamsConnected`、`vehicleManager`、`systemStateMachine`、`reportVideoFlickerQmlLayerEvent`；五件套收敛至 `facade.appServices`；门禁与 §4 对齐 |
 | 1.6 | 2026-04-10 | **§1.3**：独立 URI `DrivingFacade 1.0` + `driving-facade.qmltypes`；§7 增加 `verify-qmltypes-match-generated` / `regenerate-client-qmltypes` / `verify-qml-changes` 联动说明 |
+| 1.7 | 2026-04-14 | §1.2：`QtObject` 根与 `Connections`/`Timer`/`Binding` 子块约束；§2 `TeleopPresentationState` 根 `Item`；`verify-client-ui-module-contract.sh` 增加 **根类型 + Connections** 静态门禁 |

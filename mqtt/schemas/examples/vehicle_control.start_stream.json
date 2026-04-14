@@ -1,0 +1,7 @@
+{
+  "type": "start_stream",
+  "vin": "TESTVIN0000000001",
+  "schemaVersion": "1.2.0",
+  "seq": 0,
+  "timestampMs": 1700000000003
+}

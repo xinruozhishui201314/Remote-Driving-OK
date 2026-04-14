@@ -119,4 +119,32 @@ grep -q 'property Item facade' "$INT_DIR/TeleopPresentationState.qml" \
 grep -q 'property Item facade' "$INT_DIR/TeleopKeyboardHandler.qml" \
   || fail "TeleopKeyboardHandler.qml 须含 property Item facade"
 
+# internal/*.qml：根为 QtObject 且含 Connections → 运行期 “non-existent default property” / exit 93
+# 仅看「首个非 import/块注释后的根类型」，避免 Item { QtObject { … } … } 误报
+qml_root_type_after_imports() {
+  awk '
+    BEGIN { skip = 0 }
+    /^\/\*/ { skip = 1 }
+    skip {
+      if (/\*\//) skip = 0
+      next
+    }
+    /^import[[:space:]]/ { next }
+    /^[[:space:]]*\/\// { next }
+    /^[[:space:]]*$/ { next }
+    /^[[:space:]]*QtObject[[:space:]]*\{/ { print "QtObject"; exit }
+    /^[[:space:]]*Item[[:space:]]*\{/ { print "Item"; exit }
+    /^[[:space:]]*[A-Za-z_][A-Za-z0-9_.]*[[:space:]]*\{/ { print "other"; exit }
+    { exit }
+  ' "$1"
+}
+while IFS= read -r -d '' f; do
+  grep -q 'Connections[[:space:]]*{' "$f" || continue
+  rt="$(qml_root_type_after_imports "$f")"
+  if [[ "$rt" == "QtObject" ]]; then
+    rel="${f#"$PROJECT_ROOT"/}"
+    fail "${rel} 根为 QtObject 且含 Connections；请根用 Item（零尺寸+visible:false）或上移 Connections（CLIENT_UI_MODULE_CONTRACT §1.2）"
+  fi
+done < <(find "$INT_DIR" -maxdepth 1 -name '*.qml' -print0 2>/dev/null)
+
 echo -e "${GREEN}[OK] verify-client-ui-module-contract 通过${NC}"

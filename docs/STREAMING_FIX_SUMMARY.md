@@ -82,9 +82,10 @@ bash scripts/verify-streaming-fix.sh
    docker exec remote-driving-vehicle-1 bash -c 'pkill -9 ffmpeg; rm -f /tmp/push-*.pid /tmp/push-*.lock'
    ```
 
-2. **发送 start_stream 命令**：
+2. **发送 start_stream 命令**（宿主机在仓库根 `source scripts/lib/mqtt_control_json.sh` 后执行，保证含 `schemaVersion`/`timestampMs`/`seq`）：
    ```bash
-   docker exec teleop-mosquitto mosquitto_pub -h mosquitto -p 1883 -t "vehicle/control" -m '{"type":"start_stream","vin":"123456789","timestampMs":0}'
+   source scripts/lib/mqtt_control_json.sh
+   docker exec teleop-mosquitto mosquitto_pub -h mosquitto -p 1883 -t "vehicle/control" -m "$(mqtt_json_start_stream "123456789")"
    ```
 
 3. **等待推流启动**（约 5-10 秒）：

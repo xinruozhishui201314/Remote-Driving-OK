@@ -723,6 +723,14 @@ ColumnLayout {
                             target: facade.teleop
                             function onVehicleSpeedChanged() { speedArc.requestPaint() }
                             function onSteeringAngleChanged() { speedArc.requestPaint() }
+                            function onTargetSpeedChanged() { speedArc.requestPaint() }
+                        }
+                        Connections {
+                            target: facade.appServices.vehicleStatus
+                            enabled: facade.appServices.vehicleStatus !== null
+                            function onSpeedChanged() { speedArc.requestPaint() }
+                            function onSteeringChanged() { speedArc.requestPaint() }
+                            function onGearChanged() { speedArc.requestPaint() }
                         }
                     }
                     
@@ -752,7 +760,7 @@ ColumnLayout {
                             color: "#70B0FF"
                             font.pixelSize: speedometerBg.width * 0.09
                             font.family: facade.chineseFont || font.family
-                            visible: Math.abs(facade.teleop.steeringAngle) > 1
+                            visible: Math.abs(facade.teleop.displaySteering) > 1
                         }
 
                         Text {
@@ -1334,6 +1342,21 @@ ColumnLayout {
                                 }
                             }
                         
+                            // 车端反馈车速（与 vehicle/status、CARLA 桥一致）
+                            Column {
+                                spacing: 2
+                                width: parent.width
+                                Text {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    visible: facade.appServices.mqttController
+                                             && facade.appServices.mqttController.mqttBrokerConnected
+                                    text: "车端 " + Math.round(facade.teleop.reportedSpeedKmh).toString() + " km/h"
+                                    color: "#7AE2A8"
+                                    font.pixelSize: 11
+                                    font.family: facade.chineseFont || font.family
+                                }
+                            }
+
                             // ★ 目标速度输入框（美化版，尺寸调大）
                             Rectangle {
                                 width: 96; height: 42; radius: 10

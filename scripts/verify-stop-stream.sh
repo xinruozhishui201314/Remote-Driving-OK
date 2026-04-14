@@ -3,6 +3,11 @@
 
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
+VIN_STOP="${VEHICLE_VIN:-E2ETESTVIN0000001}"
+
 echo "=========================================="
 echo "验证停止推流功能"
 echo "=========================================="
@@ -54,7 +59,7 @@ fi
 echo ""
 echo "2. 发送停止推流指令"
 echo "----------------------------------------"
-STOP_CMD='{"type":"stop_stream","timestamp":'$(date +%s000)'}'
+STOP_CMD="$(mqtt_json_stop_stream "$VIN_STOP")"
 echo "发送指令: $STOP_CMD"
 docker exec "$MQTT_CONTAINER" mosquitto_pub -h localhost -p 1883 -t "vehicle/control" -m "$STOP_CMD" 2>&1 || {
     echo "✗ 发送停止推流指令失败"

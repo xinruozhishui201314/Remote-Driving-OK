@@ -36,6 +36,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/lib/teleop-logs.sh"
@@ -151,7 +153,7 @@ start_carla_and_stream() {
     elapsed=$((elapsed + 2))
   done
   local msg
-  msg=$(printf '{"type":"start_stream","vin":"%s","timestamp":0}' "$CARLA_VIN")
+  msg="$(mqtt_json_start_stream "$CARLA_VIN")"
   echo -e "${CYAN}MQTT start_stream vin=$CARLA_VIN${NC}"
   if command -v mosquitto_pub >/dev/null 2>&1; then
     mosquitto_pub -h 127.0.0.1 -p 1883 -t vehicle/control -m "$msg" 2>/dev/null || true

@@ -482,6 +482,23 @@ void VehicleStatus::updateStatus(const QJsonObject &status) {
 
     logTimer.restart();
   }
+
+  // 底盘快照（节流）：grep "[Client][VehicleStatus][FEEDBACK]" 对照 UI / 键盘 / 桥日志
+  static QElapsedTimer s_feedbackLog;
+  if (!s_feedbackLog.isValid())
+    s_feedbackLog.start();
+  const bool chassisLike = !status.contains(QLatin1String("type")) ||
+                           status.value(QLatin1String("type")).toString() == QLatin1String("vehicle_status");
+  if (chassisLike && s_feedbackLog.elapsed() >= 400) {
+    s_feedbackLog.restart();
+    const QString vin = status.value(QLatin1String("vin")).toString();
+    qInfo().noquote() << "[Client][VehicleStatus][FEEDBACK] n=" << updateCount << "vin=" << vin
+                      << "speed_kmh=" << QString::number(m_speed, 'f', 2)
+                      << "steering_norm=" << QString::number(m_steering, 'f', 4)
+                      << "gear=" << m_gear << "rc=" << (m_remoteControlEnabled ? 1 : 0)
+                      << "mode=" << m_drivingMode
+                      << "delta=" << (hasChanges ? changedFields.join(QLatin1Char(',')) : QLatin1String("(none)"));
+  }
 }
 
 QString VehicleStatus::connectionStatus() const {

@@ -6,6 +6,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -33,21 +35,21 @@ echo -e "  MQTT Broker: ${GREEN}✓ 运行中${NC}"
 # 2. 启动车端底盘数据发布
 echo ""
 echo -e "${BLUE}[步骤 2/10] 启动车端底盘数据发布${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"start_stream","timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_start_stream "123456789")" >/dev/null 2>&1
 sleep 2
 echo -e "  ${GREEN}✓ 已发送 start_stream 命令${NC}"
 
 # 3. 启用远驾接管
 echo ""
 echo -e "${BLUE}[步骤 3/10] 启用远驾接管${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"remote_control","enable":true,"timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_remote_control "123456789" true)" >/dev/null 2>&1
 sleep 1
 echo -e "  ${GREEN}✓ 已发送 remote_control 命令${NC}"
 
 # 4. 发送P档命令
 echo ""
 echo -e "${BLUE}[步骤 4/10] 发送P档命令${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"gear","value":2,"timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_gear "123456789" 2)" >/dev/null 2>&1
 sleep 2
 echo -e "  ${GREEN}✓ P档命令已发送 (value=2)${NC}"
 
@@ -92,7 +94,7 @@ fi
 # 8. 发送清扫命令
 echo ""
 echo -e "${BLUE}[步骤 8/10] 发送清扫命令${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"sweep","sweepType":"sweep","active":true,"timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_sweep "123456789" sweep true)" >/dev/null 2>&1
 sleep 2
 echo -e "  ${GREEN}✓ 清扫命令已发送${NC}"
 

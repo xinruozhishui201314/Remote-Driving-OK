@@ -60,6 +60,12 @@ bool parseControlMessage(const std::string& payload, ControlMessage& out) {
   extractNumber(payload, "throttle", out.throttle);
   extractNumber(payload, "brake", out.brake);
   extractInt(payload, "gear", out.gear);
+  if (out.type == "speed") {
+    double v = 0.0;
+    if (extractNumber(payload, "value", v)) {
+      out.ui_speed_kmh = v;
+    }
+  }
   return true;
 }
 

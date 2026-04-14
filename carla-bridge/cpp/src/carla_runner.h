@@ -9,6 +9,10 @@
 
 namespace carla_bridge {
 
+#ifdef ENABLE_LIBCARLA
+struct CarlaLibImpl;
+#endif
+
 class CarlaRunner {
  public:
   // vin: 车辆 VIN，用于构造多车隔离流名 {vin}_cam_front 等；空字符串时退化为无前缀（兼容单车测试）
@@ -25,6 +29,8 @@ class CarlaRunner {
   void applyControl(const ControlState& state);
   void getVelocity(double& speedKmh) const;
   void getCurrentState(ControlState& out) const;
+  /** 无 LibCarla 时：按 remote/ui_speed/throttle/brake 积分出用于 vehicle/status 的演示车速 */
+  void integrateSpeedStep(double dtSec);
 
  private:
   void startPushers();
@@ -42,8 +48,13 @@ class CarlaRunner {
   std::atomic<bool> m_streaming{false};
   mutable std::mutex m_controlMutex;
   ControlState m_controlState;
+  double m_stubSpeedKmh = 0.0;
   std::vector<std::unique_ptr<class RtmpPusher>> m_pushers;
   static const std::vector<std::string> kStreamIds;
+#ifdef ENABLE_LIBCARLA
+  mutable std::mutex m_carlaMutex;
+  std::unique_ptr<CarlaLibImpl> m_lib;
+#endif
 };
 
 }  // namespace carla_bridge

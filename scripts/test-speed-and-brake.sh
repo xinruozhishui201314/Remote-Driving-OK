@@ -6,6 +6,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -40,21 +42,21 @@ echo -e "  MQTT Broker: ${GREEN}✓ 运行中${NC}"
 # 2. 启动车端底盘数据发布
 echo ""
 echo -e "${BLUE}[步骤 2/10] 启动车端底盘数据发布${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"start_stream","timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_start_stream "123456789")" >/dev/null 2>&1
 sleep 2
 echo -e "  ${GREEN}✓ 已发送 start_stream 命令${NC}"
 
 # 3. 启用远驾接管
 echo ""
 echo -e "${BLUE}[步骤 3/10] 启用远驾接管${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"remote_control","enable":true,"timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_remote_control "123456789" true)" >/dev/null 2>&1
 sleep 1
 echo -e "  ${GREEN}✓ 已发送 remote_control 命令${NC}"
 
 # 4. 发送目标速度命令（浮点型：50.5 km/h）
 echo ""
 echo -e "${BLUE}[步骤 4/10] 发送目标速度命令（50.5 km/h，测试浮点型）${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"target_speed","value":50.5,"timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_target_speed "123456789" 50.5)" >/dev/null 2>&1
 sleep 2
 echo -e "  ${GREEN}✓ 目标速度命令已发送 (50.5 km/h，浮点型)${NC}"
 
@@ -72,7 +74,7 @@ fi
 # 6. 发送急停刹车命令
 echo ""
 echo -e "${BLUE}[步骤 6/10] 发送急停刹车命令${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"brake","value":1.0,"timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_brake "123456789" 1.0)" >/dev/null 2>&1
 sleep 2
 echo -e "  ${GREEN}✓ 急停刹车命令已发送 (brake=1.0)${NC}"
 
@@ -125,7 +127,7 @@ fi
 # 11. 测试解除急停命令
 echo ""
 echo -e "${BLUE}[步骤 11/12] 测试解除急停命令${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"emergency_stop","enable":false,"timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_emergency_stop "123456789" false)" >/dev/null 2>&1
 sleep 2
 echo -e "  ${GREEN}✓ 解除急停命令已发送 (enable=false)${NC}"
 

@@ -179,6 +179,8 @@ class WebRtcClient : public QObject {
   void videoSinkChanged();
   void streamUrlChanged(const QString &url);
   void connectionStatusChanged(bool connected);
+  /** libdatachannel：控制用 DataChannel 打开/关闭（供 MqttController 选路与 UI 提示） */
+  void dataChannelOpenChanged(bool open);
   void statusTextChanged(const QString &text);
   /** 解码后已呈现到 videoSink 的元信息（占位 UI / 诊断）；不传 QImage，避免每帧 C++→QML 大对象封送
    */

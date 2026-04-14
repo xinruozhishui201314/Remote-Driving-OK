@@ -17,6 +17,8 @@ struct ControlState {
   double throttle = 0.0;
   double brake = 0.0;
   int gear = 1;
+  /** 客户端 UI / 键盘目标车速 (km/h)，来自 type=speed 的 MQTT 包；无 LibCarla 时由桥内积分器跟踪 */
+  double ui_speed_kmh = 0.0;
   bool remote_enabled = false;
   bool streaming = false;
 };
@@ -37,10 +39,11 @@ class MqttBridge {
   void setState(const ControlState& s);
 
   void publishStatus(double speedKmh, int gear, double steering, double throttle, double brake,
-                     bool remoteEnabled, const std::string& drivingMode);
+                     bool remoteEnabled, bool streaming, const std::string& drivingMode);
 
  private:
   void onMessage(const std::string& topic, const std::string& payload);
+  void publishRemoteControlAck(bool remoteEnabled);
 
   std::string m_brokerHost;
   int m_brokerPort;

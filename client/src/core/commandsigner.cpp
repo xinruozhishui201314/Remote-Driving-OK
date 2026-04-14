@@ -11,8 +11,8 @@
 
 // 参与签名的字段集合（有序，确保 canonical 序列确定性）
 static const QStringList kSignedFields = {"steering", "throttle",       "brake",
-                                          "gear",     "emergency_stop", "timestamp",
-                                          "seq",      "session_id",     "vin"};
+                                          "gear",     "emergency_stop", "timestampMs",
+                                          "seq",      "sessionId",      "vin"};
 
 // ─── setCredentials ──────────────────────────────────────────────────────────
 

@@ -1,0 +1,8 @@
+{
+  "type": "remote_control_ack",
+  "vin": "TESTVIN0000000001",
+  "schemaVersion": "1.2.0",
+  "timestamp": 1700000000000,
+  "remote_control_enabled": true,
+  "driving_mode": "远驾"
+}

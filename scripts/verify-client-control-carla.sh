@@ -12,6 +12,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.carla.yml"
 VIN="${VIN:-carla-sim-001}"
@@ -66,7 +68,7 @@ echo ""
 # 1) 发送 remote_control enable=true，依据日志判断 Bridge 是否收到并处理
 # ---------------------------------------------------------------------------
 log_section "1/6 remote_control enable=true — 发送并检查 Bridge 日志"
-mqtt_pub "{\"type\":\"remote_control\",\"vin\":\"$VIN\",\"enable\":true,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_remote_control "$VIN" true)"
 sleep "$SLEEP_AFTER_MSG"
 LOGS=$(get_carla_logs)
 if echo "$LOGS" | grep -qE "\[Control\] 收到 type=remote_control|收到 vehicle/control 消息|carla-bridge:Control.*vehicle/control|收到远驾接管指令"; then
@@ -89,7 +91,7 @@ echo ""
 # 2) 发送 drive（steering/throttle/brake），依据日志判断 Bridge 是否收到
 # ---------------------------------------------------------------------------
 log_section "2/6 drive（steering/throttle/brake）— 发送并检查 Bridge 日志"
-mqtt_pub "{\"type\":\"drive\",\"vin\":\"$VIN\",\"steering\":0.15,\"throttle\":0.25,\"brake\":0,\"gear\":1,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_drive "$VIN" 0.15 0.25 0 1 false)"
 sleep "$SLEEP_AFTER_MSG"
 LOGS=$(get_carla_logs)
 if echo "$LOGS" | grep -qE "\[Control\] 收到 type=drive|\[Control\] 收到 drive|收到控制:.*steering|carla-bridge:Control.*收到控制"; then
@@ -137,7 +139,7 @@ echo ""
 # 4) 再次发送 drive 不同参数，确认日志中可见多次 drive
 # ---------------------------------------------------------------------------
 log_section "4/6 再次发送 drive（不同参数）— 确认控制通道可持续接收"
-mqtt_pub "{\"type\":\"drive\",\"vin\":\"$VIN\",\"steering\":-0.1,\"throttle\":0.1,\"brake\":0.05,\"gear\":1,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_drive "$VIN" -0.1 0.1 0.05 1 false)"
 sleep "$SLEEP_AFTER_MSG"
 LOGS=$(get_carla_logs)
 DRIVE_COUNT=$(echo "$LOGS" | grep -cE "\[Control\] 收到 type=drive|\[Control\] 收到 drive|收到控制:.*steering" || true)
@@ -153,7 +155,7 @@ echo ""
 # 5) 发送 remote_control enable=false，依据日志判断
 # ---------------------------------------------------------------------------
 log_section "5/6 remote_control enable=false — 关闭远驾接管"
-mqtt_pub "{\"type\":\"remote_control\",\"vin\":\"$VIN\",\"enable\":false,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_remote_control "$VIN" false)"
 sleep "$SLEEP_AFTER_MSG"
 LOGS=$(get_carla_logs)
 if echo "$LOGS" | grep -qE "\[Control\] remote_control enable=false|收到 vehicle/control 消息.*remote_control|carla-bridge:Control.*vehicle/control"; then

@@ -230,6 +230,28 @@ ApplicationWindow {
         id: connectionsDialog
     }
 
+    // ConnectionsDialog 内 connectToBroker 为异步：在 MQTT 真正 up 后再 requestStreamStart（替代原 Qt.callLater 竞态）
+    Connections {
+        target: AppContext.mqttController
+        ignoreUnknownSignals: true
+        function onMqttConnectResolved(succeeded, detail) {
+            if (succeeded || !AppContext.pendingRequestStreamAfterMqttConnect)
+                return
+            AppContext.pendingRequestStreamAfterMqttConnect = false
+            console.warn("[Client][StreamE2E][MAIN] pendingRequestStream cleared (MQTT failed): " + detail)
+        }
+        function onMqttBrokerConnectionChanged(connected) {
+            if (!connected || !AppContext.pendingRequestStreamAfterMqttConnect)
+                return
+            AppContext.pendingRequestStreamAfterMqttConnect = false
+            var mc = AppContext.mqttController
+            if (mc && typeof mc.requestStreamStart === "function") {
+                mc.requestStreamStart()
+                console.warn("[Client][StreamE2E][MAIN] start_stream after dialog MQTT connected (pending flag cleared)")
+            }
+        }
+    }
+
     // ── 测试模式自动连接 ───────────────────────────────────────────────
     Timer {
         id: testModeEnterDrivingTimer
@@ -263,7 +285,7 @@ ApplicationWindow {
             var mqtt = AppContext.mqttController
             var vm = AppContext.vehicleManager
             console.log("[Client][UI][TEST] autoConnectVideo: triggering connectFourStreams")
-            if (mqtt && mqtt.isConnected) {
+            if (mqtt && mqtt.mqttBrokerConnected) {
                 mqtt.requestStreamStart()
             }
             var whep = vm ? vm.lastWhepUrl : ""

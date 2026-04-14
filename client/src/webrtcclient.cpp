@@ -836,6 +836,38 @@ void WebRtcClient::createOffer() {
       }
     });
     m_dataChannel = m_peerConnection->createDataChannel("control");
+    m_dataChannel->onOpen([this]() {
+      try {
+        QMetaObject::invokeMethod(
+            this,
+            [this]() {
+              qInfo() << "[Client][WebRTC] DataChannel open stream=" << m_stream;
+              emit dataChannelOpenChanged(true);
+            },
+            Qt::QueuedConnection);
+      } catch (const std::exception &e) {
+        qCritical() << "[Client][WebRTC][DC] onOpen 调度异常 stream=" << m_stream
+                    << " error=" << e.what();
+      } catch (...) {
+        qCritical() << "[Client][WebRTC][DC] onOpen 调度未知异常 stream=" << m_stream;
+      }
+    });
+    m_dataChannel->onClosed([this]() {
+      try {
+        QMetaObject::invokeMethod(
+            this,
+            [this]() {
+              qInfo() << "[Client][WebRTC] DataChannel closed stream=" << m_stream;
+              emit dataChannelOpenChanged(false);
+            },
+            Qt::QueuedConnection);
+      } catch (const std::exception &e) {
+        qCritical() << "[Client][WebRTC][DC] onClosed 调度异常 stream=" << m_stream
+                    << " error=" << e.what();
+      } catch (...) {
+        qCritical() << "[Client][WebRTC][DC] onClosed 调度未知异常 stream=" << m_stream;
+      }
+    });
     rtc::Description::Video videoMedia("video", rtc::Description::Direction::RecvOnly);
     videoMedia.addH264Codec(96);
     (void)m_peerConnection->addTrack(videoMedia);
@@ -1778,7 +1810,7 @@ void WebRtcClient::onDecoderDecodeIntegrityAlert(const QString &code, const QStr
       code == QLatin1String("MULTI_SLICE_MULTITHREAD_STRIPE_RISK")) {
     QJsonObject o;
     o.insert(QStringLiteral("type"), QStringLiteral("client_video_encoder_hint"));
-    o.insert(QStringLiteral("schemaVersion"), 1);
+    o.insert(QStringLiteral("schemaVersion"), QStringLiteral("1.0.0"));
     o.insert(QStringLiteral("stream"), m_stream);
     o.insert(QStringLiteral("preferH264SingleSlice"), true);
     o.insert(QStringLiteral("reasonCode"), code);
@@ -2750,7 +2782,7 @@ void WebRtcClient::trySendProactiveEncoderDisplayContractHint() {
   }
   QJsonObject o;
   o.insert(QStringLiteral("type"), QStringLiteral("client_video_encoder_hint"));
-  o.insert(QStringLiteral("schemaVersion"), 2);
+  o.insert(QStringLiteral("schemaVersion"), QStringLiteral("1.1.0"));
   o.insert(QStringLiteral("stream"), m_stream);
   o.insert(QStringLiteral("preferH264SingleSlice"), true);
   o.insert(QStringLiteral("reasonCode"), QStringLiteral("PROACTIVE_DISPLAY_CONTRACT"));

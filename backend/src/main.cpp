@@ -109,6 +109,7 @@ static void whep_whip_host_port(std::string& host, std::string& port) {
  * 客户端从此 URL 解析出 base host，并结合自身存储的 VIN 构造四路流名：
  *   {vin}_cam_front, {vin}_cam_rear, {vin}_cam_left, {vin}_cam_right
  * stream 参数设为 {vin}_cam_front 作为示意；客户端不使用 stream 参数，仅使用 host + app。
+ * 全链路命名真源见 docs/TELEOP_SIGNAL_CONTRACT.md（与 carla-bridge / Vehicle-side RTMP 一致）。
  */
 static std::string build_whep_url(const std::string& zlm_api_url, const std::string& vin, const std::string& session_id) {
     (void)session_id;  // 不再使用 sessionId（流名由 VIN 决定，无需会话隔离）

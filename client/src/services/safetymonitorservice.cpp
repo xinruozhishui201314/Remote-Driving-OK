@@ -126,7 +126,7 @@ void SafetyMonitorService::checkLatency() {
 void SafetyMonitorService::checkHeartbeat() {
   const int64_t now = safetyNowMs();
 
-  // 未进入 PRE_FLIGHT/DRIVING/DEGRADED：不要求车端 DataChannel 心跳；MQTT 已连则视为控制面存活。
+  // 未进入 DRIVING/DEGRADED：不要求车端 status 心跳（PRE_FLIGHT 仅等待接管确认，避免仅视频通时误报）。
   const bool strictVehicleHb =
       m_fsm && m_fsm->vehicleTelemetryHeartbeatRequired();
   if (!strictVehicleHb) {
@@ -193,7 +193,11 @@ void SafetyMonitorService::triggerEmergencyStop(const QString& reason) {
   emit safetyStatusChanged(false);
 
   if (m_fsm) {
-    m_fsm->fire(SystemStateMachine::Trigger::EMERGENCY_STOP);
+    if (!m_fsm->fire(SystemStateMachine::Trigger::EMERGENCY_STOP)) {
+      qWarning().noquote()
+          << "[Client][SafetyMonitorService] FSM rejected EMERGENCY_STOP (state="
+          << m_fsm->currentState() << ") — EventBus 仍已发布 CRITICAL";
+    }
   }
 
   EmergencyStopEvent evt;

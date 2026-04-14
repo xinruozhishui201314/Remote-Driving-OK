@@ -7,6 +7,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml"
 ZLM_URL="${ZLM_URL:-http://127.0.0.1:80}"
@@ -114,14 +116,15 @@ fi
 echo ""
 
 # 3. 发 MQTT start_stream（轮询期间每 5s 重发）；VIN_E2E 已在脚本开头按 CARLA/车端选定
-MSG='{"type":"start_stream","vin":"'"$VIN_E2E"'","timestampMs":0}'
 mqtt_pub() {
-  if command -v mosquitto_pub &>/dev/null && mosquitto_pub -h 127.0.0.1 -p "${MQTT_PORT:-1883}" -t vehicle/control -m "$MSG" 2>/dev/null; then
+  local msg
+  msg="$(mqtt_json_start_stream "$VIN_E2E")"
+  if command -v mosquitto_pub &>/dev/null && mosquitto_pub -h 127.0.0.1 -p "${MQTT_PORT:-1883}" -t vehicle/control -m "$msg" 2>/dev/null; then
     return 0
   fi
-  $COMPOSE exec -T teleop-mosquitto mosquitto_pub -h localhost -p 1883 -t vehicle/control -m '{"type":"start_stream","vin":"'"$VIN_E2E"'","timestampMs":0}' 2>/dev/null || true
+  $COMPOSE exec -T teleop-mosquitto mosquitto_pub -h localhost -p 1883 -t vehicle/control -m "$msg" 2>/dev/null || true
 }
-log_section "发送 MQTT topic=vehicle/control payload=$MSG"
+log_section "发送 MQTT topic=vehicle/control start_stream vin=$VIN_E2E（含 schemaVersion/timestampMs/seq）"
 echo "[3/5] 发送 MQTT start_stream（等待流期间每 5s 重发）..."
 mqtt_pub
 

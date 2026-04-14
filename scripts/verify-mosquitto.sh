@@ -9,6 +9,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -213,11 +215,13 @@ test_acl() {
     
     # 测试 vehicle/control 主题（客户端应能发布）
     local acl_ok=0
+    local acl_payload
+    acl_payload="$(mqtt_json_start_stream "ACLTESTVIN00001")"
     
     if command -v mosquitto_pub &>/dev/null; then
         if timeout 2 mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" \
             -u "$MQTT_USER" -P "$MQTT_PASSWORD" \
-            -t "vehicle/control" -m '{"test":"acl"}' >/dev/null 2>&1; then
+            -t "vehicle/control" -m "$acl_payload" >/dev/null 2>&1; then
             acl_ok=1
         fi
     else
@@ -225,7 +229,7 @@ test_acl() {
         if $COMPOSE run --rm --no-deps mosquitto \
             mosquitto_pub -h mosquitto -p 1883 \
             -u "$MQTT_USER" -P "$MQTT_PASSWORD" \
-            -t "vehicle/control" -m '{"test":"acl"}' >/dev/null 2>&1; then
+            -t "vehicle/control" -m "$acl_payload" >/dev/null 2>&1; then
             acl_ok=1
         fi
     fi

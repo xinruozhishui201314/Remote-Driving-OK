@@ -167,11 +167,13 @@ VIDEO_BITRATE_KBPS = int(os.environ.get("VIDEO_BITRATE_KBPS", "2000"))
 # 前摄像头：1.0,0,1.2 为驾驶位主视角（车内）；2.5 为车头视角
 CAMERA_DRIVER_VIEW = (os.environ.get("CAMERA_DRIVER_VIEW", "1").strip().lower() in ("1", "true", "yes"))
 _cam_front_x = 1.0 if CAMERA_DRIVER_VIEW else 2.5
+# 车辆局部系：+X 前、+Y 右、+Z 上；正 yaw 使视线从 +X 转向 +Y。
+# 左挂载点 y<0 应朝 -Y（yaw=-90），右挂载点 y>0 应朝 +Y（yaw=+90），否则会朝车内对看。
 CAMERA_CONFIGS = [
     ("cam_front", _cam_front_x, 0.0, 1.2, 0),
     ("cam_rear", -2.5, 0.0, 1.2, 180),
-    ("cam_left", 0.0, -1.2, 1.2, 90),
-    ("cam_right", 0.0, 1.2, 1.2, -90),
+    ("cam_left", 0.0, -1.2, 1.2, -90),
+    ("cam_right", 0.0, 1.2, 1.2, 90),
 ]
 # 四路 worker 错峰启动间隔（秒），避免同时连 ZLM 导致部分推流失败
 # 增大间隔可降低验证时因首帧未到导致 ffprobe 拉流失败的概率
@@ -637,6 +639,7 @@ control_state = {
     "throttle": 0.0,
     "brake": 0.0,
     "gear": 1,  # 默认 D 档
+    "target_speed": 0.0,  # 目标车速 (km/h)
     "remote_enabled": False,
     "streaming": False,
     "emergency_stop": False,  # 急停激活时 throttle=0 brake=1 hand_brake=True
@@ -940,13 +943,15 @@ def stop_streaming():
 
 
 def _gear_to_carla(gear):
-    """档位映射：teleop -1=R 0=N 1=D 2=P -> CARLA reverse/hand_brake。"""
+    """档位映射：teleop -1=R 0=N 1=D 2=P -> CARLA (reverse, hand_brake, gear, manual)."""
     g = int(gear) if isinstance(gear, (int, float)) else 1
     if g == -1:
-        return True, False   # reverse
+        return True, False, 1, False  # reverse=True, gear=1 (R)
+    if g == 0:
+        return False, False, 0, True  # reverse=False, gear=0 (N), manual=True 强制空挡
     if g == 2:
-        return False, True   # P 档手刹
-    return False, False      # N/D
+        return False, True, 1, False   # P 档手刹
+    return False, False, 1, False      # D 档: reverse=False, gear=1
 
 
 def _apply_vehicle_control():
@@ -958,8 +963,22 @@ def _apply_vehicle_control():
             throttle = max(0.0, min(1.0, control_state.get("throttle", 0.0)))
             brake = max(0.0, min(1.0, control_state.get("brake", 0.0)))
             gear = control_state.get("gear", 1)
+            target_speed = control_state.get("target_speed", 0.0)
             remote_ok = control_state.get("remote_enabled", False)
             emergency = control_state.get("emergency_stop", False)
+
+        # ── 速度 PID 模拟（当有目标速且手动油门为 0 时激活） ──
+        if remote_ok and not emergency and target_speed > 0.1 and throttle < 0.01:
+            curr_speed = _read_vehicle_speed()
+            diff = target_speed - curr_speed
+            # 简单的 P 控制：每差 10km/h 给 0.3 油门
+            if diff > 0:
+                throttle = max(0.15, min(0.8, diff * 0.05))
+                brake = 0.0
+            else:
+                throttle = 0.0
+                brake = max(0.0, min(0.5, -diff * 0.05))
+            if gear == 0: gear = 1 # 确保在 D 档
 
         if emergency:
             throttle, brake = 0.0, 1.0
@@ -967,9 +986,9 @@ def _apply_vehicle_control():
             log_control("[Control] 急停激活：throttle=0 brake=1 hand_brake=True")
         elif not remote_ok:
             throttle, brake = 0.0, 0.5  # 远驾未启用：安全制动
-            reverse, hand_brake = False, False
+            reverse, hand_brake, gear_num, manual = False, False, 0, True
         else:
-            reverse, hand_brake = _gear_to_carla(gear)
+            reverse, hand_brake, gear_num, manual = _gear_to_carla(gear)
 
         ctrl = carla.VehicleControl(
             throttle=throttle,
@@ -977,8 +996,8 @@ def _apply_vehicle_control():
             brake=brake,
             hand_brake=hand_brake,
             reverse=reverse,
-            manual_gear_shift=False,
-            gear=0,
+            manual_gear_shift=manual,
+            gear=gear_num,
         )
         vehicle.apply_control(ctrl)
         _control_apply_count += 1
@@ -1008,23 +1027,48 @@ def _read_vehicle_speed():
         return 0.0
 
 
+def _read_vehicle_gear():
+    """从 CARLA 车辆读取实际档位并映射回 teleop 格式。"""
+    try:
+        ctrl = vehicle.get_control()
+        if ctrl.hand_brake:
+            return 2  # P
+        if ctrl.manual_gear_shift and ctrl.gear == 0:
+            return 0  # N
+        if ctrl.reverse:
+            return -1 # R
+        return 1      # D
+    except Exception:
+        return 1
+
+def _read_actual_steering():
+    """读取车辆实际的转向百分比 [-1, 1]。"""
+    try:
+        # 获取车辆当前应用的实际控制量（含物理限制后的）
+        return vehicle.get_control().steer
+    except Exception:
+        return 0.0
+
 def send_status():
     try:
         speed_kmh = _read_vehicle_speed()
+        real_gear = _read_vehicle_gear()
+        actual_steer = _read_actual_steering()
         with control_lock:
             status = {
+                "type": "vehicle_status",
+                "schemaVersion": "1.2.0",
                 "vin": VIN,
                 "timestamp": int(time.time() * 1000),
                 "speed": round(speed_kmh, 2),
                 "battery": 99.9,
                 "brake": control_state.get("brake", 0.0),
                 "throttle": control_state.get("throttle", 0.0),
-                "steering": control_state.get("steering", 0.0),
-                "gear": control_state.get("gear", 1),
+                "steering": round(actual_steer, 3), # 上报真实转向
+                "gear": real_gear,
                 "odometer": 0.0,
                 "temperature": 25,
                 "voltage": 48,
-                "type": "vehicle_status",
                 "remote_control_enabled": control_state.get("remote_enabled", False),
                 "driving_mode": "远驾" if control_state.get("remote_enabled", False) else "自驾",
                 "streaming": control_state.get("streaming", False),
@@ -1090,7 +1134,7 @@ def handle_client_encoder_hint_message(raw_text):
         "vin": VIN,
         "type": "encoder_hint_ack",
         "timestamp": int(time.time() * 1000),
-        "schemaVersion": "1.0.0",
+        "schemaVersion": "1.2.0",
         "originalType": payload.get("type"),
         "stream": stream_val,
         "preferH264SingleSlice": payload.get("preferH264SingleSlice"),
@@ -1131,20 +1175,31 @@ def on_message(client, userdata, msg):
             return
         log_control("收到 vehicle/control 消息 topic=%s payload=%s", msg.topic, raw[:200])
         try:
-            payload = json.loads(msg.payload if isinstance(msg.payload, str) else (msg.payload or b"").decode("utf-8"))
+            full_payload = json.loads(msg.payload if isinstance(msg.payload, str) else (msg.payload or b"").decode("utf-8"))
         except json.JSONDecodeError as e:
             _warn("Control", "JSON 解析失败: %s payload=%s", e, raw[:200])
             return
-        if not isinstance(payload, dict):
-            _warn("Control", "payload 不是 dict 类型: %s type=%s", type(payload).__name__, raw[:100])
+        if not isinstance(full_payload, dict):
+            _warn("Control", "payload 不是 dict 类型: %s type=%s", type(full_payload).__name__, raw[:100])
             return
-        msg_type = payload.get("type", "")
-        vin = payload.get("vin", "")
+        
+        msg_type = full_payload.get("type", "")
+        vin = full_payload.get("vin", "")
         # 交互记录：MQTT 入
         summary = "type=%s,vin=%s" % (msg_type, vin)
         _record_interaction("in", "mqtt", msg.topic or "vehicle/control", summary, len(raw), vin=vin, payload=raw if RECORD_INTERACTION_FULL else None)
         if vin != VIN:
             return
+
+        # ★ 关键：区分顶层指令（drive, remote_control）与 UI 包裹指令（speed, gear, sweep, start_stream...）
+        # UI 指令由 MqttControlEnvelope::buildUiCommandEnvelope 生成，包含 payload 字段
+        inner_payload = full_payload.get("payload")
+        if isinstance(inner_payload, dict):
+            # 是包裹指令，使用内部 payload 覆盖顶层作为后续字段提取源
+            payload = inner_payload
+        else:
+            # 是顶层指令
+            payload = full_payload
 
         if msg_type == "remote_control":
             # Plan 4.1 & 9.3: Handle remote control enabling/disabling
@@ -1154,11 +1209,12 @@ def on_message(client, userdata, msg):
                 log_control("收到远驾接管指令: enable=%s", enable)
             # Send Ack
             status = {
-                "vin": VIN,
                 "type": "remote_control_ack",
+                "schemaVersion": "1.2.0",
+                "vin": VIN,
                 "remote_control_enabled": enable,
                 "driving_mode": "远驾" if enable else "自驾",
-                "timestamp": int(time.time() * 1000)
+                "timestamp": int(time.time() * 1000),
             }
             try:
                 mqtt_client.publish(f"vehicle/status", payload=json.dumps(status))
@@ -1168,6 +1224,8 @@ def on_message(client, userdata, msg):
         elif msg_type == "drive":
             with control_lock:
                 try:
+                    # drive 消息通常是顶层（由 VehicleControlService::sendCommand 发出）
+                    # 但为了鲁棒性，我们也尝试从 payload 中提取
                     control_state["steering"] = float(payload.get("steering", 0.0))
                     control_state["throttle"] = float(payload.get("throttle", 0.0))
                     control_state["brake"] = float(payload.get("brake", 0.0))
@@ -1192,6 +1250,15 @@ def on_message(client, userdata, msg):
                 with control_lock:
                     control_state["gear"] = int(gear_val)
                 log_control("[Control] 收到 gear: value=%d (-1=R 0=N 1=D 2=P)", int(gear_val))
+        elif msg_type == "speed":
+            speed_val = payload.get("value", payload.get("speed", 0.0))
+            with control_lock:
+                control_state["target_speed"] = float(speed_val)
+                # 设定目标车速时，若当前是 N/P 档且目标速 > 0，自动切到 D 档以允许行驶
+                if control_state["target_speed"] > 0.1 and control_state["gear"] in (0, 2):
+                    control_state["gear"] = 1
+                    log_control("[Control] 目标速 > 0，自动从 N/P 切到 D 档")
+            log_control("[Control] 收到 speed: target=%.1f km/h", float(speed_val))
         elif msg_type == "start_stream":
             log_control("收到 start_stream，准备 spawn 相机并开始推流")
             log_control("已置 streaming=True（VIN 匹配）")
@@ -1220,7 +1287,19 @@ def on_message(client, userdata, msg):
 mqtt_client = mqtt.Client(client_id=f"carla-bridge-{VIN}", clean_session=True)
 mqtt_client.on_connect = on_connect
 mqtt_client.on_message = on_message
-mqtt_client.will_set(f"vehicle/status", payload=json.dumps({"vin": VIN, "type": "offline"}), qos=1, retain=False)
+mqtt_client.will_set(
+    f"vehicle/status",
+    payload=json.dumps(
+        {
+            "type": "offline",
+            "vin": VIN,
+            "schemaVersion": "1.2.0",
+            "timestamp": int(time.time() * 1000),
+        }
+    ),
+    qos=1,
+    retain=False,
+)
 
 def mqtt_thread_func():
     log_mqtt("[MQTT] MQTT 线程启动")

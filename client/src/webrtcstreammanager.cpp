@@ -65,6 +65,23 @@ bool envTruthyBytes(const QByteArray &raw) {
   return t == QLatin1String("1") || t == QLatin1String("true") || t == QLatin1String("yes") ||
          t == QLatin1String("on");
 }
+
+/** @return 本车四路 {vin}_cam_* 在 ZLM getMediaList data 数组中的在册路数 0..4 */
+int countVinCamStreamsInZlmMediaList(const QJsonArray &mediaList, const QString &vin) {
+  const QString vinPfx = vin.isEmpty() ? QString() : (vin + QStringLiteral("_"));
+  const QString expect[] = {vinPfx + QStringLiteral("cam_front"), vinPfx + QStringLiteral("cam_rear"),
+                            vinPfx + QStringLiteral("cam_left"), vinPfx + QStringLiteral("cam_right")};
+  int presentMask = 0;
+  for (const QJsonValue &v : mediaList) {
+    const QString st = v.toObject().value(QStringLiteral("stream")).toString();
+    for (int i = 0; i < 4; ++i) {
+      if (st == expect[i])
+        presentMask |= (1 << i);
+    }
+  }
+  return (presentMask & 1) + ((presentMask >> 1) & 1) + ((presentMask >> 2) & 1) +
+         ((presentMask >> 3) & 1);
+}
 bool videoPresent1HzSummaryEnabled() {
   const QByteArray raw = qgetenv("CLIENT_VIDEO_PRESENT_1HZ_SUMMARY");
   if (raw.isEmpty())
@@ -339,6 +356,11 @@ WebRtcStreamManager::WebRtcStreamManager(QObject *parent) : QObject(parent) {
   m_zlmPollTimer->start();
   qInfo() << "[StreamManager][Diag] ZLM 流状态轮询已启动，周期=15s";
 
+  m_zlmReadyNam = new QNetworkAccessManager(this);
+  m_zlmReadyTimer = new QTimer(this);
+  m_zlmReadyTimer->setSingleShot(false);
+  connect(m_zlmReadyTimer, &QTimer::timeout, this, &WebRtcStreamManager::onZlmReadyTimerTick);
+
   m_presentDiag1HzTimer = new QTimer(this);
   m_presentDiag1HzTimer->setInterval(1000);
   connect(m_presentDiag1HzTimer, &QTimer::timeout, this,
@@ -356,6 +378,11 @@ WebRtcStreamManager::WebRtcStreamManager(QObject *parent) : QObject(parent) {
 
 WebRtcStreamManager::~WebRtcStreamManager() {
   disconnectAll();
+  if (m_zlmReadyTimer) {
+    m_zlmReadyTimer->stop();
+    m_zlmReadyTimer->deleteLater();
+    m_zlmReadyTimer = nullptr;
+  }
   if (m_presentDiag1HzTimer) {
     m_presentDiag1HzTimer->stop();
     m_presentDiag1HzTimer->deleteLater();
@@ -1258,8 +1285,9 @@ void WebRtcStreamManager::connectFourStreams(const QString &whepUrl) {
             << " ★ rc>0 说明 QML 在 connectFourStreams 调用前已连接，后续若 rc "
                "变化则说明信号有重绑定 ★";
 
-    // 若 base URL 不变且已有连接，跳过断连重连，避免约 10s 无视频窗口
-    if (!resolvedBase.isEmpty() && resolvedBase == m_currentBase && anyConnected()) {
+    // 若 base URL 不变且已有连接，跳过断连重连，避免约 10s 无视频窗口（VIN 变更则必须重建）
+    if (!resolvedBase.isEmpty() && resolvedBase == m_currentBase && anyConnected() &&
+        m_vin == m_streamsConnectedVin) {
       qWarning().noquote()
           << QStringLiteral("[Client][StreamE2E][CFS_EXIT] seq=") << e2eSeq
           << "branch=SKIP_SAME_BASE_ALREADY_CONNECTED"
@@ -1412,6 +1440,7 @@ void WebRtcStreamManager::connectFourStreams(const QString &whepUrl) {
     }
 
     const int64_t doneTime = QDateTime::currentMSecsSinceEpoch();
+    m_streamsConnectedVin = m_vin;
     qInfo().noquote() << QStringLiteral("[Client][StreamE2E][CFS_EXIT] seq=") << e2eSeq
                       << "branch=DISPATCHED_CONNECT_TOSTREAM"
                       << "baseLen=" << base.size() << "app=" << app << "streams=" << sFront << ","
@@ -1597,7 +1626,104 @@ void WebRtcStreamManager::fetchZlmMediaListSnapshotForWave(int disconnectWaveId,
       });
 }
 
+void WebRtcStreamManager::cancelZlmReadySchedule() {
+  if (m_zlmReadyTimer && m_zlmReadyTimer->isActive())
+    m_zlmReadyTimer->stop();
+  if (m_zlmReadyReply) {
+    m_zlmReadyReply->disconnect();
+    m_zlmReadyReply->abort();
+    m_zlmReadyReply->deleteLater();
+    m_zlmReadyReply = nullptr;
+  }
+  m_zlmReadyPollInFlight = false;
+}
+
+void WebRtcStreamManager::scheduleConnectFourStreamsWhenZlmReady(const QString &whepUrl,
+                                                                 int pollIntervalMs,
+                                                                 int maxWaitMs) {
+  cancelZlmReadySchedule();
+  int interval = pollIntervalMs < 200 ? 200 : pollIntervalMs;
+  int maxWait = maxWaitMs < interval ? interval : maxWaitMs;
+
+  syncStreamVinFromVehicleManager();
+  m_zlmReadyWhep = whepUrl;
+  m_zlmReadyDeadlineMs = QDateTime::currentMSecsSinceEpoch() + maxWait;
+  m_zlmReadyTimer->setInterval(interval);
+
+  qInfo().noquote() << QStringLiteral("[StreamManager][ZlmReady] schedule poll intervalMs=") << interval
+                    << "maxWaitMs=" << maxWait << "vin="
+                    << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin)
+                    << "whepProbe=" << streamE2eFmtUrlProbe(whepUrl);
+
+  onZlmReadyTimerTick();
+  m_zlmReadyTimer->start();
+}
+
+void WebRtcStreamManager::onZlmReadyTimerTick() {
+  if (m_zlmReadyPollInFlight || m_zlmReadyReply)
+    return;
+
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  if (now >= m_zlmReadyDeadlineMs) {
+    qWarning() << "[StreamManager][ZlmReady] deadline reached → connectFourStreams (WebRTC will "
+                  "retry stream-not-found)";
+    m_zlmReadyTimer->stop();
+    connectFourStreams(m_zlmReadyWhep);
+    return;
+  }
+
+  const QString base = resolveBaseUrl(m_zlmReadyWhep);
+  if (base.isEmpty()) {
+    qWarning() << "[StreamManager][ZlmReady] no ZLM base (whep empty & no ZLM_VIDEO_URL) → "
+                  "connectFourStreams immediate";
+    m_zlmReadyTimer->stop();
+    connectFourStreams(m_zlmReadyWhep);
+    return;
+  }
+
+  const QString secret = QProcessEnvironment::systemEnvironment().value(
+      QStringLiteral("ZLM_API_SECRET"), QStringLiteral("j9uH7zT0mawXzTrvqRythA48QvZ8rO2Y"));
+  const QString urlStr = base + QStringLiteral("/index/api/getMediaList?secret=") + secret +
+                         QStringLiteral("&app=") + m_app;
+  const QUrl url(urlStr);
+  QNetworkRequest req(url);
+  req.setTransferTimeout(8000);
+
+  m_zlmReadyPollInFlight = true;
+  m_zlmReadyReply = m_zlmReadyNam->get(req);
+  QObject::connect(m_zlmReadyReply, &QNetworkReply::finished, this, [this]() {
+    QNetworkReply *reply = m_zlmReadyReply;
+    m_zlmReadyReply = nullptr;
+    m_zlmReadyPollInFlight = false;
+    if (!reply)
+      return;
+    reply->deleteLater();
+
+    if (reply->error() != QNetworkReply::NoError) {
+      qDebug() << "[StreamManager][ZlmReady] getMediaList HTTP err=" << reply->errorString();
+      return;
+    }
+    const QByteArray data = reply->readAll();
+    QJsonParseError pe{};
+    const QJsonDocument doc = QJsonDocument::fromJson(data, &pe);
+    if (pe.error != QJsonParseError::NoError) {
+      qDebug() << "[StreamManager][ZlmReady] JSON parse fail" << pe.errorString();
+      return;
+    }
+    const QJsonArray rows = doc.object().value(QStringLiteral("data")).toArray();
+    const int n = countVinCamStreamsInZlmMediaList(rows, m_vin);
+    qInfo() << "[StreamManager][ZlmReady] ZLM rows=" << rows.size() << "vinStreams=" << n << "/4"
+            << "vin=" << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin);
+    if (n >= 4) {
+      m_zlmReadyTimer->stop();
+      connectFourStreams(m_zlmReadyWhep);
+    }
+  });
+}
+
 void WebRtcStreamManager::disconnectAll() {
+  cancelZlmReadySchedule();
+  m_streamsConnectedVin.clear();
   const bool hadConn = anyConnected();
   qInfo().noquote() << QStringLiteral("[Client][StreamE2E][DISCONNECT_ALL] enter vin=")
                     << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin) << "m_currentBase="

@@ -175,9 +175,10 @@ bash scripts/verify-chassis-data-display.sh
    - 确认客户端已连接到 MQTT Broker
    - 查看客户端日志：`docker compose logs client-dev | grep -i "mqtt\|status"`
 
-5. **手动触发数据发布**：
+5. **手动触发数据发布**（仓库根目录；载荷与 `vehicle_control` schema 对齐）：
    ```bash
-   mosquitto_pub -h localhost -t "vehicle/control" -m '{"type":"start_stream","timestamp":'$(date +%s000)'}'
+   source scripts/lib/mqtt_control_json.sh
+   mosquitto_pub -h localhost -p 1883 -t "vehicle/control" -m "$(mqtt_json_start_stream "YOUR_VIN")"
    ```
 
 ### 问题：数据更新频率过低

@@ -86,12 +86,10 @@ cp config/vehicle_config.json.example /app/config/vehicle_config.json
 **步骤3：发送start_stream指令**
 
 ```bash
-# 终端2：发送start_stream指令（模拟客户端连接）
-mosquitto_pub -h localhost -t "vehicle/control" -m '{
-  "type": "start_stream",
-  "vin": "123456789",
-  "timestamp": '$(date +%s000)'
-}'
+# 终端2：发送 start_stream（与 vehicle_control schema 一致：schemaVersion、timestampMs、seq）
+cd /path/to/Remote-Driving
+source scripts/lib/mqtt_control_json.sh
+mosquitto_pub -h localhost -p 1883 -t "vehicle/control" -m "$(mqtt_json_start_stream "123456789")"
 ```
 
 **步骤4：观察数据**

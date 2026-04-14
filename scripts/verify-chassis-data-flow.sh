@@ -17,6 +17,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -164,7 +166,8 @@ simulate_vehicle_publish() {
     port=${port:-1883}
     
     # 发布测试数据
-    local test_data='{"timestamp":'$(date +%s000)',"vin":"'$VEHICLE_VIN'","speed":25.5,"gear":1,"steering":0.2,"throttle":0.3,"brake":0.0,"battery":95.5,"odometer":1234.56,"voltage":48.2,"current":15.3,"temperature":28.5}'
+    local test_data
+    test_data="$(mqtt_json_vehicle_status_chassis_sample "$VEHICLE_VIN")"
     
     mosquitto_pub -h "$host" -p "$port" -t "vehicle/status" -m "$test_data"
     mosquitto_pub -h "$host" -p "$port" -t "vehicle/$VEHICLE_VIN/status" -m "$test_data"

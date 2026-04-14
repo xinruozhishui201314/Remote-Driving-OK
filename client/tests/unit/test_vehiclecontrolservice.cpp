@@ -80,7 +80,7 @@ void TestVehicleControlService::sendUiCommand_buildsEnvelopeWithTraceAndSession(
   const QJsonObject o = doc.object();
 
   QCOMPARE(o.value(QStringLiteral("type")).toString(), QStringLiteral("gear"));
-  QCOMPARE(o.value(QStringLiteral("schemaVersion")).toString(), QStringLiteral("1.0"));
+  QCOMPARE(o.value(QStringLiteral("schemaVersion")).toString(), QStringLiteral("1.2.0"));
   QCOMPARE(o.value(QStringLiteral("vin")).toString(), QStringLiteral("VIN_UNIT_TEST"));
   QCOMPARE(o.value(QStringLiteral("sessionId")).toString(), QStringLiteral("session-unit-xyz"));
   QCOMPARE(o.value(QStringLiteral("trace_id")).toString(),
@@ -114,9 +114,12 @@ void TestVehicleControlService::controlLoop_start_sendsDriveCommandPayloadViaTra
   const QJsonDocument doc = QJsonDocument::fromJson(transport.lastControlJson, &err);
   QVERIFY2(err.error == QJsonParseError::NoError, err.errorString().toUtf8().constData());
   const QJsonObject o = doc.object();
+  QCOMPARE(o.value(QStringLiteral("type")).toString(), QStringLiteral("drive"));
+  QCOMPARE(o.value(QStringLiteral("schemaVersion")).toString(), QStringLiteral("1.2.0"));
   QVERIFY(o.contains(QStringLiteral("steering")));
   QVERIFY(o.contains(QStringLiteral("throttle")));
   QVERIFY(o.contains(QStringLiteral("brake")));
+  QVERIFY(o.contains(QStringLiteral("timestampMs")));
   QVERIFY(o.contains(QStringLiteral("seq")));
   QCOMPARE(o.value(QStringLiteral("vin")).toString(), QStringLiteral("VIN_LOOP"));
 

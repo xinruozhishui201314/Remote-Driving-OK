@@ -9,6 +9,9 @@
  */
 namespace MqttControlEnvelope {
 
+/** Semver wired on vehicle/control; keep in sync with mqtt/schemas/vehicle_control.json */
+inline QString controlSchemaVersionString() { return QStringLiteral("1.2.0"); }
+
 enum class PreferredChannel { Auto, DataChannel, Mqtt, WebSocket };
 
 PreferredChannel parsePreferredChannel(const QString& channelType);
@@ -37,8 +40,8 @@ QJsonObject buildStopStream(qint64 timestampMs);
 QJsonObject buildRemoteControl(bool enable, qint64 timestampMs);
 
 /**
- * UI 控制指令统一信封（schemaVersion 1.0）。VehicleControlService::sendUiCommand 与历史 QML 路径
- * 必须仅此函数构造，避免字段分叉（vin / sessionId / trace_id / seq）。
+ * UI 控制指令统一信封（schemaVersion 与 mqtt/schemas/vehicle_control.json 对齐）。
+ * VehicleControlService::sendUiCommand 与历史 QML 路径必须仅此函数构造。
  */
 QJsonObject buildUiCommandEnvelope(const QString& type, const QJsonObject& payload, const QString& vin,
                                    const QString& sessionId, qint64 timestampMs, qint64 seq,

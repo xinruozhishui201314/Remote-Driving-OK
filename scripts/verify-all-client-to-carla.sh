@@ -12,6 +12,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 CONTINUE_ON_FAIL="${CONTINUE_ON_FAIL:-1}"
 PASSED=0
@@ -95,15 +97,7 @@ run_step "4/10 ZLM 可访问（HTTP 80）" \
 
 # ── 5. MQTT 发布（vehicle/control）──
 run_step "5/10 MQTT 发布（vehicle/control 可发）" \
-  "bash -c '
-    if command -v mosquitto_pub &>/dev/null; then
-      mosquitto_pub -h 127.0.0.1 -p 1883 -t vehicle/control -m \"{\\\"type\\\":\\\"start_stream\\\",\\\"vin\\\":\\\"carla-sim-001\\\",\\\"timestampMs\\\":0}\" -u client_user -P client_password_change_in_prod 2>/dev/null || \
-      mosquitto_pub -h 127.0.0.1 -p 1883 -t vehicle/control -m \"{\\\"type\\\":\\\"start_stream\\\",\\\"vin\\\":\\\"carla-sim-001\\\",\\\"timestampMs\\\":0}\" 2>/dev/null
-    else
-      docker exec teleop-mosquitto mosquitto_pub -h localhost -p 1883 -t vehicle/control -m \"{\\\"type\\\":\\\"start_stream\\\",\\\"vin\\\":\\\"carla-sim-001\\\",\\\"timestampMs\\\":0}\" 2>/dev/null
-    fi
-    echo \"  MQTT 发布成功\"
-  '" || true
+  'p=$(mqtt_json_start_stream carla-sim-001) && if command -v mosquitto_pub &>/dev/null; then mosquitto_pub -h 127.0.0.1 -p 1883 -t vehicle/control -m "$p" -u client_user -P client_password_change_in_prod 2>/dev/null || mosquitto_pub -h 127.0.0.1 -p 1883 -t vehicle/control -m "$p" 2>/dev/null; else docker exec teleop-mosquitto mosquitto_pub -h localhost -p 1883 -t vehicle/control -m "$p" 2>/dev/null; fi && echo "  MQTT 发布成功"' || true
 [ "$STEP_FAILED" = "1" ] && [ "$CONTINUE_ON_FAIL" = "0" ] && exit 1
 
 # ── 6. CARLA Bridge 功能（start_stream / 四路流 / stop_stream / control）──

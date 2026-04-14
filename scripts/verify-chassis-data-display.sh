@@ -17,6 +17,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 MQTT_BROKER_URL="${1:-mqtt://localhost:1883}"
 GREEN='\033[0;32m'
@@ -119,7 +121,7 @@ sleep 1
 # 如果车端未运行，发送 start_stream 命令触发数据发布（如果车端支持）
 if [ -n "$VEHICLE_CONTAINER" ]; then
     echo "  发送 start_stream 命令以触发车端发布数据..."
-    mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t "vehicle/control" -m '{"type":"start_stream","timestamp":'$(date +%s000)'}' 2>/dev/null || true
+    mosquitto_pub -h "$MQTT_HOST" -p "$MQTT_PORT" -t "vehicle/control" -m "$(mqtt_json_start_stream "${VEHICLE_VIN:-123456789}")" 2>/dev/null || true
     sleep 1
 fi
 
@@ -254,7 +256,7 @@ else
     echo "  1. 检查车端容器：docker compose ps vehicle"
     echo "  2. 查看车端日志：docker compose logs vehicle | grep -i 'status\|mqtt'"
     echo "  3. 手动发送 start_stream："
-    echo "     mosquitto_pub -h $MQTT_HOST -p $MQTT_PORT -t vehicle/control -m '{\"type\":\"start_stream\"}'"
+    echo "     . scripts/lib/mqtt_control_json.sh && mosquitto_pub -h $MQTT_HOST -p $MQTT_PORT -t vehicle/control -m \"\$(mqtt_json_start_stream <vin>)\""
     echo "  4. 检查配置文件：Vehicle-side/config/vehicle_config.json"
     echo ""
     exit 1

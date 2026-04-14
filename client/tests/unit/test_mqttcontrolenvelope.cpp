@@ -35,6 +35,7 @@ void TestMqttControlEnvelope::prepareForSend_adds_vin_timestamp_seq() {
   QVERIFY(r.ok);
   QCOMPARE(r.cmd.value(QStringLiteral("vin")).toString(), QStringLiteral("VIN99"));
   QCOMPARE(r.cmd.value(QStringLiteral("timestampMs")).toVariant().toLongLong(), 12345LL);
+  QCOMPARE(r.cmd.value(QStringLiteral("schemaVersion")).toString(), QStringLiteral("1.2.0"));
   QCOMPARE(r.cmd.value(QStringLiteral("seq")).toInt(), 11);
   QCOMPARE(seq, 11u);
 }
@@ -74,6 +75,7 @@ void TestMqttControlEnvelope::buildDrive_clamps() {
   QCOMPARE(o.value(QStringLiteral("steering")).toDouble(), 1.0);
   QCOMPARE(o.value(QStringLiteral("throttle")).toDouble(), 1.0);
   QCOMPARE(o.value(QStringLiteral("brake")).toDouble(), 1.0);
+  QCOMPARE(o.value(QStringLiteral("emergency_stop")).toBool(), false);
 }
 
 void TestMqttControlEnvelope::buildUiCommandEnvelope_fields() {
@@ -82,7 +84,7 @@ void TestMqttControlEnvelope::buildUiCommandEnvelope_fields() {
   const auto o = buildUiCommandEnvelope(QStringLiteral("gear"), pl, QStringLiteral("VIN_X"),
                                         QStringLiteral("sess_y"), 999LL, 42LL,
                                         QStringLiteral("trace_z"));
-  QCOMPARE(o.value(QStringLiteral("schemaVersion")).toString(), QStringLiteral("1.0"));
+  QCOMPARE(o.value(QStringLiteral("schemaVersion")).toString(), QStringLiteral("1.2.0"));
   QCOMPARE(o.value(QStringLiteral("type")).toString(), QStringLiteral("gear"));
   QCOMPARE(o.value(QStringLiteral("vin")).toString(), QStringLiteral("VIN_X"));
   QCOMPARE(o.value(QStringLiteral("sessionId")).toString(), QStringLiteral("sess_y"));

@@ -57,18 +57,18 @@ Rectangle {
             Layout.alignment: Qt.AlignVCenter
             radius: 6
             border.width: 2
-            border.color: (facade.appServices.videoStreamsConnected) ? facade.colorAccent : (facade.appServices.mqttController && facade.appServices.mqttController.isConnected ? "#508050" : facade.colorButtonBorder)
-            color: (facade.appServices.videoStreamsConnected) ? "#1A2A1A" : (facade.teleop.pendingConnectVideo ? "#2A3A2A" : (facade.appServices.mqttController && facade.appServices.mqttController.isConnected ? "#1A2A1A" : facade.colorButtonBg))
+            border.color: (facade.appServices.videoStreamsConnected) ? facade.colorAccent : (facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected ? "#508050" : facade.colorButtonBorder)
+            color: (facade.appServices.videoStreamsConnected) ? "#1A2A1A" : (facade.teleop.pendingConnectVideo ? "#2A3A2A" : (facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected ? "#1A2A1A" : facade.colorButtonBg))
             Text {
                 anchors.centerIn: parent
                 text: {
                     if (facade.teleop.pendingConnectVideo) return "连接中..."
                     if (facade.appServices.videoStreamsConnected) return "已连接"
-                    if (facade.teleop.streamStopped && facade.appServices.mqttController && facade.appServices.mqttController.isConnected) return "连接车辆"
-                    if (facade.appServices.mqttController && facade.appServices.mqttController.isConnected) return "MQTT已连接"
+                    if (facade.teleop.streamStopped && facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected) return "连接车辆"
+                    if (facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected) return "MQTT已连接"
                     return "连接车端"
                 }
-                color: (facade.appServices.videoStreamsConnected) ? facade.colorAccent : (facade.appServices.mqttController && facade.appServices.mqttController.isConnected ? "#70B070" : facade.colorTextPrimary)
+                color: (facade.appServices.videoStreamsConnected) ? facade.colorAccent : (facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected ? "#70B070" : facade.colorTextPrimary)
                 font.pixelSize: 14
                 font.bold: true
                 font.family: facade.chineseFont || font.family
@@ -81,7 +81,7 @@ Rectangle {
                 onClicked: {
                     if (facade.appServices.videoStreamsConnected) {
                         // 先发送停止推流指令给车端
-                        if (facade.appServices.mqttController && facade.appServices.mqttController.isConnected) {
+                        if (facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected) {
                             facade.appServices.mqttController.requestStreamStop()
                             console.log("[Client][UI][Stream] 已发送停止推流指令给车端")
                         }
@@ -103,17 +103,22 @@ Rectangle {
                         facade.appServices.mqttController.clientId = clientId
                     if (brokerUrl && facade.appServices.mqttController)
                         facade.appServices.mqttController.brokerUrl = brokerUrl
-                    if (facade.appServices.mqttController && facade.appServices.mqttController.isConnected) {
-                        // 先发 start_stream，再延迟 25s 拉流，给车端（CARLA Bridge 约 5~25s）启动推流并注册到 ZLM
+                    if (facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected) {
                         var lw = (facade.appServices.vehicleManager && facade.appServices.vehicleManager.lastWhepUrl) ? facade.appServices.vehicleManager.lastWhepUrl : ""
                         console.warn("[Client][StreamE2E][QML_CONNECT_CLICK] mqttAlreadyConnected=1 currentVin=" + currentVin
                                     + " lastWhepUrl_len=" + lw.length
-                                    + " ★ lastWhep 空则 25s 后 C++ 仅靠 ZLM_VIDEO_URL")
-                        console.log("[Client][UI][Connect] 环节: MQTT 已连接，发送 start_stream currentVin=" + currentVin + " (若为空车端可能不响应，请先选车 carla-sim-001)")
+                                    + " ★ ZLM getMediaList 轮询就绪后 connectFourStreams；最长 45s 兜底")
+                        console.log("[Client][UI][Connect] 环节: MQTT 已连接，发送 start_stream currentVin=" + currentVin + " (VIN 为空时客户端将报错且不发送)")
                         facade.appServices.mqttController.requestStreamStart()
-                        connectVideoDelayTimer.whepUrl = (facade.appServices.vehicleManager) ? facade.appServices.vehicleManager.lastWhepUrl : ""
-                        connectVideoDelayTimer.start()
-                        console.log("[Client][UI][Connect] 环节: 已启动拉流延迟定时器 25s，到时将调用 connectFourStreams")
+                        var wsm = facade.appServices.webrtcStreamManager
+                        if (wsm && wsm.scheduleConnectFourStreamsWhenZlmReady !== undefined) {
+                            wsm.scheduleConnectFourStreamsWhenZlmReady(lw || "", 1000, 45000)
+                            console.log("[Client][UI][Connect] 环节: 已启动 ZLM 四路就绪轮询 → connectFourStreams")
+                        } else {
+                            console.error("[Client][UI][Connect] webrtcStreamManager.scheduleConnectFourStreamsWhenZlmReady 不可用，回退 connectFourStreams")
+                            if (wsm)
+                                wsm.connectFourStreams(lw || "")
+                        }
                         return
                     }
                     if (!brokerUrl || brokerUrl.length === 0) {
@@ -128,7 +133,7 @@ Rectangle {
                 }
             }
             ToolTip.visible: connectBtnMa.containsMouse
-            ToolTip.text: facade.teleop.pendingConnectVideo ? "正在连接 MQTT…" : ((facade.appServices.videoStreamsConnected) ? "点击断开视频流并停止车端推流" : ((facade.appServices.mqttController && facade.appServices.mqttController.isConnected) ? "MQTT 已连接，约 10s 后自动拉流，请稍候…" : "点击连接车端（连 MQTT 并拉取四路视频）"))
+            ToolTip.text: facade.teleop.pendingConnectVideo ? "正在连接 MQTT…" : ((facade.appServices.videoStreamsConnected) ? "点击断开视频流并停止车端推流" : ((facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected) ? "MQTT 已连接：发 start_stream 后轮询 ZLM 就绪再拉流…" : "点击连接车端（连 MQTT 并拉取四路视频）"))
             ToolTip.delay: 300
         }
         
@@ -182,35 +187,29 @@ Rectangle {
                 enabled: parent.buttonEnabled  // ★ 只有视频流连接时才能点击
                 cursorShape: parent.buttonEnabled ? Qt.PointingHandCursor : Qt.ForbiddenCursor  // 禁用时显示禁止光标
                 onClicked: {
-                    // ★ 首行日志：精确定位是否进入点击逻辑
-                    var isConn = (facade.appServices.mqttController && facade.appServices.mqttController.isConnected)
-                                            
-                    // Plan 4.1: Ensure we don't attempt actions if MQTT is disconnected
-                    if (!isConn) {
-                        console.log("[Client][UI][RemoteControl][Click] ✗ 未发送：MQTT 未连接")
-                        return
-                    }
-                    console.log("[Client][UI][RemoteControl][Click] >>> 用户点击远驾接管按钮 <<< isConnected=" + isConn + " buttonEnabled=" + parent.buttonEnabled + " remoteControlConfirmed=" + parent.remoteControlConfirmed)
+                    var mc = facade.appServices.mqttController
+                    var ctrlOk = mc && mc.mqttBrokerConnected
                     if (!parent.buttonEnabled) {
                         console.log("[Client][UI][RemoteControl][Click] ✗ 未发送：视频流未连接")
                         return
                     }
-                    if (facade.appServices.mqttController && facade.appServices.mqttController.isConnected) {
-                        // 如果已经是"远驾已接管"状态，点击则取消接管
-                        var newState = !parent.remoteControlConfirmed
-                        parent.remoteControlActive = newState
-                        console.log("[Client][UI][RemoteControl][Click] 调用 requestRemoteControl(" + newState + ") topic=vehicle/control")
-                        facade.appServices.mqttController.requestRemoteControl(newState)
-                        var ssmRc = facade.appServices.systemStateMachine
-                        if (ssmRc && typeof ssmRc.fireByName === "function") {
-                            if (newState) ssmRc.fireByName("START_SESSION")
-                            else ssmRc.fireByName("STOP_SESSION")
-                        }
-                        console.log("[Client][UI][RemoteControl] 点击远驾接管按钮 ==========")
-                        console.log("[Client][UI][RemoteControl] 发送指令: enable=" + newState + "（等待车端 vehicle/status 确认）")
-                    } else {
-                        console.log("[Client][UI][RemoteControl][Click] ✗ 未发送：MQTT 未连接 isConnected=" + isConn)
+                    if (!ctrlOk) {
+                        console.warn("[Client][UI][RemoteControl][Click] ✗ 未发送：需 MQTT 已连接（远驾仅走 vehicle/control） mqtt="
+                                     + (mc ? mc.mqttBrokerConnected : false))
+                        return
                     }
+                    console.log("[Client][UI][RemoteControl][Click] >>> 用户点击远驾接管 <<< mqttBrokerConnected=" + ctrlOk
+                                + " buttonEnabled=" + parent.buttonEnabled + " remoteControlConfirmed=" + parent.remoteControlConfirmed)
+                    var newState = !parent.remoteControlConfirmed
+                    parent.remoteControlActive = newState
+                    console.log("[Client][UI][RemoteControl][Click] 调用 requestRemoteControl(" + newState + ")")
+                    mc.requestRemoteControl(newState)
+                    var ssmRc = facade.appServices.systemStateMachine
+                    if (ssmRc && typeof ssmRc.fireByName === "function") {
+                        if (newState) ssmRc.fireByName("START_SESSION")
+                        else ssmRc.fireByName("STOP_SESSION")
+                    }
+                    console.log("[Client][UI][RemoteControl] 发送 enable=" + newState + "（等待车端 status / MQTT 确认）")
                 }
             }
             
@@ -275,7 +274,7 @@ Rectangle {
                         if (remoteControlTakeoverRect.hadVideoConnectedBefore) {
                             remoteControlTakeoverRect.hadVideoConnectedBefore = false
                             console.log("[Client][UI][RemoteControl] ⚠ 视频流已断开（曾连接过），发送 remote_control false")
-                            if (facade.appServices.mqttController && facade.appServices.mqttController.isConnected) {
+                            if (facade.appServices.mqttController && facade.appServices.mqttController.mqttBrokerConnected) {
                                 facade.appServices.mqttController.requestRemoteControl(false)
                                 var ssmStop = facade.appServices.systemStateMachine
                                 if (ssmStop && typeof ssmStop.fireByName === "function")
@@ -292,6 +291,10 @@ Rectangle {
             ToolTip.text: {
                 if (!buttonEnabled) {
                     return "视频流未连接，请先连接车辆后再启用远驾接管"
+                }
+                var mc2 = facade.appServices.mqttController
+                if (!mc2 || !mc2.mqttBrokerConnected) {
+                    return "MQTT 未连接：远驾指令仅经 vehicle/control 下发，请先连接 Broker"
                 }
                 if (remoteControlConfirmed) {
                     return "点击取消远驾接管"
@@ -455,69 +458,29 @@ Rectangle {
             }
         }
         
-        Timer {
-            id: connectVideoDelayTimer
-            interval: 25000
-            repeat: false
-            property string whepUrl: ""
-            onTriggered: {
-                var u = whepUrl || ""
-                var wsm = facade.appServices.webrtcStreamManager
-                var triggerTime = Date.now()
-                var vm = facade.appServices.vehicleManager
-                var vinUi = (vm && vm.currentVin) ? vm.currentVin : ""
-                var lastWhepLen = (vm && vm.lastWhepUrl) ? String(vm.lastWhepUrl).length : -1
-                console.warn("[Client][StreamE2E][QML_TIMER_25S] ★★★ connectVideoDelayTimer 触发 ★★★"
-                            + " timerWhepLen=" + u.length
-                            + " vehicleManager.lastWhepUrl_len=" + lastWhepLen
-                            + " currentVin=" + vinUi
-                            + " mqttConnected=" + (facade.appServices.mqttController ? facade.appServices.mqttController.isConnected : false)
-                            + " triggerTime=" + triggerTime)
-                console.warn("[Client][StreamE2E][QML_TIMER_25S] branch_hint="
-                            + (u.length === 0 ? "EMPTY_TIMER_WHEP→C++将用ZLM_VIDEO_URL或abort" : "HAS_TIMER_WHEP→C++优先解析此WHEP")
-                            + " ★ 若 EMPTY 且无环境变量 ZLM_VIDEO_URL → grep CFS_EXIT ABORT_NO_BASE")
-                console.warn("[Client][UI][Connect] ★★★ connectVideoDelayTimer 触发（25s到）★★★"
-                            + " whepUrl=" + (u.length > 60 ? u.substring(0, 60) + "..." : u)
-                            + " triggerTime=" + triggerTime
-                            + " webrtcStreamManager=" + (wsm ? "ok" : "NULL")
-                            + " frontClient=" + (wsm ? (wsm.frontClient ? "ok" : "NULL") : "N/A")
-                            + " anyConnected=" + (wsm ? wsm.anyConnected : "N/A"))
-                if (wsm) {
-                    // ── 诊断：调用 connectFourStreams 前检查信号接收者计数 ──────────
-                    if (wsm.getQmlSignalReceiverCount !== undefined) {
-                        var rcBefore = wsm.getQmlSignalReceiverCount()
-                        console.log("[Client][UI][Connect] connectFourStreams 调用前: qmlSignalRc=" + rcBefore
-                                    + " ★ rc>0=已有QML连接，rc=0=QML未连接（videoFrameReady信号将被静默丢弃）")
-                    }
-                    wsm.connectFourStreams(u)
-                    var afterTime = Date.now()
-                    console.log("[Client][UI][Connect] ★★★ connectFourStreams 已调用，四路流将向 ZLM 发起 WebRTC 拉流 ★★★"
-                                + " callCost=" + (afterTime - triggerTime) + "ms")
-                    // ── 诊断：调用后立即检查 C++ 侧状态 ──────────────────────────
-                    if (wsm.getStreamDebugInfo !== undefined) {
-                        console.log("[Client][UI][Connect] C++ StreamManager debug: " + wsm.getStreamDebugInfo())
-                    }
-                    if (wsm.getQmlSignalReceiverCount !== undefined) {
-                        var rcAfter = wsm.getQmlSignalReceiverCount()
-                        console.log("[Client][UI][Connect] connectFourStreams 调用后: qmlSignalRc=" + rcAfter
-                                    + " ★ rc>0=已有QML连接，rc=0=QML未连接")
-                    }
-                } else {
-                    console.error("[Client][UI][Connect] FATAL: webrtcStreamManager is NULL，connectFourStreams 未调用！")
-                }
-            }
-        }
         Connections {
             target: facade.appServices.mqttController
             ignoreUnknownSignals: true
+            function onMqttConnectResolved(succeeded, detail) {
+                if (succeeded)
+                    return
+                if (facade.teleop.pendingConnectVideo) {
+                    facade.teleop.pendingConnectVideo = false
+                    console.warn("[Client][UI][Connect] mqttConnectResolved(false) detail=" + detail
+                                 + " | 查日志 [CLIENT][MQTT][CHAIN]")
+                }
+            }
             function onConnectionStatusChanged(connected) {
                 if (connected && facade.teleop.pendingConnectVideo) {
                     facade.teleop.pendingConnectVideo = false
                     if (facade.appServices.mqttController) facade.appServices.mqttController.requestStreamStart()
-                    connectVideoDelayTimer.whepUrl = facade.appServices.vehicleManager ? facade.appServices.vehicleManager.lastWhepUrl : ""
-                    var lw2 = connectVideoDelayTimer.whepUrl || ""
-                    console.warn("[Client][StreamE2E][QML_MQTT_CONNECTED] pendingConnectVideo→start 25s timer lastWhepUrl_len=" + lw2.length)
-                    connectVideoDelayTimer.start()
+                    var lw2 = facade.appServices.vehicleManager ? facade.appServices.vehicleManager.lastWhepUrl : ""
+                    var wsm2 = facade.appServices.webrtcStreamManager
+                    console.warn("[Client][StreamE2E][QML_MQTT_CONNECTED] pendingConnectVideo→ZlmReady poll lastWhepUrl_len=" + String(lw2 || "").length)
+                    if (wsm2 && wsm2.scheduleConnectFourStreamsWhenZlmReady !== undefined)
+                        wsm2.scheduleConnectFourStreamsWhenZlmReady(lw2 || "", 1000, 45000)
+                    else if (wsm2)
+                        wsm2.connectFourStreams(lw2 || "")
                 }
             }
         }

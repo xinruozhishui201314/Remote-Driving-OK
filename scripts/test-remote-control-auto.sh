@@ -7,6 +7,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 CLIENT_CONTAINER="teleop-client-dev"
 VEHICLE_CONTAINER="remote-driving-vehicle-1"
@@ -50,7 +52,7 @@ echo ""
 
 # 通过 mosquitto_pub 发送指令（如果可用）
 if command -v mosquitto_pub >/dev/null 2>&1; then
-    TEST_MSG='{"type":"remote_control","enable":true,"timestamp":'$(date +%s000)',"vin":"123456789"}'
+    TEST_MSG="$(mqtt_json_remote_control "123456789" true)"
     echo "发送消息: ${TEST_MSG}"
     mosquitto_pub -h localhost -p 1883 -t vehicle/control -m "${TEST_MSG}" 2>&1 || echo "⚠ mosquitto_pub 发送失败，将在日志中查找手动发送的记录"
 else

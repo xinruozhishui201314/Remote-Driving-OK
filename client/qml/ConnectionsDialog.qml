@@ -255,14 +255,12 @@ Popup {
                         if (mc) {
                             mc.brokerUrl = mqttBrokerField.text
                             mc.clientId = mqttClientIdField.text
+                            if (AppContext)
+                                AppContext.pendingRequestStreamAfterMqttConnect = true
                             mc.connectToBroker()
+                            console.warn("[Client][StreamE2E][ConnectionsDialog] connectToBroker scheduled; "
+                                         + "start_stream when mqttBrokerConnectionChanged(true)")
                         }
-                        
-                        Qt.callLater(function() {
-                            if (mc && mc.isConnected) {
-                                mc.requestStreamStart()
-                            }
-                        })
 
                         dialog.close()
                     }

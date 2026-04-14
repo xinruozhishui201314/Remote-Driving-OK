@@ -6,6 +6,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -47,14 +49,14 @@ fi
 # 2. 启动车端底盘数据发布
 echo ""
 echo -e "${BLUE}[步骤 2/8] 启动车端底盘数据发布${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"start_stream","timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_start_stream "123456789")" >/dev/null 2>&1
 sleep 2
 echo -e "  ${GREEN}✓ 已发送 start_stream 命令${NC}"
 
 # 3. 启用远驾接管
 echo ""
 echo -e "${BLUE}[步骤 3/8] 启用远驾接管${NC}"
-docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m '{"type":"remote_control","enable":true,"timestamp":'$(date +%s000)',"vin":"123456789"}' >/dev/null 2>&1
+docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$(mqtt_json_remote_control "123456789" true)" >/dev/null 2>&1
 sleep 1
 VEHICLE_REMOTE_LOG=$(docker logs "$VEHICLE_CONTAINER" --tail 50 2>&1 | grep -E "远驾接管已启用|remote_control.*启用" | tail -1)
 if [ -n "$VEHICLE_REMOTE_LOG" ]; then
@@ -67,7 +69,7 @@ fi
 # 4. 发送档位命令（D档）
 echo ""
 echo -e "${BLUE}[步骤 4/8] 发送档位命令（D档）${NC}"
-TEST_MSG='{"type":"gear","value":1,"timestamp":'$(date +%s000)',"vin":"123456789"}'
+TEST_MSG="$(mqtt_json_gear "123456789" 1)"
 docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$TEST_MSG" >/dev/null 2>&1
 echo -e "  ${GREEN}✓ 档位命令已发送 (D档)${NC}"
 

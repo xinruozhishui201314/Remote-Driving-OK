@@ -89,6 +89,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 # ---------- 先解析影响 GPU 默认值的参数（须在 NVIDIA 预检与 dc_* 之前）----------
 SKIP_CARLA="${SKIP_CARLA:-0}"
@@ -601,7 +603,7 @@ verify_chain() {
         fi
     fi
     local msg
-    msg=$(printf '%s' "{\"type\":\"start_stream\",\"vin\":\"${stream_vin}\",\"timestampMs\":0}")
+    msg="$(mqtt_json_start_stream "${stream_vin}")"
     if dc_main exec -T teleop-mosquitto mosquitto_pub -h localhost -p 1883 \
         -u client_user -P "${MQTT_CLIENT_PASSWORD:-client_password_change_in_prod}" \
         -t vehicle/control -m "$msg" >/dev/null 2>&1; then

@@ -1,116 +1,92 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:teleop:schemas:vehicle_status:1.1.0",
+  "$id": "urn:teleop:schemas:vehicle_status:1.2.0",
   "title": "MQTT vehicle/status message",
-  "version": "1.1.0",
-  "description": "版本1.1.0：新增network_quality、sessionId字段，保持与1.0.0兼容",
-  "type": "object",
-  "required": ["vin", "type", "timestamp", "schemaVersion"],
-  "properties": {
-    "schemaVersion": {
+  "version": "1.2.0",
+  "description": "vehicle/status carries periodic chassis, remote_control_ack, encoder_hint_ack, offline (LWT). Chassis uses timestamp (ms epoch). Control plane uses timestampMs — see vehicle_control.json.",
+  "oneOf": [
+    { "$ref": "#/definitions/vehicle_status_chassis" },
+    { "$ref": "#/definitions/remote_control_ack" },
+    { "$ref": "#/definitions/encoder_hint_ack" },
+    { "$ref": "#/definitions/offline" }
+  ],
+  "definitions": {
+    "semver": {
       "type": "string",
-      "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "description": "Schema版本号，用于版本协商和向后兼容",
-      "default": "1.0.0",
-      "examples": ["1.0.0", "1.1.0"]
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
     },
-    "vin": {
-      "type": "string"
-    },
-    "type": {
-      "type": "string",
-      "const": "vehicle_status"
-    },
-    "timestamp": {
-      "type": "integer",
-      "description": "毫秒时间戳"
-    },
-    "speed": {
-      "type": "number",
-      "minimum": 0.0,
-      "description": "速度 km/h"
-    },
-    "battery": {
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 100.0,
-      "description": "电池百分比"
-    },
-    "brake": {
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 1.0
-    },
-    "throttle": {
-      "type": "number",
-      "minimum": 0.0,
-      "maximum": 1.0
-    },
-    "steering": {
-      "type": "number",
-      "minimum": -1.0,
-      "maximum": 1.0
-    },
-    "gear": {
-      "type": "integer",
-      "enum": [-1, 0, 1, 2, 3, 4]
-    },
-    "odometer": {
-      "type": "number",
-      "minimum": 0.0,
-      "description": "里程 km"
-    },
-    "temperature": {
-      "type": "number",
-      "description": "温度"
-    },
-    "voltage": {
-      "type": "number",
-      "description": "电压 V"
-    },
-    "remote_control_enabled": {
-      "type": "boolean",
-      "description": "是否启用远程控制"
-    },
-    "driving_mode": {
-      "type": "string",
-      "enum": ["远驾", "自驾"]
-    },
-    "streaming": {
-      "type": "boolean",
-      "description": "是否在推流"
-    },
-    "network_quality": {
+    "vehicle_status_chassis": {
       "type": "object",
-      "description": "网络质量（v1.1.0新增）",
+      "required": ["type", "vin", "timestamp", "schemaVersion"],
       "properties": {
-        "rtt_ms": {
-          "type": "number",
-          "minimum": 0,
-          "description": "往返时延（毫秒）"
-        },
-        "packet_loss_rate": {
-          "type": "number",
-          "minimum": 0.0,
-          "maximum": 1.0,
-          "description": "丢包率（0~1）"
-        },
-        "active_link": {
-          "type": "string",
-          "enum": ["5G", "4G", "WiFi", "Ethernet"],
-          "description": "当前活动链路"
-        },
-        "jitter_ms": {
-          "type": "number",
-          "minimum": 0,
-          "description": "抖动（毫秒）"
-        }
-      }
+        "type": { "const": "vehicle_status" },
+        "vin": { "type": "string" },
+        "timestamp": { "type": "integer", "description": "Wall clock ms since epoch" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "speed": { "type": "number", "minimum": 0.0 },
+        "battery": { "type": "number", "minimum": 0.0, "maximum": 100.0 },
+        "brake": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "throttle": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "steering": { "type": "number", "minimum": -1.0, "maximum": 1.0 },
+        "gear": { "type": "integer" },
+        "odometer": { "type": "number", "minimum": 0.0 },
+        "temperature": { "type": "number" },
+        "voltage": { "type": "number" },
+        "remote_control_enabled": { "type": "boolean" },
+        "driving_mode": { "type": "string" },
+        "streaming": { "type": "boolean" },
+        "network_rtt": { "type": "number" },
+        "sweep_active": { "type": "boolean" },
+        "network_quality": { "type": "object" },
+        "sessionId": { "type": "string" }
+      },
+      "additionalProperties": true
     },
-    "sessionId": {
-      "type": "string",
-      "description": "会话ID（用于关联，v1.1.0新增）"
+    "remote_control_ack": {
+      "type": "object",
+      "required": [
+        "type",
+        "timestamp",
+        "schemaVersion",
+        "remote_control_enabled",
+        "driving_mode"
+      ],
+      "properties": {
+        "type": { "const": "remote_control_ack" },
+        "vin": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "remote_control_enabled": { "type": "boolean" },
+        "driving_mode": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "encoder_hint_ack": {
+      "type": "object",
+      "required": ["type", "timestamp", "schemaVersion"],
+      "properties": {
+        "type": { "const": "encoder_hint_ack" },
+        "vin": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "schemaVersion": { "$ref": "#/definitions/semver" },
+        "originalType": { "type": "string" },
+        "stream": { "type": "string" },
+        "preferH264SingleSlice": { "type": "boolean" },
+        "actionTaken": { "type": "string" },
+        "message": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "offline": {
+      "type": "object",
+      "required": ["type", "vin", "timestamp", "schemaVersion"],
+      "properties": {
+        "type": { "const": "offline" },
+        "vin": { "type": "string" },
+        "timestamp": { "type": "integer" },
+        "schemaVersion": { "$ref": "#/definitions/semver" }
+      },
+      "additionalProperties": false
     }
-  },
-  "additionalProperties": false
+  }
 }

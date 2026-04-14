@@ -3,9 +3,16 @@ import QtQuick 2.15
 /**
  * 远驾会话展示状态 + 车端绑定（facade.teleop alias 指向本对象 §3.3–§3.5）。
  * 服务经 facade.appServices 注入（DrivingFacade v3）；禁止在本文件使用 AppContext / RemoteDriving。
+ *
+ * 根类型用 Item（零尺寸、不可见）：子对象 Connections 依赖父类型的 default property；
+ * QtObject 根无 default property，运行期会报 “Cannot assign to non-existent default property”
+ * 并导致 main 根为空（exit 93）。见 docs/CLIENT_UI_MODULE_CONTRACT.md §1.2。
  */
-QtObject {
+Item {
     id: root
+    width: 0
+    height: 0
+    visible: false
 
     /** DrivingInterface 根 Item；须提供 appServices（含 sendUiCommand） */
     property Item facade: null
@@ -17,12 +24,21 @@ QtObject {
     readonly property bool forwardMode: currentGear !== "R"
     property real vehicleSpeed: 35
     property real targetSpeed: 0.0
+    /** W/S 按住时为 true：目标车速不同步车端，避免与键盘抢写 */
+    property bool keyboardSpeedAdjustActive: false
+    /** A/←/→ 按住时为 true：转向角不同步车端，避免与键盘抢写 */
+    property bool keyboardSteerActive: false
     property bool emergencyStopPressed: false
     property real steeringAngle: 0
 
-    property real displaySpeed: (svcMqtt && svcMqtt.isConnected && svcVehicleStatus) ? svcVehicleStatus.speed : vehicleSpeed
-    property string displayGear: (svcMqtt && svcMqtt.isConnected && svcVehicleStatus) ? svcVehicleStatus.gear : currentGear
-    property real displaySteering: (svcMqtt && svcMqtt.isConnected && svcVehicleStatus) ? svcVehicleStatus.steering : steeringAngle
+    property real displaySpeed: (svcMqtt && svcMqtt.mqttBrokerConnected && svcVehicleStatus) ? svcVehicleStatus.speed : vehicleSpeed
+    property string displayGear: (svcMqtt && svcMqtt.mqttBrokerConnected && svcVehicleStatus) ? svcVehicleStatus.gear : currentGear
+    
+    // ★ 修复转向显示映射：从 [-1.0, 1.0] 归一化值转换为 [ -450°, 450° ] 度数显示
+    property real displaySteering: {
+        var raw = (svcMqtt && svcMqtt.mqttBrokerConnected && svcVehicleStatus) ? svcVehicleStatus.steering : (steeringAngle / 100.0);
+        return raw * 450.0;
+    }
 
     property real waterTankLevel: svcVehicleStatus ? svcVehicleStatus.waterTankLevel : 75
     property real trashBinLevel: svcVehicleStatus ? svcVehicleStatus.trashBinLevel : 40
@@ -49,6 +65,28 @@ QtObject {
     property bool isDebugMode: Qt.application.arguments.indexOf("--debug") >= 0
     property int lastDiagTime: 0
 
+    /** 车端反馈车速（km/h），供 HUD 旁路显示；与 VehicleStatus.speed 同源 */
+    readonly property real reportedSpeedKmh: (svcVehicleStatus && svcMqtt && svcMqtt.mqttBrokerConnected)
+            ? svcVehicleStatus.speed : 0.0
+
+    Connections {
+        target: svcVehicleStatus
+        enabled: svcVehicleStatus !== null && svcMqtt && svcMqtt.mqttBrokerConnected
+        function onSpeedChanged() {
+            vehicleSpeed = svcVehicleStatus.speed
+            // 目标车速仅由键盘/输入框写入；车端反馈见 reportedSpeedKmh 与仪表盘 displaySpeed
+        }
+        function onSteeringChanged() {
+            if (!keyboardSteerActive)
+                steeringAngle = svcVehicleStatus.steering * 100.0
+        }
+        function onGearChanged() {
+            var g = svcVehicleStatus.gear
+            if (g === "R" || g === "N" || g === "D" || g === "P")
+                currentGear = g
+        }
+    }
+
     signal gearChanged(string gear)
     /** 键盘调目标速时发出；UI 面板仍经 facade.teleop 上的转发方法触发根 signal */
     signal speedCommandSent(real speed)
@@ -56,11 +94,11 @@ QtObject {
     onCurrentGearChanged: {
         gearChanged(currentGear)
 
-        var remoteControlEnabled = false
-        if (svcVehicleStatus)
-            remoteControlEnabled = (svcVehicleStatus.drivingMode === "远驾")
-        if (!remoteControlEnabled) {
-            console.log("[Client][UI][Gear] ⚠ 远驾接管未启用，无法发送档位命令")
+        var remoteOk = (svcVehicleStatus
+                && (svcVehicleStatus.remoteControlEnabled === true || svcVehicleStatus.drivingMode === "远驾"))
+        if (!remoteOk) {
+            console.log("[Client][UI][Gear] ⚠ 远驾未接管：跳过 MQTT 档位指令 gear=" + currentGear
+                        + "（请先连接 MQTT + 视频后点击「远驾接管」）")
             return
         }
 

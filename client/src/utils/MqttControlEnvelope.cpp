@@ -32,6 +32,9 @@ PrepareResult MqttControlEnvelope::prepareForSend(const QJsonObject& command,
   if (!cmd.contains(QStringLiteral("seq"))) {
     cmd[QStringLiteral("seq")] = static_cast<int>(++seqCounter);
   }
+  if (!cmd.contains(QStringLiteral("schemaVersion"))) {
+    cmd[QStringLiteral("schemaVersion")] = controlSchemaVersionString();
+  }
   const QString vinIn = cmd.value(QStringLiteral("vin")).toString();
   return {cmd, !vinIn.isEmpty()};
 }
@@ -112,6 +115,7 @@ QJsonObject MqttControlEnvelope::buildDrive(double steering, double throttle, do
   cmd[QStringLiteral("throttle")] = qBound(0.0, throttle, 1.0);
   cmd[QStringLiteral("brake")] = qBound(0.0, brake, 1.0);
   cmd[QStringLiteral("gear")] = gear;
+  cmd[QStringLiteral("emergency_stop")] = false;
   cmd[QStringLiteral("timestampMs")] = timestampMs;
   return cmd;
 }
@@ -143,7 +147,7 @@ QJsonObject MqttControlEnvelope::buildUiCommandEnvelope(const QString& type, con
                                                         qint64 timestampMs, qint64 seq,
                                                         const QString& traceId) {
   QJsonObject json;
-  json[QStringLiteral("schemaVersion")] = QStringLiteral("1.0");
+  json[QStringLiteral("schemaVersion")] = controlSchemaVersionString();
   json[QStringLiteral("type")] = type;
   json[QStringLiteral("payload")] = payload;
   json[QStringLiteral("vin")] = vin;

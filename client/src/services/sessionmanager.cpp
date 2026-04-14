@@ -263,6 +263,13 @@ void SessionManager::onSessionCreated(const QString &sessionVin, const QString &
       qInfo().noquote() << "[Client][Session] VehicleControlService::start() "
                            "已调用（后端会话已建立，100Hz 控车环路与"
                         << "sendDriveCommand/updateInput 闭环）sessionVin=" << sessionVin;
+
+      // ★ 核心修复：自动连接 MQTT Broker
+      // 解决「视频流已通但控制未连」的 Split-Brain 问题，确保远驾接管按钮可用
+      if (m_mqtt && !m_mqtt->mqttBrokerConnected()) {
+        qInfo().noquote() << "[Client][Session] 正在自动触发 MQTT 连接... vin=" << sessionVin;
+        m_mqtt->connectToBroker();
+      }
     }
     if (m_safetyMonitor && m_auth) {
       m_safetyMonitor->start();

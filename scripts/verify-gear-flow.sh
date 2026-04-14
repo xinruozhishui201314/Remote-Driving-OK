@@ -6,6 +6,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -46,7 +48,7 @@ fi
 # 2. 发送测试档位命令
 echo ""
 echo -e "${BLUE}[步骤 2/7] 发送测试档位命令${NC}"
-TEST_MSG='{"type":"gear","value":1,"timestamp":'$(date +%s000)',"vin":"123456789"}'
+TEST_MSG="$(mqtt_json_gear "123456789" 1)"
 echo "  消息内容: $TEST_MSG"
 if docker compose exec -T mosquitto mosquitto_pub -h mosquitto -p 1883 -t vehicle/control -m "$TEST_MSG" 2>&1; then
     echo -e "  ${GREEN}✓ 档位命令已发送 (D档)${NC}"

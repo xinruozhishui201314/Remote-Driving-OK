@@ -215,11 +215,11 @@ Rectangle {
                             Text {
                                 text: {
                                     var mc = controlPanel.mqttController
-                                    return (mc && mc.isConnected) ? "✓" : "✗"
+                                    return (mc && mc.controlChannelReady) ? "✓" : "✗"
                                 }
                                 color: {
                                     var mc = controlPanel.mqttController
-                                    return (mc && mc.isConnected) ? ThemeModule.Theme.colorGood : ThemeModule.Theme.colorDanger
+                                    return (mc && mc.controlChannelReady) ? ThemeModule.Theme.colorGood : ThemeModule.Theme.colorDanger
                                 }
                                 font.pixelSize: 14
                                 font.bold: true
@@ -688,7 +688,7 @@ Rectangle {
                             text: "R"
                             Layout.fillWidth: true
                             height: 50
-                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.isConnected
+                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.controlChannelReady
                             contentItem: Text {
                                 text: parent.text
                                 font.pixelSize: 18
@@ -715,7 +715,7 @@ Rectangle {
                             text: "N"
                             Layout.fillWidth: true
                             height: 50
-                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.isConnected
+                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.controlChannelReady
                             contentItem: Text {
                                 text: parent.text
                                 font.pixelSize: 18
@@ -742,7 +742,7 @@ Rectangle {
                             text: "D"
                             Layout.fillWidth: true
                             height: 50
-                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.isConnected
+                            enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.controlChannelReady
                             contentItem: Text {
                                 text: parent.text
                                 font.pixelSize: 18
@@ -773,7 +773,7 @@ Rectangle {
                 Layout.fillWidth: true
                 height: 64
                 text: "🛑 紧急停止"
-                enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.isConnected
+                enabled: controlPanel.vehicleControl && controlPanel.mqttController && controlPanel.mqttController.controlChannelReady
                 contentItem: Text {
                     text: parent.text
                     font.pixelSize: 20

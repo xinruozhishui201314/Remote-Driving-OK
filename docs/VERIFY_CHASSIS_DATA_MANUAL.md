@@ -109,9 +109,10 @@ bash scripts/start-full-chain.sh manual
 
 3. **手动触发数据发布**：
    ```bash
-   # 发送 start_stream 命令
+   # 仓库根：规范 start_stream（vin/schemaVersion/timestampMs/seq）
+   source scripts/lib/mqtt_control_json.sh
    docker compose run --rm --no-deps mosquitto mosquitto_pub -h mosquitto -p 1883 \
-     -t "vehicle/control" -m '{"type":"start_stream","timestamp":'$(date +%s000)'}'
+     -t "vehicle/control" -m "$(mqtt_json_start_stream "YOUR_VIN")"
    ```
 
 4. **检查配置文件**：

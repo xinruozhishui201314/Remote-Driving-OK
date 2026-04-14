@@ -16,6 +16,8 @@ set -e
 set -o pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 BRIDGE_CPP="${PROJECT_ROOT}/carla-bridge/cpp"
 CARLA_DOCKERFILE="${PROJECT_ROOT}/deploy/carla/Dockerfile"
 CARLA_BUILD_CTX="${PROJECT_ROOT}/deploy/carla"
@@ -190,7 +192,8 @@ REQUIRED_STREAMS="${VIN_PREFIX}cam_front ${VIN_PREFIX}cam_rear ${VIN_PREFIX}cam_
   fi
   log_ok "${MQTT_SVC}、zlmediakit 已运行"
 
-  local msg='{"type":"start_stream","vin":"carla-sim-001","timestampMs":0}'
+  local msg
+  msg="$(mqtt_json_start_stream carla-sim-001)"
   log_section "发布 MQTT vehicle/control: $msg"
   if command -v mosquitto_pub &>/dev/null; then
     mosquitto_pub -h 127.0.0.1 -p 1883 -t vehicle/control -m "$msg" 2>/dev/null || true

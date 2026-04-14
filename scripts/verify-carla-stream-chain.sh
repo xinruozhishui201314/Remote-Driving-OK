@@ -7,6 +7,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.carla.yml"
 VIN="${VIN:-carla-sim-001}"
@@ -118,7 +120,7 @@ echo ""
 # ---------------------------------------------------------------------------
 echo -e "${BOLD}[3/6] 环节: 发送 start_stream，检查 Bridge 是否收到${NC}"
 for attempt in 1 2; do
-  mqtt_pub "{\"type\":\"start_stream\",\"vin\":\"$VIN\",\"timestampMs\":0}" || true
+  mqtt_pub "$(mqtt_json_start_stream "$VIN")" || true
   sleep 8
   LOGS=$(get_carla_logs)
   if echo "$LOGS" | grep -qE "已置 streaming=true（VIN 匹配）|已置 streaming=True|收到 start_stream.*vin_ok=True|\[Control\] 已置 streaming|收到 vehicle/control 消息|收到 start_stream|\"streaming\":\s*true"; then

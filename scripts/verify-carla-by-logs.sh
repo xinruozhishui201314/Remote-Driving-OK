@@ -16,6 +16,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.carla.yml"
 VIN="${VIN:-carla-sim-001}"
@@ -109,7 +111,7 @@ echo ""
 # 2) 发送 start_stream，等待后依据日志判断「已收 stream + 推流已启动」
 # ---------------------------------------------------------------------------
 log_section "2/6 start_stream → 日志中可见「已置 streaming」与「推流已启动」"
-mqtt_pub "{\"type\":\"start_stream\",\"vin\":\"$VIN\",\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_start_stream "$VIN")"
 sleep "$SLEEP_AFTER_START"
 LOGS=$(get_carla_logs)
 
@@ -149,7 +151,7 @@ echo ""
 # 4) 发送 remote_control enable=true，依据日志判断
 # ---------------------------------------------------------------------------
 log_section "4/6 remote_control enable=true → 日志中可见"
-mqtt_pub "{\"type\":\"remote_control\",\"vin\":\"$VIN\",\"enable\":true,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_remote_control "$VIN" true)"
 sleep "$SLEEP_AFTER_CTRL"
 LOGS=$(get_carla_logs)
 if echo "$LOGS" | grep -qE "\[Control\].*remote_control enable=true|收到 type=remote_control"; then
@@ -165,7 +167,7 @@ echo ""
 # 5) 发送 drive，依据日志判断
 # ---------------------------------------------------------------------------
 log_section "5/6 drive → 日志中可见「收到 type=drive」"
-mqtt_pub "{\"type\":\"drive\",\"vin\":\"$VIN\",\"steering\":0.1,\"throttle\":0.2,\"brake\":0,\"gear\":1,\"timestampMs\":0}"
+mqtt_pub "$(mqtt_json_drive "$VIN" 0.1 0.2 0 1 false)"
 sleep "$SLEEP_AFTER_CTRL"
 LOGS=$(get_carla_logs)
 if echo "$LOGS" | grep -q "\[Control\] 收到 type=drive"; then

@@ -10,6 +10,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+# shellcheck source=lib/mqtt_control_json.sh
+source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
 COMPOSE="docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml"
 ZLM_URL="${ZLM_URL:-http://127.0.0.1:80}"
@@ -50,7 +52,12 @@ check_streams_present() {
 mqtt_pub_vin() {
   local vin="$1"
   local type="${2:-start_stream}"
-  local msg="{\"type\":\"$type\",\"vin\":\"$vin\",\"timestampMs\":0}"
+  local msg
+  case "$type" in
+    start_stream) msg="$(mqtt_json_start_stream "$vin")" ;;
+    stop_stream)  msg="$(mqtt_json_stop_stream "$vin")" ;;
+    *)            msg="$(mqtt_json_start_stream "$vin")" ;;
+  esac
   log_section "MQTT 发布 topic=vehicle/control payload=$msg"
   if command -v mosquitto_pub &>/dev/null; then
     mosquitto_pub -h 127.0.0.1 -p 1883 -t vehicle/control -m "$msg" 2>/dev/null && return 0

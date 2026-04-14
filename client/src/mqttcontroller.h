@@ -23,9 +23,8 @@ class QProcess;  // 前向声明，避免在头文件中包含 QProcess
 class WebRtcClient;
 
 /**
- * @brief MQTT 控制器类（已扩展为多通道控制器）
- * 负责通过多个通道（DataChannel/MQTT/WebSocket）发送车辆控制指令到车端模块
- * 优先级：DataChannel > MQTT > WebSocket
+ * @brief MQTT 控制器：车辆控制 JSON 经 MQTT 送达车端/桥（见 docs/TELEOP_SIGNAL_CONTRACT.md）。
+ * 与 ZLM 的 WebRTC DataChannel 不用于车控投递；DataChannel 仍可由 WebRtcClient 用于编码 hint 等。
  */
 class MqttController : public QObject {
   Q_OBJECT
@@ -36,6 +35,10 @@ class MqttController : public QObject {
       QString controlTopic READ controlTopic WRITE setControlTopic NOTIFY controlTopicChanged)
   Q_PROPERTY(QString statusTopic READ statusTopic WRITE setStatusTopic NOTIFY statusTopicChanged)
   Q_PROPERTY(bool isConnected READ isConnected NOTIFY connectionStatusChanged)
+  /** 与 broker 的 MQTT 会话是否已建立（不等同于「能发控车指令」） */
+  Q_PROPERTY(bool mqttBrokerConnected READ mqttBrokerConnected NOTIFY mqttBrokerConnectionChanged)
+  /** 可经 MQTT 投递控车 JSON：与 broker 会话已建立（车端/carla-bridge 仅订阅 MQTT） */
+  Q_PROPERTY(bool controlChannelReady READ controlChannelReady NOTIFY controlChannelReadyChanged)
 
  public:
   explicit MqttController(QObject *parent = nullptr);
@@ -56,8 +59,10 @@ class MqttController : public QObject {
   QString currentVin() const { return m_currentVin; }
   void setCurrentVin(const QString &vin);
 
-  /** 任一控制通道可用（DataChannel 或 MQTT）即视为已连接 */
+  /** 与 controlChannelReady 一致：MQTT 控制面是否可用 */
   bool isConnected() const;
+  bool mqttBrokerConnected() const { return m_isConnected; }
+  bool controlChannelReady() const;
 
   // 设置 WebRTC 客户端（用于 DataChannel 发送）
   void setWebRtcClient(WebRtcClient *client);
@@ -108,6 +113,14 @@ class MqttController : public QObject {
   void controlTopicChanged(const QString &topic);
   void statusTopicChanged(const QString &topic);
   void connectionStatusChanged(bool connected);
+  /** 仅 MQTT broker 连通性变化（供 VehicleStatus::mqttConnected 等） */
+  void mqttBrokerConnectionChanged(bool connected);
+  /**
+   * 单次「用户发起的 connectToBroker」结束（成功连上 broker 或明确失败/超时）。
+   * succeeded=false 时 detail 含原因码，供 QML 清除 pendingConnectVideo 等；成功时亦可用于串联 start_stream。
+   */
+  void mqttConnectResolved(bool succeeded, const QString& detail);
+  void controlChannelReadyChanged();
   void statusReceived(const QJsonObject &status);
   void errorOccurred(const QString &error);
 
@@ -119,8 +132,10 @@ class MqttController : public QObject {
   void onReconnectTimer();
 
  private:
-  void publishMessage(const QString &topic, const QJsonObject &payload);
+  /** @param qos 0=at most once, 1=at least once（start_stream/stop_stream 使用 1） */
+  bool publishMessage(const QString &topic, const QJsonObject &payload, int qos = 0);
   void updateConnectionStatus(bool connected);
+  void bumpControlChannelState();
   void scheduleReconnect();
 
   // 多通道发送控制指令
@@ -156,6 +171,12 @@ class MqttController : public QObject {
   };
   ChannelType m_preferredChannel = ChannelType::AUTO;
   ChannelType m_activeChannel = ChannelType::MQTT;  // 当前活动的通道
+  bool m_controlChannelReadyCache = false;
+
+  /** 用户点击连接后尚未收到 onConnected / 未判定超时 */
+  bool m_brokerConnectInFlight = false;
+  /** 递增以作废上一次连接看门狗定时器 */
+  quint64 m_connectWatchdogGeneration = 0;
 
   // 通道使用统计（用于监控）
   uint64_t m_dataChannelCount = 0;
