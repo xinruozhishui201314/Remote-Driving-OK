@@ -73,8 +73,22 @@ class ClientEvent {
 
 // ─── 预定义核心事件 ───────────────────────────────────────────────────────────
 
-DEFINE_CLIENT_EVENT(EmergencyStopEvent, CRITICAL, QString reason; enum class Source{
-    DEADMAN, SAFETY_MONITOR, SAFETY_CHECKER, ERROR_RECOVERY, USER} source{Source::USER};)
+DEFINE_CLIENT_EVENT(SystemErrorEvent, HIGH,
+                    enum class Severity { INFO, WARNING, ERROR, CRITICAL };
+                    QString domain;  // "MQTT", "WEBRTC", "HID", "UI"
+                    QString code;    // e.g., "NET-1001"
+                    QString message;
+                    Severity severity;
+                    QVariantMap metadata;)
+
+DEFINE_CLIENT_EVENT(EmergencyStopEvent, CRITICAL, QString reason; enum class Source {
+  DEADMAN,
+  SAFETY_MONITOR,
+  SAFETY_CHECKER,
+  ERROR_RECOVERY,
+  USER,
+  SYSTEM_ERROR
+} source{Source::USER};)
 
 DEFINE_CLIENT_EVENT(VehicleControlEvent, HIGH, double steeringAngle = 0.0; double throttle = 0.0;
                     double brake = 0.0; int gear = 0;)

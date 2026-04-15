@@ -81,7 +81,7 @@ void applyControlToCarlaVehicle(const boost::shared_ptr<carla::client::Vehicle>&
       throttle = 0.0;
       brake = std::clamp(-diff * 0.05, 0.0, 0.5);
     }
-    if (gear == 0) gear = 1;
+    // if (gear == 0) gear = 1; // 根据用户请求：点击接管时不要自动改档
   }
 
   bool reverse = false;
@@ -282,10 +282,20 @@ void CarlaRunner::applyControl(const ControlState& state) {
 #ifdef ENABLE_LIBCARLA
   {
     std::lock_guard<std::mutex> carlaLock(m_carlaMutex);
-    if (m_lib && m_lib->vehicle) {
-      try {
-        applyControlToCarlaVehicle(m_lib->vehicle, state);
-      } catch (const std::exception& e) {
+  if (m_lib && m_lib->vehicle) {
+    try {
+      applyControlToCarlaVehicle(m_lib->vehicle, state);
+      // ★ 诊断：每 100 次应用记录一次真实物理状态，验证指令是否真的下沉到仿真引擎
+      static int s_applyOkCount = 0;
+      if (++s_applyOkCount % 100 == 0) {
+        auto v = m_lib->vehicle->GetVelocity();
+        double speed = std::sqrt(v.x*v.x + v.y*v.y + v.z*v.z) * 3.6;
+        auto c = m_lib->vehicle->GetControl();
+        std::cout << "[CARLA][PHYS] Apply OK # " << s_applyOkCount 
+                  << " Real: speed=" << speed << " steer=" << c.steer 
+                  << " thr=" << c.throttle << " brk=" << c.brake << std::endl;
+      }
+    } catch (const std::exception& e) {
         std::cerr << "[CARLA] ApplyControl 失败: " << e.what() << std::endl;
       }
     }

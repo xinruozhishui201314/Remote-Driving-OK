@@ -93,6 +93,8 @@ class WebRtcClient : public QObject {
    */
   Q_PROPERTY(QVideoSink *videoSink READ videoSink NOTIFY videoSinkChanged)
 
+  Q_PROPERTY(bool videoFrozen READ videoFrozen NOTIFY videoFrozenChanged)
+
  public:
   explicit WebRtcClient(QObject *parent = nullptr);
   ~WebRtcClient();
@@ -175,6 +177,8 @@ class WebRtcClient : public QObject {
   /** 历史兼容：自研 VideoRenderer 已移除；保留空操作避免 QML/管理器调用崩溃 */
   Q_INVOKABLE void forceRefresh();
 
+  bool videoFrozen() const { return m_videoFrozen; }
+
  signals:
   void videoSinkChanged();
   void streamUrlChanged(const QString &url);
@@ -196,6 +200,7 @@ class WebRtcClient : public QObject {
   void clientEncoderHintSent(const QJsonObject &jsonPayload);
   /** DMA-BUF SceneGraph 失败切 CPU 等呈现降级；供 NetworkQualityAggregator 拉低综合分（V1 FSM 绑定） */
   void videoPresentationDegraded(const QString &stream, const QString &reason);
+  void videoFrozenChanged(bool frozen);
 
  private slots:
   void onSdpAnswerReceived(QNetworkReply *reply);
@@ -236,6 +241,7 @@ class WebRtcClient : public QObject {
   void presentDecodedFrameToOutputs(const QImage &image, quint64 frameId);
   void startPresentPipeline();
   void stopPresentPipeline();
+  void checkVideoIntegrity();
 #endif
 
   /** 由 m_boundOutputSink / m_boundRemoteSurface 派生；二者不得同时非空 */
@@ -349,6 +355,9 @@ class WebRtcClient : public QObject {
   bool m_proactiveEncoderHintSent = false;
   int m_proactiveEncoderHintDcOpenRetries = 0;
 #endif
+  QTimer *m_integrityTimer = nullptr;
+  int64_t m_lastFrameWallMs = 0;
+  bool m_videoFrozen = false;
 };
 
 #endif  // WEBRTCCLIENT_H

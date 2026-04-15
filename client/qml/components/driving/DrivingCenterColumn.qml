@@ -1345,7 +1345,7 @@ ColumnLayout {
                             // 车端反馈车速（与 vehicle/status、CARLA 桥一致）
                             Column {
                                 spacing: 2
-                                width: parent.width
+                                // width: parent.width  // ★ 严重缺陷：Row 内部子项 width: parent.width 会导致 polish 递归死循环 (QQuickItem::polish loop)
                                 Text {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     visible: facade.appServices.mqttController

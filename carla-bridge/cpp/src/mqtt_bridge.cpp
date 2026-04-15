@@ -75,8 +75,14 @@ void MqttBridge::onMessage(const std::string& topic, const std::string& payload)
   }
   std::string msgVin = msg.vin;
   bool vinOk = msgVin.empty() || msgVin == m_vin;
-  std::cout << "[Control] 解析成功 type=" << msg.type << " vin=" << (msgVin.empty() ? "(空)" : msgVin)
-            << " 本桥VIN=" << m_vin << " vin_ok=" << vinOk << std::endl;
+  
+  if (msg.type == "drive" || msg.type == "remote_control" || msg.type == "speed" || msg.type == "gear") {
+    auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()).count();
+    std::cout << "[Control][IN] type=" << msg.type << " seq=" << msg.seq 
+              << " ts_ms=" << msg.timestampMs << " delay=" 
+              << (msg.timestampMs > 0 ? (now_ms - msg.timestampMs) : 0) << "ms" << std::endl;
+  }
 
   if (msg.type == "start_stream") {
     std::cout << "[Control] 环节: 收到 type=start_stream 消息vin=" << (msgVin.empty() ? "(空)" : msgVin) << " 本桥VIN=" << m_vin << " vin_ok=" << vinOk << std::endl;
@@ -148,6 +154,15 @@ void MqttBridge::onMessage(const std::string& topic, const std::string& payload)
                   << " brk=" << m_state.brake << " gear=" << m_state.gear
                   << " ui_cmd_kmh=" << m_state.ui_speed_kmh << " remote=" << (m_state.remote_enabled ? "1" : "0")
                   << " stream=" << (m_state.streaming ? "1" : "0") << std::endl;
+      }
+      
+      // ★ 关键修复：立即触发回调应用控制
+      if (m_controlCb) {
+        try {
+          m_controlCb("drive", m_state);
+        } catch (const std::exception& e) {
+          std::cerr << "[MQTT][Control] m_controlCb (drive) exception: " << e.what() << std::endl;
+        }
       }
     }
   }

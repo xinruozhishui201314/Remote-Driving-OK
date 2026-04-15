@@ -263,9 +263,11 @@ Rectangle {
 
     focus: true
     Keys.onPressed: function (event) {
-        keyHandler.handlePressed(event)
+        if (keyHandler.handlePressed(event))
+            event.accepted = true
     }
     Keys.onReleased: function (event) {
-        keyHandler.handleReleased(event)
+        if (keyHandler.handleReleased(event))
+            event.accepted = true
     }
 }

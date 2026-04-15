@@ -1,11 +1,15 @@
 #include "TelemetryModel.h"
 
+#include <QDateTime>
 #include <QDebug>
 
 TelemetryModel::TelemetryModel(QObject* parent) : QObject(parent) {}
 
 void TelemetryModel::update(double speed, double throttle, double brake, double steering, int gear,
                             double battery) {
+  m_lastUpdateTimestamp = QDateTime::currentMSecsSinceEpoch();
+  emit lastUpdateTimestampChanged(m_lastUpdateTimestamp);
+
   if (m_speed != speed) {
     m_speed = speed;
     emit speedChanged(speed);

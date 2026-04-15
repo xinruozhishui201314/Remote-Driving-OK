@@ -8,6 +8,8 @@
 #include <QTimer>
 #include <QVariantMap>
 #include <QtQml/qqmlregistration.h>
+#include <mutex>
+#include <atomic>
 
 #ifdef ENABLE_MQTT_PAHO
 #include <mqtt/async_client.h>
@@ -28,7 +30,7 @@ class WebRtcClient;
  */
 class MqttController : public QObject {
   Q_OBJECT
-  QML_ELEMENT
+
   Q_PROPERTY(QString brokerUrl READ brokerUrl WRITE setBrokerUrl NOTIFY brokerUrlChanged)
   Q_PROPERTY(QString clientId READ clientId WRITE setClientId NOTIFY clientIdChanged)
   Q_PROPERTY(
@@ -39,6 +41,7 @@ class MqttController : public QObject {
   Q_PROPERTY(bool mqttBrokerConnected READ mqttBrokerConnected NOTIFY mqttBrokerConnectionChanged)
   /** 可经 MQTT 投递控车 JSON：与 broker 会话已建立（车端/carla-bridge 仅订阅 MQTT） */
   Q_PROPERTY(bool controlChannelReady READ controlChannelReady NOTIFY controlChannelReadyChanged)
+  Q_PROPERTY(QString currentVin READ currentVin WRITE setCurrentVin NOTIFY currentVinChanged)
 
  public:
   explicit MqttController(QObject *parent = nullptr);
@@ -101,15 +104,16 @@ class MqttController : public QObject {
   /** 请求远驾接管（发送 remote_control 指令，启用/禁用远驾接管状态） */
   Q_INVOKABLE void requestRemoteControl(bool enable);
 
-  /**
-   * 将客户端编码提示转发到 MQTT `teleop/client_encoder_hint`（车端/carla-bridge 消费并回写
-   * vehicle/status）。仅在 broker 已连接时发布；与 WebRtcClient::clientEncoderHintSent 配套。
-   */
-  Q_INVOKABLE void publishClientEncoderHint(const QJsonObject &hintPayload);
+  /** 经 MQTT 发布客户端编码 hint（teleop/client_encoder_hint） */
+  void publishClientEncoderHint(const QJsonObject &hintPayload);
+
+  // 获取下一个序列号（全局单调递增，避免多服务冲突）
+  uint32_t nextSequenceNumber() { return m_seq.fetch_add(1); }
 
  signals:
   void brokerUrlChanged(const QString &url);
   void clientIdChanged(const QString &id);
+  void currentVinChanged(const QString &vin);
   void controlTopicChanged(const QString &topic);
   void statusTopicChanged(const QString &topic);
   void connectionStatusChanged(bool connected);
@@ -151,7 +155,8 @@ class MqttController : public QObject {
   QString m_statusTopic = "vehicle/status";
   QString m_currentVin;  // 当前车辆 VIN
   bool m_isConnected = false;
-  uint32_t m_seq = 0;  // 控制指令序列号（防重放）
+  std::atomic<uint32_t> m_seq{0};  // 控制指令序列号（防重放）
+  mutable std::mutex m_stateMutex;  // 保护 m_currentVin, m_isConnected 等状态
 
   // 重连增强
   QTimer *m_reconnectTimer = nullptr;

@@ -978,7 +978,7 @@ def _apply_vehicle_control():
             else:
                 throttle = 0.0
                 brake = max(0.0, min(0.5, -diff * 0.05))
-            if gear == 0: gear = 1 # 确保在 D 档
+            # if gear == 0: gear = 1 # 确保在 D 档 (根据用户请求：点击接管时不要自动改档)
 
         if emergency:
             throttle, brake = 0.0, 1.0
@@ -1003,12 +1003,11 @@ def _apply_vehicle_control():
         _control_apply_count += 1
 
         now = time.time()
-        if CONTROL_DEBUG or (
-            _control_apply_count <= 5 or (now - _control_last_log_time >= 10)
-        ):
+        # 诊断增强：记录指令应用到 CARLA 的具体状态
+        if CONTROL_DEBUG or (_control_apply_count <= 5 or (now - _control_last_log_time >= 5)):
             log_control(
-                "[Control] 应用 #%d steer=%.3f throttle=%.3f brake=%.3f gear=%d reverse=%s hand_brake=%s remote=%s",
-                _control_apply_count, steer, throttle, brake, gear, reverse, hand_brake, remote_ok,
+                "[Control][Apply] #%d steer=%.3f throttle=%.3f brake=%.3f gear=%d reverse=%s hand=%s remote=%s emergency=%s",
+                _control_apply_count, steer, throttle, brake, gear, reverse, hand_brake, remote_ok, emergency,
             )
             _control_last_log_time = now
     except Exception as e:
@@ -1185,11 +1184,22 @@ def on_message(client, userdata, msg):
         
         msg_type = full_payload.get("type", "")
         vin = full_payload.get("vin", "")
+        seq = full_payload.get("seq", -1)
+        ts_ms = full_payload.get("timestampMs", 0)
+        
         # 交互记录：MQTT 入
-        summary = "type=%s,vin=%s" % (msg_type, vin)
+        summary = "type=%s,vin=%s,seq=%s" % (msg_type, vin, seq)
         _record_interaction("in", "mqtt", msg.topic or "vehicle/control", summary, len(raw), vin=vin, payload=raw if RECORD_INTERACTION_FULL else None)
+        
         if vin != VIN:
+            if CONTROL_DEBUG:
+                log_control("[Control] 忽略消息：VIN 不匹配 (msg=%s, local=%s)", vin, VIN)
             return
+
+        # ★ 诊断：详细记录关键指令入口
+        if msg_type in ("drive", "remote_control", "emergency_stop", "speed", "gear"):
+            log_control("[Control][IN] 收到指令 type=%s seq=%s ts_ms=%s delay=%dms",
+                        msg_type, seq, ts_ms, int(time.time()*1000) - ts_ms if ts_ms > 0 else 0)
 
         # ★ 关键：区分顶层指令（drive, remote_control）与 UI 包裹指令（speed, gear, sweep, start_stream...）
         # UI 指令由 MqttControlEnvelope::buildUiCommandEnvelope 生成，包含 payload 字段

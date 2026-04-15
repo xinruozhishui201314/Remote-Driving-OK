@@ -113,6 +113,9 @@ Item {
         console.log("[Client][UI][Gear] 档位变化: " + currentGear + " (数值: " + gearValue + ")，准备发送")
 
         var svc = facade && facade.appServices
+        if (svc && typeof svc.setGear === "function")
+            svc.setGear(gearValue)
+
         if (svc && typeof svc.sendUiCommand === "function")
             svc.sendUiCommand("gear", { value: gearValue })
     }

@@ -57,6 +57,12 @@ class SessionManager : public QObject {
   void onSessionCreated(const QString &sessionVin, const QString &sessionId, const QString &whipUrl,
                         const QString &whepUrl, const QJsonObject &controlConfig);
 
+  /**
+   * @brief 停止当前会话
+   * 清理控制链路、视频流并重置 VIN。
+   */
+  Q_INVOKABLE void stop();
+
  private:
   void setError(const QString &error);
 

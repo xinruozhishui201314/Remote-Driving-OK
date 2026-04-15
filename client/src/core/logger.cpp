@@ -197,10 +197,18 @@ void Logger::qtMessageHandler(QtMsgType type, const QMessageLogContext& ctx, con
       break;
   }
 
+  QString displayMsg = msg;
+  if (instance().m_messageInterceptor) {
+    const QString extra = instance().m_messageInterceptor(type, msg);
+    if (!extra.isEmpty()) {
+      displayMsg += extra;
+    }
+  }
+
   const QString module = ctx.category ? QString::fromLatin1(ctx.category) : "Qt";
   LogEntry entry;
   entry.level = level;
-  entry.formatted = instance().formatEntry(level, module, QString{}, msg);
+  entry.formatted = instance().formatEntry(level, module, QString{}, displayMsg);
 
   // Fatal: write synchronously and flush
   if (type == QtFatalMsg) {

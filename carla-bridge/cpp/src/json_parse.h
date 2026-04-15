@@ -15,6 +15,8 @@ struct ControlMessage {
   int gear = 1;
   /** type=="speed" 时有效，否则为 -1 */
   double ui_speed_kmh = -1.0;
+  int64_t seq = -1;
+  int64_t timestampMs = 0;
 };
 
 bool parseControlMessage(const std::string& payload, ControlMessage& out);

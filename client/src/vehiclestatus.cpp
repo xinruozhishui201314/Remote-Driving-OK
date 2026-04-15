@@ -2,6 +2,7 @@
 
 #include <optional>
 
+#include <QDateTime>
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QJsonDocument>
@@ -185,6 +186,9 @@ void VehicleStatus::setCleaningTotal(int total) {
 }
 
 void VehicleStatus::updateStatus(const QJsonObject &status) {
+  m_lastStatusTimestamp = QDateTime::currentMSecsSinceEpoch();
+  emit lastStatusTimestampChanged(m_lastStatusTimestamp);
+
   static int updateCount = 0;
   static QElapsedTimer logTimer;
   static QElapsedTimer firstUpdateTimer;

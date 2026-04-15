@@ -46,6 +46,18 @@ Item {
     readonly property string chineseFont: AppContext ? AppContext.chineseFont : ""
     readonly property var theme: ThemeModule.Theme
 
+    // ── 数据有效性监控 ───────────────────────────────────────────────
+    property double currentTime: Date.now()
+    Timer {
+        interval: 100
+        running: true
+        repeat: true
+        onTriggered: root.currentTime = Date.now()
+    }
+
+    readonly property bool telemetryStale: (currentTime - telemetryModel.lastUpdateTimestamp) > 500
+    readonly property bool videoFrozen: videoStreamClient ? videoStreamClient.videoFrozen : false
+
     // 背景
     Rectangle {
         anchors.fill: parent
@@ -202,6 +214,67 @@ Item {
         anchors.fill: parent
         safetyModel: safetyStatusModel
         visible: !safetyStatusModel.allSafe || safetyStatusModel.emergencyStop
+    }
+
+    // ── ★ 架构级安全增强：视频冻结与数据失效监测 ──
+    Rectangle {
+        id: videoFrozenOverlay
+        anchors.fill: parent
+        color: Qt.rgba(1, 0, 0, 0.3)
+        visible: root.videoFrozen
+        z: 9999
+        
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 20
+            
+            Rectangle {
+                width: 120; height: 120; radius: 60
+                color: "red"
+                Layout.alignment: Qt.AlignHCenter
+                Text {
+                    anchors.centerIn: parent
+                    text: "!"
+                    color: "white"
+                    font.pixelSize: 80
+                    font.bold: true
+                }
+            }
+            
+            Text {
+                text: "视频画面冻结！"
+                color: "white"
+                font.pixelSize: 32
+                font.bold: true
+                font.family: root.chineseFont
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            Text {
+                text: "检测到渲染层超过 200ms 无新帧，请立即停止驾驶"
+                color: "white"
+                font.pixelSize: 18
+                font.family: root.chineseFont
+                Layout.alignment: Qt.AlignHCenter
+            }
+        }
+    }
+
+    Rectangle {
+        id: telemetryStaleOverlay
+        anchors.fill: bottomHUD
+        color: Qt.rgba(0.2, 0.2, 0.2, 0.8)
+        visible: root.telemetryStale
+        z: 100
+        
+        Text {
+            anchors.centerIn: parent
+            text: "⚠️ 遥测数据失效 (延时 > 500ms)"
+            color: "#FFCC00"
+            font.pixelSize: 20
+            font.bold: true
+            font.family: root.chineseFont
+        }
     }
 
     // 急停按钮

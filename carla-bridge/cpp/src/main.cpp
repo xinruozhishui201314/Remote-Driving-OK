@@ -100,6 +100,12 @@ int main(int argc, char* argv[]) {
     }
 
     try {
+      carla.applyControl(state);
+    } catch (const std::exception& e) {
+      std::cerr << "[Bridge][MainLoop] carla.applyControl exception: " << e.what() << std::endl;
+    }
+
+    try {
       carla.integrateSpeedStep(dt);
     } catch (const std::exception& e) {
       std::cerr << "[Bridge][MainLoop] carla.integrateSpeedStep exception: " << e.what() << std::endl;

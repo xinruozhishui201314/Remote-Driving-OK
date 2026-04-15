@@ -22,12 +22,12 @@
 
 ## 2. 通信协议栈 (Communication Stack)
 
-| 维度 | 协议 | 用途 | 关键属性 |
-| :--- | :--- | :--- | :--- |
-| **信令/控制** | MQTT over TLS (v3.1.1+) | 指令、遥测、事件 | QoS 0/1, 100Hz (Control), 20Hz (Telemetry) |
-| **媒体/视频** | WebRTC / WHEP | 实时监控视频 | UDP/SRTP, < 150ms E2E Latency |
-| **业务/鉴权** | HTTPS / REST / OIDC (JWT) | 登录、选车、会话建立 | API-Version Negotiation, Bearer Token |
-| **内部桥接** | Qt Property / Signal / Slot | C++ 逻辑与 QML 界面交互 | 线程安全, 声明式绑定 |
+| 维度　　　　　| 协议　　　　　　　　　　　　| 用途　　　　　　　　　　| 关键属性　　　　　　　　　　　　　　　　　 |
+| :--------------| :----------------------------| :------------------------| :-------------------------------------------|
+| **信令/控制** | MQTT over TLS (v3.1.1+)　　 | 指令、遥测、事件　　　　| QoS 0/1, 100Hz (Control), 20Hz (Telemetry) |
+| **媒体/视频** | WebRTC / WHEP　　　　　　　 | 实时监控视频　　　　　　| UDP/SRTP, < 150ms E2E Latency　　　　　　　|
+| **业务/鉴权** | HTTPS / REST / OIDC (JWT)　 | 登录、选车、会话建立　　| API-Version Negotiation, Bearer Token　　　|
+| **内部桥接**　| Qt Property / Signal / Slot | C++ 逻辑与 QML 界面交互 | 线程安全, 声明式绑定　　　　　　　　　　　 |
 
 ---
 
@@ -44,13 +44,13 @@
 
 ### 3.2 核心端点 (Core Endpoints)
 
-| 方法 | 路径 | 描述 | 关键响应/参数 |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/v1/me` | 获取当前用户信息 | `username`, `roles`, `apiVersion` |
-| `GET` | `/api/v1/vins` | 获取可见车辆列表 | `vins[]` (含 `status`, `capabilities`) |
-| `POST` | `/api/v1/vins/{vin}/sessions` | 创建远驾会话 | 返回 `sessionId`, `media` URLs, `control` 配置 |
-| `POST` | `/api/v1/sessions/{id}/end` | 显式结束会话 | `reason` |
-| `POST` | `/api/v1/sessions/{id}/unlock`| 释放控制锁 | `unlocked: true` |
+| 方法　 | 路径　　　　　　　　　　　　　 | 描述　　　　　　 | 关键响应/参数　　　　　　　　　　　　　　　　　|
+| :-------| :-------------------------------| :-----------------| :-----------------------------------------------|
+| `GET`　| `/api/v1/me`　　　　　　　　　 | 获取当前用户信息 | `username`, `roles`, `apiVersion`　　　　　　　|
+| `GET`　| `/api/v1/vins`　　　　　　　　 | 获取可见车辆列表 | `vins[]` (含 `status`, `capabilities`)　　　　 |
+| `POST` | `/api/v1/vins/{vin}/sessions`　| 创建远驾会话　　 | 返回 `sessionId`, `media` URLs, `control` 配置 |
+| `POST` | `/api/v1/sessions/{id}/end`　　| 显式结束会话　　 | `reason`　　　　　　　　　　　　　　　　　　　 |
+| `POST` | `/api/v1/sessions/{id}/unlock` | 释放控制锁　　　 | `unlocked: true`　　　　　　　　　　　　　　　 |
 
 ### 3.3 会话响应对象 (Session Response)
 创建会话成功后，服务端返回包含流地址和控制配置的复杂对象：

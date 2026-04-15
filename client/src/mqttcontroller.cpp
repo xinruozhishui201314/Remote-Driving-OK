@@ -1,5 +1,6 @@
 #include "mqttcontroller.h"
 
+#include "core/eventbus.h"
 #include "core/tracing.h"
 #include "utils/MqttControlEnvelope.h"
 #include "webrtcclient.h"
@@ -76,10 +77,7 @@ MqttController::~MqttController() {
   if (m_mosquittoSubProcess) {
     if (m_mosquittoSubProcess->state() != QProcess::NotRunning) {
       m_mosquittoSubProcess->terminate();
-      m_mosquittoSubProcess->waitForFinished(3000);
-      if (m_mosquittoSubProcess->state() != QProcess::NotRunning) {
-        m_mosquittoSubProcess->kill();
-      }
+      // 生产环境不应在此 wait 以免阻塞 UI 析构；QProcess 随 deleteLater 会由 Qt 进行后台清理或在 destruction 时杀掉
     }
     m_mosquittoSubProcess->deleteLater();
     m_mosquittoSubProcess = nullptr;
@@ -116,15 +114,14 @@ void MqttController::setStatusTopic(const QString &topic) {
 }
 
 void MqttController::setCurrentVin(const QString &vin) {
-  if (m_currentVin != vin) {
+  {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (m_currentVin == vin) return;
     m_currentVin = vin;
-    qDebug() << "MQTT Controller: Current VIN set to" << vin;
-
-    // 如果已连接，重新订阅车辆特定主题
-    if (m_isConnected) {
-      onConnected();
-    }
   }
+  qDebug() << "MQTT Controller: Current VIN set to" << vin;
+  emit currentVinChanged(vin);
+  bumpControlChannelState();
 }
 
 void MqttController::connectToBroker() {
@@ -175,6 +172,14 @@ void MqttController::connectToBroker() {
     qCritical().noquote()
         << "[CLIENT][MQTT][CHAIN] phase=TIMEOUT gen=" << watchdogGen << " url=" << m_brokerUrl
         << " | 15s 内未进入已连接：检查 broker 是否监听、端口映射、防火墙、以及宿主机能否访问该 host";
+    
+    SystemErrorEvent sysErr;
+    sysErr.domain = QStringLiteral("MQTT");
+    sysErr.severity = SystemErrorEvent::Severity::CRITICAL;
+    sysErr.code = QStringLiteral("MQTT-TIMEOUT");
+    sysErr.message = QStringLiteral("MQTT 连接超时(15s): %1").arg(m_brokerUrl);
+    EventBus::instance().publish(sysErr);
+
     emit mqttConnectResolved(
         false, QStringLiteral("connect_timeout_15s|url=%1|see_logs_CLIENT_MQTT_CHAIN").arg(m_brokerUrl));
     emit errorOccurred(
@@ -339,27 +344,27 @@ void MqttController::sendLightCommand(const QString &lightType, bool active) {
 }
 
 void MqttController::sendControlCommand(const QJsonObject &command) {
-  if (!m_isConnected) {
+  QString vin;
+  bool connected;
+  {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    vin = m_currentVin;
+    connected = m_isConnected;
+  }
+
+  if (!connected) {
     static int s_mqttOffWarn = 0;
     if (++s_mqttOffWarn == 1 || s_mqttOffWarn % 200 == 0) {
-      qWarning() << "[CLIENT][Control] ✗ 无法发送：MQTT 未连接（车端/carla-bridge 仅订阅 "
-                    "vehicle/control；ZLM DataChannel 不转发车控）"
-                 << " throttled=" << s_mqttOffWarn
-                 << " | 查 [CLIENT][MQTT][CHAIN] 与 mqttBrokerConnected";
-    }
-    if (s_mqttOffWarn == 1) {
-      emit errorOccurred(
-          QStringLiteral("请先连接 MQTT 再发送车控指令（视频连通不能替代 MQTT）"));
+      qWarning() << "[CLIENT][Control] ✗ 无法发送：MQTT 未连接"
+                 << " throttled=" << s_mqttOffWarn;
     }
     return;
   }
 
-  const auto prep = MqttControlEnvelope::prepareForSend(command, m_currentVin,
-                                                        QDateTime::currentMSecsSinceEpoch(), m_seq);
+  uint32_t seq = m_seq.fetch_add(1);
+  const auto prep = MqttControlEnvelope::prepareForSend(command, vin,
+                                                        QDateTime::currentMSecsSinceEpoch(), seq);
   if (!prep.ok) {
-    qWarning() << "[CLIENT][Control] ✗ 拒绝发送：控制指令 VIN 为空 type="
-               << prep.cmd.value(QStringLiteral("type")).toString()
-               << "（请先选车/确保会话 VIN 已同步到 MqttController）";
     return;
   }
   sendControlCommandAuto(prep.cmd);
@@ -917,13 +922,24 @@ void MqttController::onMessageReceived(const QByteArray &topic, const QByteArray
 
 void MqttController::onError(const QString &error) {
   qWarning() << "MQTT error:" << error;
+  
+  SystemErrorEvent evt;
+  evt.domain = QStringLiteral("MQTT");
+  evt.message = error;
+  evt.severity = SystemErrorEvent::Severity::ERROR;
+  evt.code = QStringLiteral("MQTT-1001");
+  EventBus::instance().publish(evt);
+
   emit errorOccurred(error);
 }
 
 void MqttController::updateConnectionStatus(bool connected) {
-  if (m_isConnected == connected)
-    return;
-  m_isConnected = connected;
-  emit mqttBrokerConnectionChanged(m_isConnected);
+  {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (m_isConnected == connected)
+      return;
+    m_isConnected = connected;
+  }
+  emit mqttBrokerConnectionChanged(connected);
   bumpControlChannelState();
 }

@@ -1,6 +1,9 @@
 #pragma once
 #include <QObject>
 #include <QTimer>
+#include <QMutex>
+
+#include "core/eventbus.h"
 
 #include <atomic>
 #include <cstdint>
@@ -9,6 +12,8 @@
 class VehicleStatus;
 class SystemStateMachine;
 class VehicleControlService;
+
+class SafetyWorker;
 
 /**
  * 安全监控服务（《客户端架构设计》§3.3.2 完整实现）。
@@ -21,9 +26,18 @@ class VehicleControlService;
  *   Layer 4: 人机安全（OperatorMonitor）—— 本类
  *
  * 50Hz 安全检查周期（20ms）。
+ *
+ * 【架构变更】为了兼容 QML (Qt 6) 线程亲和性要求：
+ * - SafetyMonitorService 留在主线程（供 QML 绑定属性与信号）。
+ * - 核心定时检查逻辑移至 SafetyWorker，并由 main.cpp 移入独立安全线程。
  */
 class SafetyMonitorService : public QObject {
   Q_OBJECT
+
+  Q_PROPERTY(bool emergencyActive READ emergencyActive NOTIFY emergencyActiveChanged)
+  Q_PROPERTY(QString emergencyReason READ emergencyReason NOTIFY emergencyActiveChanged)
+  /** 全链路熔断状态：true=一切正常，允许发控车指令；false=熔断，强制 E-STOP 层 */
+  Q_PROPERTY(bool allSystemsGo READ allSystemsGo NOTIFY allSystemsGoChanged)
 
  public:
   struct Config {
@@ -55,8 +69,21 @@ class SafetyMonitorService : public QObject {
 
   bool initialize();
   /** 启动 50Hz 安全巡检；后端会话建立后由 SessionManager 调用（幂等）。 */
-  virtual void start();
-  virtual void stop();
+  Q_INVOKABLE virtual void start();
+  Q_INVOKABLE virtual void stop();
+
+  /** 手动触发一次安全检查（主要用于单测模拟时钟或强制同步检查） */
+  void runSafetyChecks();
+
+  /** 【关键修复】将内部工作对象移至安全线程，Service 本身保留在主线程以兼容 QML */
+  void attachToSafetyThread(QThread* thread);
+
+  bool emergencyActive() const { return m_emergencyActive.load(); }
+  QString emergencyReason() const {
+    QMutexLocker lock(&m_reasonMutex);
+    return m_emergencyReason;
+  }
+  bool allSystemsGo() const { return m_allSystemsGo.load(); }
 
   /** 单测专用：注入单调时钟；本类内所有原 TimeUtils::nowMs() 路径改为使用该时间。生产代码勿调用。
    */
@@ -66,26 +93,31 @@ class SafetyMonitorService : public QObject {
   // 外部输入（直接调用）
   void updateLatency(double oneWayMs, double rttMs);
   void onHeartbeatReceived();
+  /** 由 UI 线程定时更新，用于 Safety 线程监控 UI 是否卡死。 */
+  void noteUiHeartbeat();
 
   bool isDeadmanActive() const { return m_deadmanActive.load(); }
 
- signals:
+  /** 供 Worker 跨线程触发 UI 信号 */
+  void notifyEmergency(const QString& reason);
+  void notifyAllSystemsGo(bool ok);
+
+  signals:
   void safetyWarning(const QString& message);
   void speedLimitRequested(double maxKmh);
   void emergencyStopTriggered(const QString& reason);
   void safetyStatusChanged(bool allOk);
+  void emergencyActiveChanged();
+  void allSystemsGoChanged(bool ok);
 
- public slots:
-  void runSafetyChecks();
+  public slots:
+  /** 订阅 EventBus 异常 */
+  void onSystemError(const SystemErrorEvent& evt);
   /** VehicleControlService::pingSafety 使用 QMetaObject::invokeMethod 排队调用；必须为 slot
    *（Qt 文档：invokable 仅限 slot / Q_INVOKABLE / signal）。 */
   void onOperatorActivity();
 
  private:
-  void checkLatency();
-  void checkHeartbeat();
-  void checkOperatorActivity();
-  void checkDeadman();
   void triggerEmergencyStop(const QString& reason);
 
   Config m_config;
@@ -93,23 +125,35 @@ class SafetyMonitorService : public QObject {
   SystemStateMachine* m_fsm = nullptr;
   VehicleControlService* m_control = nullptr;
 
-  QTimer m_safetyTimer;
+  friend class SafetyWorker;
+  std::unique_ptr<SafetyWorker> m_worker;
 
   // Latency watchdog
   std::atomic<double> m_currentOneWayMs{0.0};
   std::atomic<double> m_currentRTTMs{0.0};
-  int m_latencyViolationCount = 0;
+  std::atomic<int> m_latencyViolationCount{0};
 
   // Heartbeat monitor
-  int64_t m_lastHeartbeatMs = 0;
-  int m_missedHeartbeats = 0;
+  std::atomic<int64_t> m_lastHeartbeatMs{0};
+  std::atomic<int> m_missedHeartbeats{0};
 
   // Operator / Deadman
-  int64_t m_lastOperatorActivityMs = 0;
+  std::atomic<int64_t> m_lastOperatorActivityMs{0};
   std::atomic<bool> m_deadmanActive{false};
 
-  bool m_started = false;
+  // UI 监控（由独立安全线程检查）
+  std::atomic<int64_t> m_lastUiHeartbeatMs{0};
 
+  std::atomic<bool> m_emergencyActive{false};
+  QString m_emergencyReason;
+  mutable QMutex m_reasonMutex;
+
+  std::atomic<bool> m_allSystemsGo{false};
+  SubscriptionHandle m_errorSub = 0;
+
+  std::atomic<bool> m_started{false};
+
+ public:
   static constexpr int kSafetyCheckHz = 50;
   static constexpr int kSafetyCheckIntervalMs = 1000 / kSafetyCheckHz;  // 20ms
 };

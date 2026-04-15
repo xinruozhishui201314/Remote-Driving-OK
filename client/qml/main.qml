@@ -421,4 +421,193 @@ ApplicationWindow {
             }
         }
     }
+
+    // ── 全局“防呆”覆盖层 (SafetyShield) ────────────────────────────────────
+    Rectangle {
+        id: safetyShield
+        anchors.fill: parent
+        z: 2000000 // 最高层级
+        color: Qt.rgba(0.2, 0, 0, 0.85) // 深红半透明背景
+        visible: AppContext.safetyMonitor ? (AppContext.safetyMonitor.emergencyActive || (AppContext.hasVehicle && !AppContext.safetyMonitor.allSystemsGo)) : false
+        
+        // 拦截所有鼠标点击和按键输入
+        MouseArea {
+            anchors.fill: parent
+            hoverEnabled: true
+            acceptedButtons: Qt.LeftButton | Qt.RightButton | Qt.MiddleButton
+            onPressed: (mouse) => mouse.accepted = true
+            onReleased: (mouse) => mouse.accepted = true
+            onDoubleClicked: (mouse) => mouse.accepted = true
+            onWheel: (wheel) => wheel.accepted = true
+        }
+        
+        // 拦截键盘输入：将焦点强行锁定在此组件
+        focus: visible
+        Keys.onPressed: event.accepted = true
+        Keys.onReleased: event.accepted = true
+
+        Column {
+            anchors.centerIn: parent
+            spacing: 30
+            
+            // 警示图标
+            Rectangle {
+                width: 100; height: 100
+                radius: 50
+                color: "red"
+                anchors.horizontalCenter: parent.horizontalCenter
+                
+                Text {
+                    anchors.centerIn: parent
+                    text: "!"
+                    font.pixelSize: 64
+                    font.bold: true
+                    color: "white"
+                }
+                
+                SequentialAnimation on opacity {
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 0.3; duration: 500 }
+                    NumberAnimation { from: 0.3; to: 1.0; duration: 500 }
+                }
+            }
+            
+            Text {
+                text: AppContext.safetyMonitor && AppContext.safetyMonitor.emergencyActive ? "急停已触发" : "链路不完整 / 数据失效"
+                font.pixelSize: 48
+                font.bold: true
+                color: "white"
+                anchors.horizontalCenter: parent.horizontalCenter
+                font.family: window.chineseFont || ""
+            }
+            
+            Text {
+                text: AppContext.safetyMonitor ? (AppContext.safetyMonitor.emergencyActive ? AppContext.safetyMonitor.emergencyReason : "MQTT/WebRTC 连接异常，已自动切断控制链路") : "未知原因"
+                font.pixelSize: 24
+                color: "#FFCDD2"
+                anchors.horizontalCenter: parent.horizontalCenter
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                width: parent.parent.width * 0.8
+                font.family: window.chineseFont || ""
+            }
+            
+            Button {
+                text: "重置会话"
+                anchors.horizontalCenter: parent.horizontalCenter
+                onClicked: {
+                    console.log("[Client][UI][Safety] User manually resetting session from SafetyShield")
+                    // 重置 UI 状态，驱动 sessionStage 切回选车页
+                    window.componentsReady = false
+                    window.updateTitle()
+
+                    // 清理底层连接与会话状态
+                    if (AppContext.teleopSession && typeof AppContext.teleopSession.stop === "function") {
+                        AppContext.teleopSession.stop()
+                    } else {
+                        // 回退方案：直接操作各管理器
+                        if (AppContext.webrtcStreamManager) AppContext.webrtcStreamManager.disconnectAll()
+                        if (AppContext.mqttController) AppContext.mqttController.requestStreamStop()
+                        if (AppContext.vehicleManager) AppContext.vehicleManager.currentVin = ""
+                    }
+                }
+                contentItem: Text {
+                    text: parent.text
+                    font.pixelSize: 18
+                    color: "white"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font.family: window.chineseFont || ""
+                }
+                background: Rectangle {
+                    implicitWidth: 160
+                    implicitHeight: 50
+                    color: parent.pressed ? "#C62828" : "#E53935"
+                    border.color: "white"
+                    border.width: 1
+                    radius: 4
+                }
+            }
+        }
+        
+        // 闪烁的全屏红框
+        Rectangle {
+            anchors.fill: parent
+            color: "transparent"
+            border.color: "red"
+            border.width: 10
+            
+            SequentialAnimation on opacity {
+                loops: Animation.Infinite
+                NumberAnimation { from: 1.0; to: 0.0; duration: 800 }
+                NumberAnimation { from: 0.0; to: 1.0; duration: 800 }
+            }
+        }
+    }
+
+    // ── UI 线程性能压力指标 (Liveness Feedback) ───────────────────────────
+    Rectangle {
+        id: uiPerformanceOverlay
+        width: 180
+        height: 30
+        color: Qt.rgba(0, 0, 0, 0.6)
+        anchors.left: parent.left
+        anchors.top: parent.top
+        anchors.leftMargin: 20
+        anchors.topMargin: 20
+        z: 3000000
+        visible: uiStallWarning.visible
+
+        Row {
+            anchors.centerIn: parent
+            spacing: 8
+            Rectangle {
+                width: 12; height: 12
+                radius: 6
+                color: "red"
+                SequentialAnimation on opacity {
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 0.2; duration: 300 }
+                    NumberAnimation { from: 0.2; to: 1.0; duration: 300 }
+                }
+            }
+            Text {
+                id: uiStallWarning
+                text: "UI 线程性能告警"
+                color: "white"
+                font.pixelSize: 14
+                font.bold: true
+                font.family: window.chineseFont || ""
+                
+                property double lastHeartbeat: Date.now()
+
+                Timer {
+                    interval: 100
+                    repeat: true
+                    running: true
+                    onTriggered: {
+                        var now = Date.now();
+                        var diff = now - uiStallWarning.lastHeartbeat;
+                        if (diff > 500) { // 提高阈值至 500ms，减少非核心干扰；报警告，不影响继续操作
+                            uiStallWarning.visible = true;
+                            console.warn("[Client][UI] UI thread stall detected in QML: " + diff + "ms");
+                        } else {
+                            uiStallWarning.visible = false;
+                        }
+                    }
+                }
+                
+                // 每 50ms 更新一下 lastHeartbeat
+                Timer {
+                    interval: 50
+                    repeat: true
+                    running: true
+                    onTriggered: {
+                        uiStallWarning.lastHeartbeat = Date.now();
+                    }
+                }
+            }
+        }
+    }
+
 }

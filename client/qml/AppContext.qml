@@ -31,6 +31,7 @@ QtObject {
     readonly property var vehicleControl: rd_vehicleControl !== undefined ? rd_vehicleControl : null
     readonly property var safetyMonitor: rd_safetyMonitor !== undefined ? rd_safetyMonitor : null
     readonly property var systemStateMachine: rd_systemStateMachine !== undefined ? rd_systemStateMachine : null
+    readonly property var teleopSession: rd_teleopSession !== undefined ? rd_teleopSession : null
     readonly property var nodeHealthChecker: rd_nodeHealthChecker !== undefined ? rd_nodeHealthChecker : null
     /** 订阅 EventBus 解码/呈现完整性事件并向 QML 发横幅（见 main.qml videoIntegrityBanner） */
     readonly property var videoIntegrityBannerBridge: rd_videoIntegrityBannerBridge !== undefined

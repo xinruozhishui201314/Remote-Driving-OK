@@ -76,6 +76,11 @@ class Logger : public QObject {
   // 安装 Qt 消息处理器（替换默认 stderr 输出）
   void installMessageHandler();
 
+  // 设置消息拦截器，用于在格式化前修改消息（例如添加 X11 诊断信息）
+  void setMessageInterceptor(std::function<QString(QtMsgType, const QString&)> interceptor) {
+    m_messageInterceptor = std::move(interceptor);
+  }
+
   // 直接写入（给 C++ 代码调用）
   void log(Level level, const QString& module, const QString& component, const QString& message);
 
@@ -117,6 +122,7 @@ class Logger : public QObject {
   QQueue<LogEntry> m_queue;
   bool m_running = false;
   QThread* m_workerThread = nullptr;
+  std::function<QString(QtMsgType, const QString&)> m_messageInterceptor;
 
   // 有界队列配置
   std::atomic<int> m_maxQueueSize{DEFAULT_MAX_QUEUE_SIZE};

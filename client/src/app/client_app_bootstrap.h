@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/client_window_frame_policy.h"
+#include "core/logger.h"
 
 #include <QList>
 #include <QString>

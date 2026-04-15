@@ -51,6 +51,19 @@ static bool extractInt(const std::string& json, const char* key, int& out) {
   return false;
 }
 
+static bool extractInt64(const std::string& json, const char* key, int64_t& out) {
+  std::string pattern = std::string("\"") + key + "\"\\s*:\\s*([0-9]+)";
+  std::regex re(pattern);
+  std::smatch m;
+  if (std::regex_search(json, m, re) && m.size() > 1) {
+    try {
+      out = std::stoll(m[1].str());
+      return true;
+    } catch (...) {}
+  }
+  return false;
+}
+
 bool parseControlMessage(const std::string& payload, ControlMessage& out) {
   out = ControlMessage();
   if (!extractString(payload, "type", out.type)) return false;
@@ -60,6 +73,8 @@ bool parseControlMessage(const std::string& payload, ControlMessage& out) {
   extractNumber(payload, "throttle", out.throttle);
   extractNumber(payload, "brake", out.brake);
   extractInt(payload, "gear", out.gear);
+  extractInt64(payload, "seq", out.seq);
+  extractInt64(payload, "timestampMs", out.timestampMs);
   if (out.type == "speed") {
     double v = 0.0;
     if (extractNumber(payload, "value", v)) {

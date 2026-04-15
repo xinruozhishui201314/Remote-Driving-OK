@@ -43,6 +43,7 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlEngine>
+#include <QThread>
 #include <QTimer>
 
 #include <cstdio>
@@ -231,15 +232,43 @@ int main(int argc, char *argv[]) {
   auto teleopSession = std::make_unique<SessionManager>(
       authManager.get(), vehicleManager.get(), mqttController.get(), webrtcStreamManager.get(),
       systemStateMachine.get(), &app);
-  // 析构顺序：后声明先析构。SafetyMonitor 必须在 VehicleControlService 之后析构，否则
-  // ~VehicleControlService::stop()→pingSafety 会碰到已销毁的 QObject*（悬空→段错误）。
+
+  // ─── Safety Thread Decoupling ──────────────────────────────────────────
+  // 将安全监控与控车逻辑移出主线程，确保 UI 卡死时仍能执行安全防护
+  auto safetyThread = std::make_unique<QThread>(&app);
+  safetyThread->setObjectName(QStringLiteral("SafetyServiceThread"));
+  safetyThread->start(QThread::HighPriority);
+
+  // 析构顺序：后声明先析构。SafetyMonitor 必须在 VehicleControlService 之后析构
   auto safetyMonitor =
-      std::make_unique<SafetyMonitorService>(vehicleStatus.get(), systemStateMachine.get(), &app);
-  teleopSession->setSafetyMonitor(safetyMonitor.get());
+      std::make_unique<SafetyMonitorService>(vehicleStatus.get(), systemStateMachine.get(), nullptr);
+  safetyMonitor->attachToSafetyThread(safetyThread.get());
+
   auto vehicleControl = std::make_unique<VehicleControlService>(
-      mqttController.get(), vehicleManager.get(), webrtcStreamManager.get(), &app);
+      mqttController.get(), vehicleManager.get(), webrtcStreamManager.get(), nullptr);
+  vehicleControl->attachToSafetyThread(safetyThread.get());
+
+  // ★ 核心修复：连接异步 DataChannel 发送信号
+  // 必须使用 Qt::QueuedConnection，确保在 WebRTC 线程（或主线程）执行，不阻塞安全控制线程
+  QObject::connect(vehicleControl.get(), &VehicleControlService::requestDataChannelSend,
+                   webrtcStreamManager.get(), [wsm = webrtcStreamManager.get()](const QByteArray& data) {
+                     if (auto* fc = wsm->frontClient()) {
+                       fc->sendDataChannelMessage(data);
+                     }
+                   }, Qt::QueuedConnection);
+
+  // UI 线程心跳定时器：由主线程向安全线程「报平安」
+  auto uiHeartbeatTimer = std::make_unique<QTimer>(&app);
+  uiHeartbeatTimer->setInterval(50); // 50ms 频率报平安，宽放至 200ms 触发急停
+  QObject::connect(uiHeartbeatTimer.get(), &QTimer::timeout, &app, [sm = safetyMonitor.get()]() {
+    sm->noteUiHeartbeat();
+  });
+  uiHeartbeatTimer->start();
+
+  teleopSession->setSafetyMonitor(safetyMonitor.get());
   teleopSession->setVehicleControl(vehicleControl.get());
   vehicleControl->setSafetyMonitor(safetyMonitor.get());
+  // ────────────────────────────────────────────────────────────────────────
   auto degradationManager = std::make_unique<DegradationManager>(systemStateMachine.get(), &app);
   MqttTransportAdapter mqttTransportAdapter(mqttController.get());
   (void)mqttTransportAdapter;
@@ -494,6 +523,16 @@ int main(int argc, char *argv[]) {
   }
 
   int ret = app.exec();
+
+  // 退出前清理：停止安全线程
+  if (safetyThread->isRunning()) {
+    safetyThread->quit();
+    if (!safetyThread->wait(3000)) {
+      safetyThread->terminate();
+      safetyThread->wait(1000);
+    }
+  }
+
   ClientLogging::shutdown();
   return ret;
 }

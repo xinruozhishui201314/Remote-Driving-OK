@@ -46,6 +46,8 @@ class VehicleStatus : public QObject {
   Q_PROPERTY(double trashBinLevel READ trashBinLevel NOTIFY trashBinLevelChanged)
   Q_PROPERTY(int cleaningCurrent READ cleaningCurrent NOTIFY cleaningCurrentChanged)
   Q_PROPERTY(int cleaningTotal READ cleaningTotal NOTIFY cleaningTotalChanged)
+  /** 最后一次收到车端状态上报的时间戳（毫秒） */
+  Q_PROPERTY(qint64 lastStatusTimestamp READ lastStatusTimestamp NOTIFY lastStatusTimestampChanged)
 
  public:
   explicit VehicleStatus(QObject *parent = nullptr);
@@ -73,6 +75,7 @@ class VehicleStatus : public QObject {
   double trashBinLevel() const { return m_trashBinLevel; }
   int cleaningCurrent() const { return m_cleaningCurrent; }
   int cleaningTotal() const { return m_cleaningTotal; }
+  qint64 lastStatusTimestamp() const { return m_lastStatusTimestamp; }
 
  public slots:
   void setSpeed(double speed);
@@ -123,6 +126,7 @@ class VehicleStatus : public QObject {
   void trashBinLevelChanged(double level);
   void cleaningCurrentChanged(int current);
   void cleaningTotalChanged(int total);
+  void lastStatusTimestampChanged(qint64 timestamp);
 
  private:
   double m_speed = 0.0;
@@ -147,6 +151,7 @@ class VehicleStatus : public QObject {
   double m_trashBinLevel = 40.0;
   int m_cleaningCurrent = 400;
   int m_cleaningTotal = 500;
+  qint64 m_lastStatusTimestamp = 0;
 };
 
 #endif  // VEHICLESTATUS_H

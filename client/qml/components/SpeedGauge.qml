@@ -8,6 +8,10 @@ Item {
     id: root
     required property double speed
     property double maxSpeed: 120
+    property bool isStale: false
+
+    opacity: isStale ? 0.4 : 1.0
+    Behavior on opacity { NumberAnimation { duration: 200 } }
 
     // 背景圆
     Rectangle {

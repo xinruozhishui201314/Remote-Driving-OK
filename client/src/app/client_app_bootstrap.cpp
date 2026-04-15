@@ -626,6 +626,7 @@ void registerContextProperties(QQmlContext *ctx, AuthManager *authManager,
   ctx->setContextProperty(QStringLiteral("rd_vehicleControl"), vehicleControl);
   ctx->setContextProperty(QStringLiteral("rd_safetyMonitor"), safetyMonitor);
   ctx->setContextProperty(QStringLiteral("rd_systemStateMachine"), systemStateMachine);
+  ctx->setContextProperty(QStringLiteral("rd_teleopSession"), teleopSession);
   ctx->setContextProperty(QStringLiteral("rd_nodeHealthChecker"), nodeHealthChecker);
   ctx->setContextProperty(QStringLiteral("rd_applicationChineseFont"), applicationChineseFont);
   ctx->setContextProperty(QStringLiteral("rd_hardwarePresentationOk"),
@@ -670,7 +671,8 @@ void logQmlRootContextRdSnapshot(const QQmlContext *root) {
       QStringLiteral("rd_webrtcClient"),       QStringLiteral("rd_webrtcStreamManager"),
       QStringLiteral("rd_mqttController"),     QStringLiteral("rd_vehicleStatus"),
       QStringLiteral("rd_vehicleControl"),     QStringLiteral("rd_safetyMonitor"),
-      QStringLiteral("rd_systemStateMachine"), QStringLiteral("rd_nodeHealthChecker"),
+      QStringLiteral("rd_systemStateMachine"), QStringLiteral("rd_teleopSession"),
+      QStringLiteral("rd_nodeHealthChecker"),
   };
   qInfo().noquote() << "[Client][QML][rd_*] snapshot begin ( QObject* 期望非空 )";
   for (const QString &key : kRdObjectKeys) {

@@ -135,11 +135,11 @@ void SessionManager::onLogout() {
         << "★ 将 disconnectAll；m_currentBase 在 C++ 侧通常仍保留最后一次非空值直至下次 CFS";
     // 先停安全巡检，避免断链/清凭证过程中误触死手或急停；再发中立控车、清会话签名
     if (m_safetyMonitor)
-      m_safetyMonitor->stop();
+      QMetaObject::invokeMethod(m_safetyMonitor, "stop");
     if (m_vehicleControl)
-      m_vehicleControl->stop();
+      QMetaObject::invokeMethod(m_vehicleControl, "stop");
     if (m_vehicleControl)
-      m_vehicleControl->clearSessionCredentials();
+      QMetaObject::invokeMethod(m_vehicleControl, "clearSessionCredentials");
     qInfo().noquote() << "[Client][Session] onLogout → disconnectAll 四路 WebRTC";
     try {
       if (m_webrtc)
@@ -172,6 +172,18 @@ void SessionManager::onLogout() {
   }
 }
 
+void SessionManager::stop() {
+  qInfo().noquote() << "[Client][Session] stop() requested, cleaning up session=" << m_selectedVin;
+  
+  // 1. 通过 onVinSelected("") 执行全套下层清理（Safety, Control, WebRTC）
+  onVinSelected(QString());
+
+  // 2. 确保 VehicleManager 的当前 VIN 也被同步清空，驱动 UI 回到选车页
+  if (m_vehicles && !m_vehicles->currentVin().isEmpty()) {
+    m_vehicles->setCurrentVin(QString());
+  }
+}
+
 void SessionManager::onVinSelected(const QString &vin) {
   try {
     {
@@ -189,11 +201,11 @@ void SessionManager::onVinSelected(const QString &vin) {
           "[Client][StreamE2E][VIN_SELECTED] branch=CLEAR disconnectAll");
       qInfo().noquote() << "[Client][Session] VIN 已清空 → disconnectAll 四路";
       if (m_safetyMonitor)
-        m_safetyMonitor->stop();
+        QMetaObject::invokeMethod(m_safetyMonitor, "stop");
       if (m_vehicleControl)
-        m_vehicleControl->stop();
+        QMetaObject::invokeMethod(m_vehicleControl, "stop");
       if (m_vehicleControl)
-        m_vehicleControl->clearSessionCredentials();
+        QMetaObject::invokeMethod(m_vehicleControl, "clearSessionCredentials");
       if (m_webrtc) {
         try {
           m_webrtc->setCurrentVin(QString());
@@ -258,8 +270,10 @@ void SessionManager::onSessionCreated(const QString &sessionVin, const QString &
                  << " 不一致（理论上不应发生：过期响应应在 VehicleManager 已丢弃）";
     }
     if (m_vehicleControl && m_auth) {
-      m_vehicleControl->setSessionCredentials(sessionVin, sessionId, m_auth->authToken());
-      m_vehicleControl->start();
+      QMetaObject::invokeMethod(m_vehicleControl, "setSessionCredentials",
+                                Q_ARG(QString, sessionVin), Q_ARG(QString, sessionId),
+                                Q_ARG(QString, m_auth->authToken()));
+      QMetaObject::invokeMethod(m_vehicleControl, "start");
       qInfo().noquote() << "[Client][Session] VehicleControlService::start() "
                            "已调用（后端会话已建立，100Hz 控车环路与"
                         << "sendDriveCommand/updateInput 闭环）sessionVin=" << sessionVin;
@@ -272,7 +286,7 @@ void SessionManager::onSessionCreated(const QString &sessionVin, const QString &
       }
     }
     if (m_safetyMonitor && m_auth) {
-      m_safetyMonitor->start();
+      QMetaObject::invokeMethod(m_safetyMonitor, "start");
       m_safetyMonitor->onHeartbeatReceived();
       qInfo().noquote() << "[Client][Session] SafetyMonitorService::start() 已调用（50Hz "
                            "延迟/心跳/死手巡检）sessionVin="

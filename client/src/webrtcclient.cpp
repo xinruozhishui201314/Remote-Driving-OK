@@ -158,6 +158,9 @@ WebRtcClient::WebRtcClient(QObject *parent)
       m_networkManager(new QNetworkAccessManager(this)),
       m_reconnectTimer(new QTimer(this)),
       m_ownedSink(new QVideoSink(this)) {
+  m_integrityTimer = new QTimer(this);
+  m_integrityTimer->setInterval(100);
+  connect(m_integrityTimer, &QTimer::timeout, this, &WebRtcClient::checkVideoIntegrity);
   m_reconnectTimer->setSingleShot(true);
   // 默认 5s 重连间隔；可被指数退避覆盖
   m_reconnectTimer->setInterval(5000);
@@ -441,6 +444,8 @@ void WebRtcClient::connectToStream(const QString &serverUrl, const QString &app,
 
   // ── 诊断：记录协商开始时间（毫秒）───────────────────────────────────────────
   m_connectStartTime = QDateTime::currentMSecsSinceEpoch();
+  if (m_integrityTimer)
+    m_integrityTimer->start();
   doConnect();
 }
 
@@ -772,6 +777,20 @@ void WebRtcClient::createOffer() {
               qWarning() << "[Client][WebRTC] PeerConnection 终结 reason=" << reason
                          << " stream=" << m_stream << " disconnectWaveId=" << disconnectWaveId
                          << " manualDisconnect=" << m_manualDisconnect;
+              
+              if (!m_manualDisconnect) {
+                SystemErrorEvent sysErr;
+                sysErr.domain = QStringLiteral("WEBRTC");
+                sysErr.severity = (state == rtc::PeerConnection::State::Failed) 
+                                  ? SystemErrorEvent::Severity::CRITICAL 
+                                  : SystemErrorEvent::Severity::ERROR;
+                sysErr.code = QStringLiteral("W-CONN-LOST");
+                sysErr.message = QStringLiteral("WebRTC 连接异常终止 (%1): %2").arg(reason).arg(m_stream);
+                sysErr.metadata["stream"] = m_stream;
+                sysErr.metadata["state"] = static_cast<int>(state);
+                EventBus::instance().publish(sysErr);
+              }
+
               updateStatus(QStringLiteral("已断开 (%1)").arg(QLatin1String(reason)), false);
               m_isConnected = false;
               emit connectionStatusChanged(false);
@@ -1201,6 +1220,15 @@ void WebRtcClient::sendOfferToServer(const QString &offer) {
               qWarning() << "[Client][WebRTC][ERROR] 请求失败 stream=" << m_stream
                          << " reply=" << (void *)er << " m_currentReply=" << (void *)m_currentReply
                          << " error=" << err;
+              
+              SystemErrorEvent sysErr;
+              sysErr.domain = QStringLiteral("WEBRTC");
+              sysErr.severity = SystemErrorEvent::Severity::ERROR;
+              sysErr.code = QStringLiteral("W-HTTP-FAIL");
+              sysErr.message = QStringLiteral("WebRTC 信令请求失败: %1").arg(err);
+              sysErr.metadata["stream"] = m_stream;
+              EventBus::instance().publish(sysErr);
+
               updateStatus("连接失败: " + err, false);
               emit errorOccurred(err);
             } catch (const std::exception &e) {
@@ -1392,6 +1420,14 @@ void WebRtcClient::processAnswer(const QString &answer) {
 
 void WebRtcClient::disconnect() {
   qDebug() << "[Client][WebRTC] disconnect() 开始 stream=" << m_stream;
+
+  if (m_integrityTimer)
+    m_integrityTimer->stop();
+  m_lastFrameWallMs = 0;
+  if (m_videoFrozen) {
+    m_videoFrozen = false;
+    emit videoFrozenChanged(false);
+  }
 
   // ★ 首先停止所有定时器，防止竞态条件
   if (m_reconnectTimer && m_reconnectTimer->isActive()) {
@@ -1735,9 +1771,9 @@ void maybeTeleopVideoSnapshotPostDecode(const QString &stream, const QImage &ima
                        ts + QStringLiteral("_fid%1.png").arg(frameId);
 
   QImage toSave = image;
-  if (toSave.format() != QImage::Format_ARGB32 && toSave.format() != QImage::Format_RGBA8888 &&
-      toSave.format() != QImage::Format_RGB888 && toSave.format() != QImage::Format_RGB32) {
-    toSave = toSave.convertToFormat(QImage::Format_ARGB32);
+  if (toSave.format() != QImage::Format_RGBA8888 &&
+      toSave.format() != QImage::Format_RGB888) {
+    toSave = toSave.convertToFormat(QImage::Format_RGBA8888);
   }
   if (!toSave.save(path, "PNG")) {
     static QHash<QString, int> s_fail;
@@ -2170,34 +2206,22 @@ void WebRtcClient::stopPresentPipeline() {
 
   if (m_presentWorker) {
     QObject::disconnect(m_presentWorker, nullptr, this, nullptr);
-    const bool ok =
-        QMetaObject::invokeMethod(m_presentWorker, "resetState", Qt::BlockingQueuedConnection);
-    if (!ok)
-      qWarning() << "[Client][WebRTC][Present] resetState BlockingQueued failed stream="
-                 << m_stream;
-    // Qt 要求：moveToThread 须由对象当前所在线程调用（见 Qt 文档 QObject::moveToThread）。
-    const bool moved = QMetaObject::invokeMethod(m_presentWorker, "moveToApplicationThread",
-                                                 Qt::BlockingQueuedConnection);
-    if (!moved)
-      qWarning() << "[Client][WebRTC][Present] moveToApplicationThread invoke failed stream="
-                 << m_stream;
-    delete m_presentWorker;
+    // 改为异步销毁：不使用 BlockingQueuedConnection，避免主线程在清理流时卡死。
+    // Worker 随线程销毁或 deleteLater 自动清理。
+    m_presentWorker->deleteLater();
     m_presentWorker = nullptr;
   }
   if (m_presentThread) {
     m_presentThread->quit();
-    if (!m_presentThread->wait(8000)) {
-      qWarning() << "[Client][WebRTC][Present] present thread wait timeout stream=" << m_stream;
-      m_presentThread->terminate();
-      m_presentThread->wait(2000);
-    }
-    delete m_presentThread;
+    // 不在此处 wait(8000)，改为 deleteLater 让 Qt 在事件循环空闲时清理线程资源。
+    m_presentThread->deleteLater();
     m_presentThread = nullptr;
   }
-  qInfo() << "[Client][WebRTC][Present] stopPresentPipeline done stream=" << m_stream;
+  qInfo() << "[Client][WebRTC][Present] stopPresentPipeline (async) done stream=" << m_stream;
 }
 
 void WebRtcClient::onDecoderDmaBufFrameReady(SharedDmaBufFrame handle, quint64 frameId) {
+  m_lastFrameWallMs = QDateTime::currentMSecsSinceEpoch();
   try {
     syncPresentBackendStateMachine("dmaBufPresent");
     ++m_framesPendingInQueue;
@@ -2361,6 +2385,7 @@ void WebRtcClient::flushCoalescedVideoPresent() {
 }
 
 void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 frameId) {
+  m_lastFrameWallMs = QDateTime::currentMSecsSinceEpoch();
   static int s_presentCount = 0;
   if (s_presentCount <= 5 || (s_presentCount % 900) == 0) {
       qInfo() << "[Client][WebRTC][Present] presentDecodedFrameToOutputs stream=" << m_stream
@@ -2962,4 +2987,31 @@ void WebRtcClient::updateStatus(const QString &status, bool connected) {
   m_isConnected = connected;
   emit statusTextChanged(m_statusText);
   emit connectionStatusChanged(m_isConnected);
+}
+
+void WebRtcClient::checkVideoIntegrity() {
+  if (!m_isConnected || m_manualDisconnect) {
+    if (m_videoFrozen) {
+      m_videoFrozen = false;
+      emit videoFrozenChanged(false);
+    }
+    return;
+  }
+
+  const int64_t now = QDateTime::currentMSecsSinceEpoch();
+  const int64_t elapsed = now - m_lastFrameWallMs;
+  
+  // 超过 200ms 无新帧视为冻结（忽略连接初期的 1s 宽放）
+  const bool frozen = (m_lastFrameWallMs > 0) && (elapsed > 200) && (m_connectStartTime > 0 && now - m_connectStartTime > 1000);
+  
+  if (frozen != m_videoFrozen) {
+    m_videoFrozen = frozen;
+    if (frozen) {
+      qWarning().noquote() << "[Client][WebRTC][VideoIntegrity] ★ 检测到视频画面冻结！ ★"
+                           << " stream=" << m_stream << " elapsed=" << elapsed << "ms";
+    } else {
+      qInfo().noquote() << "[Client][WebRTC][VideoIntegrity] 视频画面已恢复渲染 stream=" << m_stream;
+    }
+    emit videoFrozenChanged(m_videoFrozen);
+  }
 }

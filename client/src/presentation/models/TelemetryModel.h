@@ -1,6 +1,8 @@
 #pragma once
 #include <QObject>
 
+#include <QtQml/qqmlregistration.h>
+
 /**
  * 遥测数据 MVVM 模型（《客户端架构设计》§3.4.2）。
  * 暴露给 QML 的所有驾驶状态。
@@ -19,6 +21,7 @@ class TelemetryModel : public QObject {
   Q_PROPERTY(double latitude READ latitude NOTIFY positionChanged)
   Q_PROPERTY(double longitude READ longitude NOTIFY positionChanged)
   Q_PROPERTY(bool vehicleReady READ vehicleReady NOTIFY vehicleReadyChanged)
+  Q_PROPERTY(qint64 lastUpdateTimestamp READ lastUpdateTimestamp NOTIFY lastUpdateTimestampChanged)
 
  public:
   explicit TelemetryModel(QObject* parent = nullptr);
@@ -34,6 +37,7 @@ class TelemetryModel : public QObject {
   double latitude() const { return m_latitude; }
   double longitude() const { return m_longitude; }
   bool vehicleReady() const { return m_vehicleReady; }
+  qint64 lastUpdateTimestamp() const { return m_lastUpdateTimestamp; }
 
   // Update from vehicle telemetry (called from C++ service)
   Q_INVOKABLE void update(double speed, double throttle, double brake, double steering, int gear,
@@ -55,6 +59,7 @@ class TelemetryModel : public QObject {
   void headingChanged(double heading);
   void positionChanged();
   void vehicleReadyChanged(bool ready);
+  void lastUpdateTimestampChanged(qint64 timestamp);
 
  private:
   double m_speed = 0.0;
@@ -68,4 +73,5 @@ class TelemetryModel : public QObject {
   double m_latitude = 0.0;
   double m_longitude = 0.0;
   bool m_vehicleReady = false;
+  qint64 m_lastUpdateTimestamp = 0;
 };
