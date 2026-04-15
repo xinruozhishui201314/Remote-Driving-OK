@@ -5,7 +5,9 @@
 
 class TestErrorRecoveryManager : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestErrorRecoveryManager)
+ public:
+  explicit TestErrorRecoveryManager(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void recovery_success_clearsCategory() {
     ErrorRecoveryManager mgr;

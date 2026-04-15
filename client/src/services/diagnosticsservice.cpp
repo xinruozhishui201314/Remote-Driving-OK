@@ -6,7 +6,8 @@
 #include <QSysInfo>
 
 DiagnosticsService::DiagnosticsService(PerformanceMonitor* perf, QObject* parent)
-    : QObject(parent), m_perfMonitor(perf) {
+    : QObject(parent), m_perfMonitor(perf), m_safety(nullptr), m_timer() {
+  m_timer.setParent(this);
   connect(&m_timer, &QTimer::timeout, this, &DiagnosticsService::collect);
 }
 

@@ -6,7 +6,9 @@
 
 class TestWebRtcUrlResolve : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestWebRtcUrlResolve)
+ public:
+  explicit TestWebRtcUrlResolve(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void baseUrlFromWhep_empty() { QVERIFY(WebRtcUrlResolve::baseUrlFromWhep({}).isEmpty()); }
 

@@ -6,6 +6,7 @@
  */
 class SafetyStatusModel : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(SafetyStatusModel)
 
   Q_PROPERTY(bool allSafe READ allSafe NOTIFY safetyChanged)
   Q_PROPERTY(bool emergencyStop READ emergencyStop NOTIFY emergencyStopChanged)

@@ -7,7 +7,8 @@
 #include <algorithm>
 #include <cmath>
 
-KeyboardMouseInput::KeyboardMouseInput(QObject* parent) : IInputDevice(parent) {}
+KeyboardMouseInput::KeyboardMouseInput(QObject* parent)
+    : IInputDevice(parent), m_pressedKeys(), m_mutex(), m_state() {}
 
 bool KeyboardMouseInput::initialize() {
   qInfo() << "[Client][KeyboardMouseInput] initialized";

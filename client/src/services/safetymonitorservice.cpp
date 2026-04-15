@@ -37,8 +37,10 @@ static int64_t safetyNowMs() {
  */
 class SafetyWorker : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(SafetyWorker)
  public:
-  explicit SafetyWorker(SafetyMonitorService* svc) : m_svc(svc) {
+  explicit SafetyWorker(SafetyMonitorService* svc)
+      : QObject(nullptr), m_svc(svc), m_timer(this) {
     m_timer.setTimerType(Qt::PreciseTimer);
     m_timer.setInterval(SafetyMonitorService::kSafetyCheckIntervalMs);
     connect(&m_timer, &QTimer::timeout, this, &SafetyWorker::runSafetyChecks);
@@ -201,7 +203,14 @@ class SafetyWorker : public QObject {
 
 SafetyMonitorService::SafetyMonitorService(VehicleStatus* vs, SystemStateMachine* fsm,
                                            QObject* parent)
-    : QObject(parent), m_vehicleStatus(vs), m_fsm(fsm) {
+    : QObject(parent),
+      m_config(),
+      m_vehicleStatus(vs),
+      m_fsm(fsm),
+      m_control(nullptr),
+      m_worker(nullptr),
+      m_emergencyReason(),
+      m_reasonMutex() {
   m_worker = std::make_unique<SafetyWorker>(this);
 
   // 订阅异常总线

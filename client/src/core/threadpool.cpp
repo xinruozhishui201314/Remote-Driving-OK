@@ -2,7 +2,8 @@
 
 #include <QDebug>
 
-ThreadPool::ThreadPool(QObject* parent) : QObject(parent) {
+ThreadPool::ThreadPool(QObject* parent)
+    : QObject(parent), m_workerPool(), m_highPool(), m_timeCriticalPool() {
   // Worker: 低优先级，4线程
   m_workerPool.setMaxThreadCount(4);
 

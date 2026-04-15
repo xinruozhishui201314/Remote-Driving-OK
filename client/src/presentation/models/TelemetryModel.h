@@ -9,6 +9,7 @@
  */
 class TelemetryModel : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TelemetryModel)
 
   Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
   Q_PROPERTY(double throttle READ throttle NOTIFY throttleChanged)

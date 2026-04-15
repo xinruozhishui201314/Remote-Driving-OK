@@ -49,7 +49,19 @@ int64_t Tracing::currentTimeNs() {
 // 构造函数与析构函数
 // ═══════════════════════════════════════════════════════════════════════════════
 
-Tracing::Tracing(QObject* parent) : QObject(parent) { qInfo() << "[Tracing] Initialized"; }
+Tracing::Tracing(QObject* parent)
+    : QObject(parent),
+      m_currentTraceId(),
+      m_currentSpanId(),
+      m_spanCounter(0),
+      m_samplingRate(1.0),
+      m_totalSpansStarted(0),
+      m_totalSpansEnded(0),
+      m_totalErrors(0),
+      m_activeSpans(),
+      m_spansMutex() {
+  qInfo() << "[Tracing] Initialized";
+}
 
 Tracing::~Tracing() = default;
 

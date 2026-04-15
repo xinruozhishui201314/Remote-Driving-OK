@@ -1,6 +1,7 @@
 #include "NetworkStatusModel.h"
 
-NetworkStatusModel::NetworkStatusModel(QObject* parent) : QObject(parent) {}
+NetworkStatusModel::NetworkStatusModel(QObject* parent)
+    : QObject(parent), m_quality(), m_degradationLevel(0) {}
 
 void NetworkStatusModel::updateQuality(const NetworkQuality& quality) {
   const bool wasDegraded = m_quality.degraded;

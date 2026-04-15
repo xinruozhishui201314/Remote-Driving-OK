@@ -33,7 +33,7 @@ class LatencyCompensator {
     double steeringAngle;
   };
 
-  CircularBuffer<InputPoint, 50> m_history;
   double m_processingDelayMs;
   double m_maxPredictionAngleRad;
+  CircularBuffer<InputPoint, 50> m_history;
 };

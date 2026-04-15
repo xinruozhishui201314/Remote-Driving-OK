@@ -1,12 +1,22 @@
 #include "MediaPipeline.h"
 
+#include "../../core/eventbus.h"
 #include "../../utils/TimeUtils.h"
 #include "DecoderFactory.h"
 
 #include <QDebug>
 #include <QThread>
 
-MediaPipeline::MediaPipeline(QObject* parent) : QObject(parent) {}
+MediaPipeline::MediaPipeline(QObject* parent)
+    : QObject(parent),
+      m_config(),
+      m_decoder(nullptr),
+      m_framePool(nullptr),
+      m_decodeQueue(),
+      m_decodeThread(nullptr),
+      m_running(false),
+      m_stats(),
+      m_statsMutex() {}
 
 MediaPipeline::~MediaPipeline() { shutdown(); }
 
@@ -64,11 +74,13 @@ void MediaPipeline::onVideoPacketReceived(const uint8_t* data, size_t size, int6
   NALUnit nalu;
   nalu.data = QByteArray(reinterpret_cast<const char*>(data), static_cast<int>(size));
   nalu.pts = pts;
+  nalu.captureTimestamp = TimeUtils::wallClockMs(); // 记录接收时间（作为 Capture 的近似，如果是 RTP 包含采集时间则更好）
   if (!m_decodeQueue.push(std::move(nalu))) {
     {
       QMutexLocker lock(&m_statsMutex);
       m_stats.framesDropped++;
     }
+    if (m_config.perfMonitor) m_config.perfMonitor->recordDroppedFrame();
     qWarning() << "[Client][MediaPipeline] decode queue full, dropping frame cam="
                << m_config.cameraId;
   }
@@ -78,11 +90,13 @@ void MediaPipeline::onVideoPacketReceived(const QByteArray& data, int64_t pts) {
   NALUnit nalu;
   nalu.data = data;
   nalu.pts = pts;
+  nalu.captureTimestamp = TimeUtils::wallClockMs();
   if (!m_decodeQueue.push(std::move(nalu))) {
     {
       QMutexLocker lock(&m_statsMutex);
       m_stats.framesDropped++;
     }
+    if (m_config.perfMonitor) m_config.perfMonitor->recordDroppedFrame();
     qWarning() << "[Client][MediaPipeline] decode queue full, dropping frame cam="
                << m_config.cameraId;
   }
@@ -142,30 +156,48 @@ void MediaPipeline::decodeLoop() {
         QMutexLocker lock(&m_statsMutex);
         m_stats.decodeErrors++;
       }
+      if (m_config.perfMonitor) m_config.perfMonitor->recordDecoderError();
       qWarning() << "[Client][MediaPipeline] decode error cam=" << m_config.cameraId;
       m_decoder->flush();
-      // flush 后继续处理解码器内部残留的帧，不丢失
       continueDecodedFrames = true;
     }
 
     // 取出解码帧
     VideoFrame rawFrame;
     while (m_decoder->receiveFrame(rawFrame) == DecodeResult::Ok) {
-      continueDecodedFrames = false;  // 正常解码帧后重置标志
+      continueDecodedFrames = false;
       auto poolFrame = m_framePool->acquire();
       if (!poolFrame) {
         {
           QMutexLocker lock(&m_statsMutex);
           m_stats.framesDropped++;
         }
+        if (m_config.perfMonitor) m_config.perfMonitor->recordDroppedFrame();
         continue;
       }
-      // 复制帧元数据（CPU路径下数据已在 decoder 内部，通过指针传递）
+      
+      const int64_t decodeEnd = TimeUtils::nowUs();
+      const int64_t decodeDuration = decodeEnd - decodeStart;
+      if (m_config.perfMonitor) {
+        m_config.perfMonitor->recordDecodeTime(decodeDuration);
+        // E2E 延迟 = 当前时间 - 采集时间
+        const int64_t e2eMs = TimeUtils::wallClockMs() - nalu.captureTimestamp;
+        m_config.perfMonitor->recordVideoE2E(e2eMs * 1000);
+
+        // 发布延迟事件
+        VideoLatencyEvent levt;
+        levt.cameraId = m_config.cameraId;
+        levt.pts = rawFrame.pts;
+        levt.e2eLatencyMs = e2eMs;
+        levt.decodeLatencyUs = decodeDuration;
+        EventBus::instance().publish(levt);
+      }
+
+      // 复制帧元数据
       poolFrame->width = rawFrame.width;
       poolFrame->height = rawFrame.height;
       poolFrame->pts = rawFrame.pts;
-      poolFrame->captureTimestamp =
-          rawFrame.captureTimestamp > 0 ? rawFrame.captureTimestamp : TimeUtils::wallClockMs();
+      poolFrame->captureTimestamp = nalu.captureTimestamp; // 透传采集时间
       poolFrame->cameraId = m_config.cameraId;
       poolFrame->memoryType = rawFrame.memoryType;
       poolFrame->gpuHandle = rawFrame.gpuHandle;

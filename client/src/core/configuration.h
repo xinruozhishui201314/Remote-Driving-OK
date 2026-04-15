@@ -24,6 +24,7 @@
  */
 class Configuration : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(Configuration)
 
  public:
   static Configuration& instance() {

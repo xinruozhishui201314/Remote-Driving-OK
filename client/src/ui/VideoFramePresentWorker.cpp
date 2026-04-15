@@ -26,7 +26,15 @@ int videoMaxPresentFps() {
 }
 }  // namespace
 
-VideoFramePresentWorker::VideoFramePresentWorker(QObject *parent) : QObject(parent) {
+VideoFramePresentWorker::VideoFramePresentWorker(QObject *parent)
+    : QObject(parent),
+      m_streamTag(),
+      m_coalescedImage(),
+      m_coalescedFrameId(0),
+      m_coalescedEpoch(0),
+      m_flushQueued(false),
+      m_rateTimer(nullptr),
+      m_lastPresentWallMs(0) {
   m_rateTimer = new QTimer(this);
   m_rateTimer->setSingleShot(true);
   connect(m_rateTimer, &QTimer::timeout, this, &VideoFramePresentWorker::flushCoalesced);

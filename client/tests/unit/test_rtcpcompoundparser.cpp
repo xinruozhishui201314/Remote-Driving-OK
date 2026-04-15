@@ -9,6 +9,9 @@
 
 class TestRtcpCompoundParser : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestRtcpCompoundParser)
+ public:
+  explicit TestRtcpCompoundParser(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void null_context_or_short_buffer_returns_false();
   void non_rtcp_returns_false();

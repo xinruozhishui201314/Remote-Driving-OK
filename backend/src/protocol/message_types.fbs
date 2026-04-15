@@ -1,0 +1,109 @@
+namespace teleop.protocol;
+
+enum MessageType : uint8 {
+    DRIVE_CMD = 1,
+    MODE_CMD = 2,
+    ESTOP_CMD = 3,
+    HEARTBEAT = 4,
+    TELEMETRY = 5,
+    FAULT_REPORT = 6,
+    SESSION_ACK = 7,
+    NAVIGATION_CMD = 8
+}
+
+struct MessageHeader {
+    schemaVersion: uint32;
+    sessionId: uint32;
+    seq: uint32;
+    timestampMs: uint64;
+    nonce: uint32;
+}
+
+table MessageHeaderTable {
+    schemaVersion: uint32 = 1;
+    vin: string;
+    sessionId: uint32;
+    seq: uint32;
+    timestampMs: uint64;
+    nonce: uint32;
+}
+
+table DriveCommand {
+    header: MessageHeaderTable;
+    throttle: float = 0.0;
+    brake: float = 0.0;
+    steering: float = 0.0;
+    gear: int8 = 1;
+    maxSpeed: uint16 = 60;
+    deadman: bool = false;
+    emergency: bool = false;
+    autopilot: bool = false;
+}
+
+table ModeCommand {
+    header: MessageHeaderTable;
+    enable: bool = false;
+    stop: bool = false;
+    lightsOn: bool = false;
+    hornOn: bool = false;
+    sweeperOn: bool = false;
+}
+
+table EStopCommand {
+    header: MessageHeaderTable;
+    trigger: bool = true;
+    triggerId: uint64;
+}
+
+table Heartbeat {
+    header: MessageHeaderTable;
+    serverTimestampMs: uint32;
+}
+
+table TelemetryData {
+    header: MessageHeaderTable;
+    speed: float = 0.0;
+    steering: int16 = 0;
+    gear: int8 = 0;
+    batteryVoltage: float = 0.0;
+    fuelLevel: float = 0.0;
+    controllerState: int8 = 0;
+    sweeperRunning: bool = false;
+    pumpRunning: bool = false;
+    brushRunning: bool = false;
+    nozzleRunning: bool = false;
+    cpuUsage: float = 0.0;
+    memoryUsage: float = 0.0;
+    temperature: float = 0.0;
+    encoderDroppedFrames: uint32 = 0;
+    rtt: uint32 = 0;
+    packetLossRate: uint32 = 0;
+    jitter: uint32 = 0;
+}
+
+table FaultCode {
+    code: string;
+    severity: string;
+    domain: string;
+    latch: bool = false;
+    recommendedAction: string;
+}
+
+table FaultEvent {
+    header: MessageHeaderTable;
+    fault: FaultCode;
+    message: string;
+    payload: string;
+}
+
+table SessionConfig {
+    watchDogTimeoutMs: uint32 = 500;
+    commandFrequency: uint32 = 30;
+    telemetryFrequency: uint32 = 15;
+    safeStopDurationMs: uint32 = 5000;
+    idleTimeoutMs: uint32 = 30000;
+    enableSafeStopOnDisconnect: bool = true;
+    requireDeadmanForThrottle: bool = true;
+}
+
+root_type DriveCommand;

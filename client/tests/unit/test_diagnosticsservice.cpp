@@ -7,7 +7,9 @@
 
 class TestDiagnosticsService : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestDiagnosticsService)
+ public:
+  explicit TestDiagnosticsService(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void buildSnapshot_withoutPerf_hasCoreFields() {
     DiagnosticsService svc(nullptr);

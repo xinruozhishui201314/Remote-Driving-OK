@@ -19,6 +19,7 @@ class SafetyMonitorService;
  */
 class SessionManager : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(SessionManager)
   Q_PROPERTY(bool hasError READ hasError NOTIFY errorOccurred)
   Q_PROPERTY(QString lastError READ lastError NOTIFY errorOccurred)
 

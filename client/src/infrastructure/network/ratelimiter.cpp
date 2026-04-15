@@ -15,7 +15,12 @@ RateLimiter::RateLimiter(double rate, int burst, QObject* parent)
       m_burst(burst),
       m_tokens(static_cast<double>(burst)),
       m_lastRefill(std::chrono::steady_clock::now()),
-      m_refillTimer(new QTimer(this)) {
+      m_mutex(),
+      m_rejectedCount(0),
+      m_limited(false),
+      m_wasLimited(false),
+      m_refillTimer(nullptr) {
+  m_refillTimer = new QTimer(this);
   // 初始化时令牌数为桶容量
   m_tokens = static_cast<double>(burst);
 
@@ -44,7 +49,6 @@ void RateLimiter::refillTokens() {
 
   if (seconds > 0 && m_rate > 0) {
     double newTokens = seconds * m_rate;
-    double oldTokens = m_tokens;
 
     {
       QMutexLocker locker(&m_mutex);

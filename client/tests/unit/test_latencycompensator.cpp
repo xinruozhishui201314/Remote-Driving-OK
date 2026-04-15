@@ -5,6 +5,9 @@
 
 class TestLatencyCompensator : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestLatencyCompensator)
+ public:
+  explicit TestLatencyCompensator(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void few_samples_returns_low_confidence_and_current_steering();
   void reset_clears_history();

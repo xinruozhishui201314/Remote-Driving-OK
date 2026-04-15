@@ -7,6 +7,7 @@
  */
 class IInputDevice : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(IInputDevice)
 
  public:
   enum class DeviceType {

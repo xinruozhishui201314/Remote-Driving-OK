@@ -31,6 +31,7 @@ struct BitrateDecision {
 
 class AdaptiveBitrateController : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(AdaptiveBitrateController)
 
  public:
   explicit AdaptiveBitrateController(QObject* parent = nullptr);

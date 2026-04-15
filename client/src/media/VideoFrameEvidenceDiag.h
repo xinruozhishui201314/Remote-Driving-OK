@@ -56,7 +56,7 @@
  *
  * 条状误报 vs 真损坏（与 PNG 对齐）：
  *   1) 日志搜 [H264][STRIPE_VERDICT]：verdict=fp_top → 多为顶 16 行启发式；suspect → 中/底频段或 shift 命中。
- *   2) 设 CLIENT_VIDEO_STRIPE_ALERT_CAPTURE=1，解码告警帧写入 <SAVE_DIR>/stripe-alerts/*.png，文件名含 verdict 与
+ *   2) 设 CLIENT_VIDEO_STRIPE_ALERT_CAPTURE=1，解码告警帧写入 <SAVE_DIR>/stripe-alerts/star.png，文件名含 verdict 与
  *      sh/t/m/b；用肉眼对照：仅上部平、中下正常 → 误报；整幅错位/条带 → 真损坏。
  *   3) 可选 CLIENT_VIDEO_SAVE_FRAME=png 做常规落盘，与 stripe-alerts 互补。
  *
@@ -462,7 +462,6 @@ inline int detectStripeHorizontalShift(const QImage &img) {
 inline int detectStripeFineGrained(const QImage &img) {
   if (img.isNull() || img.height() < 16) return 0;
   
-  const int h = img.height();
   const int bpl = img.bytesPerLine();
   const uchar* bits = img.constBits();
   if (!bits || bpl <= 0) return 0;

@@ -4,7 +4,9 @@
 
 class TestPresentHealthAutoEnv : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestPresentHealthAutoEnv)
+ public:
+  explicit TestPresentHealthAutoEnv(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void ci_empty_env_not_ci() {
     QProcessEnvironment env;

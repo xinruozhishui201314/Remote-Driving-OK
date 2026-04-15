@@ -18,7 +18,17 @@ static int64_t currentTimeNs() {
 
 EventBus::EventBus(QObject* parent)
     : QObject(parent),
+      m_subMutex(),
+      m_subscribers(),
+      m_nextHandle(1),
+      m_queueMutex(),
+      m_queue(),
+      m_seqCounter(0),
+      m_flushScheduled(false),
+      m_statsMutex(),
       m_lastDispatchTimeNs(0),
+      m_totalDispatched(0),
+      m_totalDropped(0),
       m_dispatchIntervalSumNs(0),
       m_dispatchIntervalCount(0),
       m_totalDispatchLatencyNs(0),

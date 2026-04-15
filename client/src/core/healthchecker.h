@@ -8,6 +8,7 @@
 
 class HealthChecker : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(HealthChecker)
 
  public:
   static HealthChecker& instance() {

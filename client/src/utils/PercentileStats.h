@@ -12,6 +12,7 @@
 template <std::size_t WindowSize = 1000>
 class PercentileStats {
  public:
+  PercentileStats() : m_window(), m_sorted(), m_dirty(true) {}
   void addSample(int64_t valueMicroseconds) {
     m_window.push_back(valueMicroseconds);
     m_dirty = true;
@@ -74,6 +75,7 @@ class PercentileStats {
  */
 class FPSCounter {
  public:
+  FPSCounter() : m_timestamps() {}
   void tick(int64_t timestampMs) { m_timestamps.push_back(timestampMs); }
 
   double currentFps(int64_t nowMs = 0, int64_t windowMs = 1000) const {

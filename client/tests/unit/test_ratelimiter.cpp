@@ -7,6 +7,9 @@
 
 class TestRateLimiter : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestRateLimiter)
+ public:
+  explicit TestRateLimiter(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void tryAcquire_respects_burst();
   void tryAcquire_emits_exceeded_and_rejectedCount();

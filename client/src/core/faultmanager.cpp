@@ -4,7 +4,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-FaultManager::FaultManager(QObject* parent) : QObject(parent) {
+FaultManager::FaultManager(QObject* parent)
+    : QObject(parent), m_activeCodes() {
     // 监听错误上报信号
     connect(&ErrorRegistry::instance(), &ErrorRegistry::errorReported, this, &FaultManager::onErrorReported);
     qDebug() << "[Client][FaultManager] initialized";

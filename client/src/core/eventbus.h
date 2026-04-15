@@ -66,6 +66,7 @@ class ClientEvent {
    public:                                                                 \
     static constexpr uint32_t TYPE_ID = client_fnv1a_32(#EventName);       \
     static_assert(TYPE_ID != 0, "TYPE_ID must be non-zero");               \
+    EventName() : ClientEvent() {}                                         \
     uint32_t typeId() const override { return TYPE_ID; }                   \
     Priority priority() const override { return Priority::PriorityLevel; } \
     __VA_ARGS__                                                            \
@@ -75,20 +76,20 @@ class ClientEvent {
 
 DEFINE_CLIENT_EVENT(SystemErrorEvent, HIGH,
                     enum class Severity { INFO, WARNING, ERROR, CRITICAL };
-                    QString domain;  // "MQTT", "WEBRTC", "HID", "UI"
-                    QString code;    // e.g., "NET-1001"
-                    QString message;
-                    Severity severity;
-                    QVariantMap metadata;)
+                    QString domain = {};  // "MQTT", "WEBRTC", "HID", "UI"
+                    QString code = {};    // e.g., "NET-1001"
+                    QString message = {};
+                    Severity severity = Severity::INFO;
+                    QVariantMap metadata = {};)
 
-DEFINE_CLIENT_EVENT(EmergencyStopEvent, CRITICAL, QString reason; enum class Source {
+DEFINE_CLIENT_EVENT(EmergencyStopEvent, CRITICAL, QString reason = {}; enum class Source {
   DEADMAN,
   SAFETY_MONITOR,
   SAFETY_CHECKER,
   ERROR_RECOVERY,
   USER,
   SYSTEM_ERROR
-} source{Source::USER};)
+} source = Source::USER;)
 
 DEFINE_CLIENT_EVENT(VehicleControlEvent, HIGH, double steeringAngle = 0.0; double throttle = 0.0;
                     double brake = 0.0; int gear = 0;)
@@ -99,21 +100,24 @@ DEFINE_CLIENT_EVENT(TelemetryUpdateEvent, NORMAL, double speed = 0.0; double thr
 DEFINE_CLIENT_EVENT(NetworkQualityEvent, NORMAL, double score = 1.0; double rttMs = 0.0;
                     double packetLossRate = 0.0; double bandwidthKbps = 0.0; bool degraded = false;)
 
-DEFINE_CLIENT_EVENT(SessionStateEvent, NORMAL, QString state; QString vin;)
+DEFINE_CLIENT_EVENT(SessionStateEvent, NORMAL, QString state = {}; QString vin = {};)
 
 DEFINE_CLIENT_EVENT(VideoFrameDropEvent, NORMAL, uint32_t cameraId = 0; uint32_t count = 0;)
 
+DEFINE_CLIENT_EVENT(VideoLatencyEvent, NORMAL, uint32_t cameraId = 0; int64_t pts = 0;
+                    int64_t e2eLatencyMs = 0; int64_t decodeLatencyUs = 0;)
+
 /** 解码器/码流自检：多 slice + FFmpeg 多线程等条状风险；mitigationApplied=已强制单线程并等 IDR */
-DEFINE_CLIENT_EVENT(VideoDecodeIntegrityEvent, HIGH, QString stream;
-                    QString code; QString detail; bool mitigationApplied = false;
-                    QString healthContractLine;)
+DEFINE_CLIENT_EVENT(VideoDecodeIntegrityEvent, HIGH, QString stream = {};
+                    QString code = {}; QString detail = {}; bool mitigationApplied = false;
+                    QString healthContractLine = {};)
 
 /**
  * Scene Graph / 纹理路径自检：QImage 与解码指纹不一致、或与 QSGTexture::textureSize 不一致。
  * suspectGpuCompositor=true 时优先查驱动/RHI/合成器（解码 CPU 缓冲可能仍一致）。
  */
-DEFINE_CLIENT_EVENT(VideoPresentIntegrityEvent, HIGH, QString stream; QString surfaceId; QString code;
-                    QString detail; bool suspectGpuCompositor = false;)
+DEFINE_CLIENT_EVENT(VideoPresentIntegrityEvent, HIGH, QString stream = {}; QString surfaceId = {}; QString code = {};
+                    QString detail = {}; bool suspectGpuCompositor = false;)
 
 // 旧兼容 ID（供尚未迁移的模块使用）
 namespace ClientEventType {
@@ -161,7 +165,7 @@ class EventBus : public QObject {
   struct LegacyEvent {
     int typeId = 0;
     int priority = 2;  // Normal
-    QVariantMap payload;
+    QVariantMap payload = {};
   };
 
   int subscribe(int typeId, std::function<void(const LegacyEvent&)> handler);
@@ -185,9 +189,9 @@ class EventBus : public QObject {
   };
 
   struct QueuedEvent {
-    ClientEvent::Priority priority;
-    int seq;
-    std::shared_ptr<ClientEvent> event;
+    ClientEvent::Priority priority = ClientEvent::Priority::NORMAL;
+    int seq = 0;
+    std::shared_ptr<ClientEvent> event = nullptr;
     int64_t enqueueTimeNs = 0;  // 入队时间戳，用于计算分发延迟
 
     bool operator>(const QueuedEvent& o) const {

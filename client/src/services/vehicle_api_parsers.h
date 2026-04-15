@@ -14,12 +14,12 @@ bool parseVehicleListHttpBody(const QByteArray &data, QJsonArray *vehiclesOut, Q
 
 struct SessionCreateParseOutcome {
   bool ok = false;
-  QString error;
-  QString sessionId;
-  QString canonicalVin;
-  QString whipUrl;
-  QString whepUrl;
-  QJsonObject controlConfig;
+  QString error = {};
+  QString sessionId = {};
+  QString canonicalVin = {};
+  QString whipUrl = {};
+  QString whepUrl = {};
+  QJsonObject controlConfig = {};
 };
 
 /**

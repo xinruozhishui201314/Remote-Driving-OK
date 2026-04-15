@@ -8,7 +8,12 @@
 #include <cmath>
 #include <numeric>
 
-AdaptiveBitrateController::AdaptiveBitrateController(QObject* parent) : QObject(parent) {}
+AdaptiveBitrateController::AdaptiveBitrateController(QObject* parent)
+    : QObject(parent),
+      m_delayHistory(),
+      m_currentBitrateKbps(5000),
+      m_minBitrateKbps(500),
+      m_maxBitrateKbps(20000) {}
 
 BitrateDecision AdaptiveBitrateController::evaluate(const NetworkMetrics& metrics) {
   // 1. Delay-based estimate (Trendline filter)

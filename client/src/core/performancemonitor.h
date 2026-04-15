@@ -12,10 +12,12 @@
  */
 class PerformanceMonitor : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(PerformanceMonitor)
 
  public:
   struct Metrics {
     struct Latency {
+      Latency() : videoE2EMs(0), controlRTTMs(0), uiFrameTimeMs(0), decodeTimeMs(0), renderTimeMs(0) {}
       double videoE2EMs = 0;
       double controlRTTMs = 0;
       double uiFrameTimeMs = 0;
@@ -24,17 +26,21 @@ class PerformanceMonitor : public QObject {
     } latency;
 
     struct Throughput {
+      Throughput() : videoFps(0), controlHz(0), networkBandwidthMbps(0) {}
       double videoFps = 0;
       double controlHz = 0;
       double networkBandwidthMbps = 0;
     } throughput;
 
     struct Quality {
+      Quality() : packetLossRate(0), jitterMs(0), droppedFrames(0), decoderErrors(0) {}
       double packetLossRate = 0;
       double jitterMs = 0;
       uint32_t droppedFrames = 0;
       uint32_t decoderErrors = 0;
     } quality;
+
+    Metrics() : latency(), throughput(), quality() {}
   };
 
   explicit PerformanceMonitor(QObject* parent = nullptr);

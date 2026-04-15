@@ -7,7 +7,25 @@
 #include <QTextStream>
 #include <QThread>
 
-HealthChecker::HealthChecker(QObject* parent) : QObject(parent) {
+HealthChecker::HealthChecker(QObject* parent)
+    : QObject(parent),
+      m_components(),
+      m_currentState(),
+      m_startTimeMs(0),
+      m_videoDecoderErrors(0),
+      m_mqttErrors(0),
+      m_controlErrors(0),
+      m_networkErrors(0),
+      m_timeoutCheckTimer(),
+      m_memoryUsedBytes(0),
+      m_memoryTotalBytes(0),
+      m_threadPoolActiveThreads(0),
+      m_threadPoolTotalThreads(0),
+      m_threadPoolQueueSize(0),
+      m_threadPoolEnabled(false),
+      m_plugins(),
+      m_pluginsEnabled(false) {
+  m_timeoutCheckTimer.setParent(this);
   // 初始化启动时间
   m_startTimeMs = QDateTime::currentMSecsSinceEpoch();
 

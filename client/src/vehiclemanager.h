@@ -18,6 +18,7 @@ class RemoteSessionClient;
 class VehicleManager : public QObject {
   Q_OBJECT
   QML_ELEMENT
+  Q_DISABLE_COPY(VehicleManager)
   Q_PROPERTY(QStringList vehicleList READ vehicleList NOTIFY vehicleListChanged)
   Q_PROPERTY(QString currentVin READ currentVin WRITE setCurrentVin NOTIFY currentVinChanged)
   Q_PROPERTY(QString currentVehicleName READ currentVehicleName NOTIFY currentVehicleChanged)
@@ -31,11 +32,15 @@ class VehicleManager : public QObject {
 
  public:
   struct VehicleInfo {
-    QString vin;
-    QString name;
-    QString model;
-    QString status;
-    QJsonObject metadata;
+    QString vin = {};
+    QString name = {};
+    QString model = {};
+    QString status = {};
+    QJsonObject metadata = {};
+
+    VehicleInfo() = default;
+    VehicleInfo(const QString& v, const QString& n, const QString& m, const QString& s, const QJsonObject& meta)
+        : vin(v), name(n), model(m), status(s), metadata(meta) {}
   };
 
   explicit VehicleManager(QObject *parent = nullptr);

@@ -83,6 +83,7 @@ class VideoFramePresentWorker;
  */
 class WebRtcClient : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(WebRtcClient)
   QML_ELEMENT
   Q_PROPERTY(QString streamUrl READ streamUrl WRITE setStreamUrl NOTIFY streamUrlChanged)
   Q_PROPERTY(bool isConnected READ isConnected NOTIFY connectionStatusChanged)

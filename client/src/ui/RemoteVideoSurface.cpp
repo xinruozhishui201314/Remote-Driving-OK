@@ -183,77 +183,11 @@ void publishPresentIntegrityIfAllowed(quintptr surfaceKey, const QString &stream
  * CPU QImage→QSG 纹理契约：与 H264Decoder 软解 sws→RGBA8888 + Qt RHI GL_RGBA 对齐；
  * 默认拒绝其它 QImage::Format，避免历史 BGR32/GL_BGRA 在软件 GL 上的 stride 条带问题。
  */
-/**
- * CLIENT_VIDEO_DEBUG_PNG_DIR：非空则限频落盘 PNG（主线程 commitCpuTextureFrame，避免在 SG 渲染线程写盘）。
- * CLIENT_VIDEO_DEBUG_PNG_INTERVAL_MS：默认 30000；同 surface+stream 独立节流。
- * CLIENT_VIDEO_DEBUG_GEOM=1：除首帧 GeomOnce 外，每路每 60s 再打一条几何+DPR（仍主线程）。
- */
-QString sanitizeVideoDebugToken(const QString &s) {
-  QString r = s;
-  r.replace(QLatin1Char('/'), QLatin1Char('_'));
-  r.replace(QLatin1Char('\\'), QLatin1Char('_'));
-  r.replace(QLatin1Char(':'), QLatin1Char('_'));
-  r.replace(QLatin1Char(' '), QLatin1Char('_'));
-  if (r.isEmpty())
-    return QStringLiteral("x");
-  return r.mid(0, 120);
-}
-
-bool takeClientVideoDebugPngSlot(quintptr surfaceKey, const QString &streamTag, int intervalMs) {
-  static QMutex mtx;
-  static QHash<QString, qint64> lastMs;
-  QMutexLocker lk(&mtx);
-  const QString key = QStringLiteral("%1|%2")
-                          .arg(QString::number(surfaceKey, 16),
-                               streamTag.isEmpty() ? QStringLiteral("-") : streamTag);
-  const qint64 now = QDateTime::currentMSecsSinceEpoch();
-  if (now - lastMs.value(key, 0) < intervalMs)
-    return false;
-  lastMs.insert(key, now);
-  return true;
-}
-
-void writeClientVideoDebugPng(const QImage &img, const QString &streamTag, const QString &panelLabel,
-                             quint64 frameId, quintptr surfaceKey, const QString &dir) {
-  if (dir.isEmpty() || img.isNull())
-    return;
-  QDir d(dir);
-  if (!d.exists() && !QDir().mkpath(dir)) {
-    static std::atomic<int> s_mkfail{0};
-    if (s_mkfail.fetch_add(1, std::memory_order_relaxed) < 6)
-      qWarning() << "[Client][UI][VideoDebugPng] mkdir failed dir=" << dir;
-    return;
-  }
-  const QString safeStream = sanitizeVideoDebugToken(streamTag.isEmpty() ? QStringLiteral("unknown") : streamTag);
-  const QString safePanel = sanitizeVideoDebugToken(panelLabel.isEmpty() ? QStringLiteral("_") : panelLabel);
-  const QString fn = QStringLiteral("%1/%2_%3_f%4_surf%5.png")
-                         .arg(dir, safeStream, safePanel, QString::number(frameId),
-                              QString::number(surfaceKey, 16));
-  if (!img.save(fn)) {
-    static std::atomic<int> s_saveFail{0};
-    if (s_saveFail.fetch_add(1, std::memory_order_relaxed) < 12)
-      qWarning() << "[Client][UI][VideoDebugPng] save failed path=" << fn;
-    return;
-  }
-  qInfo().noquote() << "[Client][UI][VideoDebugPng] wrote" << fn << " wxh=" << img.width() << "x" << img.height()
-                    << " bpl=" << img.bytesPerLine();
-}
-
-bool takeClientVideoGeomPeriodicSlot(quintptr surfaceKey, int intervalMs) {
-  static QMutex mtx;
-  static QHash<quintptr, qint64> lastMs;
-  QMutexLocker lk(&mtx);
-  const qint64 now = QDateTime::currentMSecsSinceEpoch();
-  if (now - lastMs.value(surfaceKey, 0) < intervalMs)
-    return false;
-  lastMs.insert(surfaceKey, now);
-  return true;
-}
 }  // namespace
 
 void RemoteVideoSurface::commitCpuTextureFrame(QImage &&image, quint64 frameId,
                                                const QString &streamTag) {
-  try {
+  {
     {
       QMutexLocker lock(&m_mutex);
       if (!streamTag.isEmpty())
@@ -267,13 +201,7 @@ void RemoteVideoSurface::commitCpuTextureFrame(QImage &&image, quint64 frameId,
     }
     emit frameGeometryChanged();
     update();
-  } catch (const std::exception &e) {
-    qCritical() << "[Client][UI][RemoteVideoSurface] commitCpuTextureFrame std::exception frameId="
-                << frameId << " what=" << e.what();
-  } catch (...) {
-    qCritical() << "[Client][UI][RemoteVideoSurface] commitCpuTextureFrame unknown exception frameId="
-                << frameId;
-  }
+  }  
 }
 
 RemoteVideoSurface::RemoteVideoSurface(QQuickItem *parent) : QQuickItem(parent) {
@@ -343,7 +271,7 @@ void RemoteVideoSurface::applyDmaBufFrame(SharedDmaBufFrame handle, quint64 fram
             .arg(df.fds[1]);
   }
 
-  try {
+  {
     {
       QMutexLocker lock(&m_mutex);
       if (!streamTag.isEmpty())
@@ -359,13 +287,7 @@ void RemoteVideoSurface::applyDmaBufFrame(SharedDmaBufFrame handle, quint64 fram
     }
     emit frameGeometryChanged();
     update();
-  } catch (const std::exception &e) {
-    qCritical() << "[Client][UI][RemoteVideoSurface] applyDmaBufFrame std::exception frameId="
-                << frameId << " what=" << e.what();
-  } catch (...) {
-    qCritical() << "[Client][UI][RemoteVideoSurface] applyDmaBufFrame unknown exception frameId="
-                << frameId;
-  }
+  }  
 }
 
 void RemoteVideoSurface::applyFrame(QImage image, quint64 frameId, const QString &streamTag) {
@@ -670,15 +592,9 @@ QSGNode *RemoteVideoSurface::updatePaintNode(QSGNode *oldNode, UpdatePaintNodeDa
   // Qt 文档：createTextureFromImage 须在渲染线程的 updatePaintNode 中调用（threaded render loop
   // 下为渲染线程）
   QSGTexture *tex = nullptr;
-  try {
+  {
     tex = win->createTextureFromImage(img, QQuickWindow::TextureIsOpaque);
-  } catch (const std::exception &e) {
-    logCreateTextureFromImageFailure("std::exception", img, win, e.what());
-    return keepOrAbandonWithoutNewUpload(mapImageToRect(img));
-  } catch (...) {
-    logCreateTextureFromImageFailure("unknown_exception", img, win, nullptr);
-    return keepOrAbandonWithoutNewUpload(mapImageToRect(img));
-  }
+  }  
   if (!tex) {
     logCreateTextureFromImageFailure("returned_null", img, win, nullptr);
     // ★ 统计纹理失败次数：持续失败=GL环境问题；偶发失败=可接受

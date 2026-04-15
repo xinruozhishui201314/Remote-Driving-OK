@@ -14,6 +14,7 @@ class QNetworkReply;
  */
 class RemoteSessionClient final : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(RemoteSessionClient)
  public:
   explicit RemoteSessionClient(QNetworkAccessManager *nam, QObject *parent = nullptr);
 

@@ -16,6 +16,7 @@
  */
 class ErrorRecoveryManager : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(ErrorRecoveryManager)
 
  public:
   enum class RecoveryLevel : uint8_t {
@@ -35,6 +36,7 @@ class ErrorRecoveryManager : public QObject {
   };
 
   struct ErrorRecord {
+    ErrorRecord() : category(ErrorCategory::UNKNOWN), description(), firstOccurrenceMs(0), lastOccurrenceMs(0), occurrenceCount(0), currentLevel(RecoveryLevel::AUTO_RETRY), retryCount(0) {}
     ErrorCategory category;
     QString description;
     int64_t firstOccurrenceMs = 0;
@@ -45,6 +47,7 @@ class ErrorRecoveryManager : public QObject {
   };
 
   struct RecoveryConfig {
+    RecoveryConfig() : maxRetries(3), baseRetryMs(500), maxRetryMs(30000), backoffFactor(2.0) {}
     int maxRetries = 3;
     int baseRetryMs = 500;
     int maxRetryMs = 30000;

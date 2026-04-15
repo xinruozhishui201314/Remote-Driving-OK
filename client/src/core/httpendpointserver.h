@@ -30,15 +30,12 @@
  */
 class HttpEndpointServer : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(HttpEndpointServer)
   Q_PROPERTY(int port READ port NOTIFY serverStarted)
   Q_PROPERTY(bool running READ isRunning NOTIFY runningChanged)
 
  public:
   static HttpEndpointServer& instance();
-
-  // 禁用拷贝
-  HttpEndpointServer(const HttpEndpointServer&) = delete;
-  HttpEndpointServer& operator=(const HttpEndpointServer&) = delete;
 
   // ═══════════════════════════════════════════════════════════════════════════
   // 生命周期

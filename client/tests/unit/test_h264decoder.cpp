@@ -140,7 +140,7 @@ QByteArray encodeRgbToAnnexBH264IdrFrame(const QImage &rgbIn) {
     return {};
   }
   uint8_t *srcSlice[4] = {rgb.bits(), nullptr, nullptr, nullptr};
-  int srcStride[4] = {rgb.bytesPerLine(), 0, 0, 0};
+  int srcStride[4] = {static_cast<int>(rgb.bytesPerLine()), 0, 0, 0};
   sws_scale(sws, srcSlice, srcStride, 0, h, frame->data, frame->linesize);
   sws_freeContext(sws);
 
@@ -203,6 +203,9 @@ bool colorClose(QRgb a, QRgb b, int tol) {
 
 class TestH264Decoder : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestH264Decoder)
+ public:
+  explicit TestH264Decoder(QObject* parent = nullptr) : QObject(parent), m_savedPt() {}
  private slots:
   void init();
   void cleanup();

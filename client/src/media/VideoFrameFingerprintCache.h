@@ -15,6 +15,7 @@ class VideoFrameFingerprintCache {
   static VideoFrameFingerprintCache &instance();
 
   struct Fingerprint {
+    Fingerprint() : rowHash(0), fullCrc(0), width(0), height(0) {}
     quint32 rowHash = 0;
     quint32 fullCrc = 0; /**< 0 = 未计算（未开 CLIENT_VIDEO_EVIDENCE_FULL_CRC） */
     int width = 0;
@@ -29,7 +30,7 @@ class VideoFrameFingerprintCache {
   void clearStream(const QString &streamTag);
 
  private:
-  VideoFrameFingerprintCache() = default;
+  VideoFrameFingerprintCache() : m_mutex(), m_map() {}
 
   QString makeKey(const QString &streamTag, quint64 frameId) const;
   void trimUnlocked();

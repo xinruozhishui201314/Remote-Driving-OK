@@ -40,7 +40,17 @@ bool H264WebRtcHwBridge::hardwareDecodeRequested() {
   return true;
 }
 
-H264WebRtcHwBridge::H264WebRtcHwBridge(QString streamTag) : m_streamTag(std::move(streamTag)) {}
+H264WebRtcHwBridge::H264WebRtcHwBridge(QString streamTag)
+    : m_streamTag(std::move(streamTag)),
+      m_dec(nullptr),
+      m_swsNv12ToRgba(nullptr),
+      m_swsW(0),
+      m_swsH(0),
+      m_swsSrcFmt(AV_PIX_FMT_NONE),
+      m_backendLabel(),
+      m_dmaBufSgBroken(false),
+      m_preferDmaBufExport(false),
+      m_dmabufSgEnvWanted(false) {}
 
 H264WebRtcHwBridge::~H264WebRtcHwBridge() {
   shutdown();
@@ -121,6 +131,8 @@ bool H264WebRtcHwBridge::isHardwareAccelerated() const {
 }
 
 bool H264WebRtcHwBridge::tryOpen(const QByteArray& avccExtradata, int codedW, int codedH) {
+  Q_UNUSED(codedW);
+  Q_UNUSED(codedH);
   shutdown();
   if (avccExtradata.isEmpty()) {
     qWarning() << "[Client][HW-E2E][" << m_streamTag << "][OPEN] empty AVCC extradata";

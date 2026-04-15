@@ -34,6 +34,7 @@ class Configuration;
  */
 class MetricsCollector : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(MetricsCollector)
 
  public:
   static MetricsCollector& instance() {

@@ -3,7 +3,7 @@
 #include <QDebug>
 
 RtpPacketSpscQueue::RtpPacketSpscQueue(QString streamTag, int budgetSlot)
-    : m_streamTag(std::move(streamTag)), m_budgetSlot(budgetSlot) {}
+    : m_streamTag(std::move(streamTag)), m_budgetSlot(budgetSlot), m_queue() {}
 
 RtpPacketSpscQueue::~RtpPacketSpscQueue() { discardAll(); }
 

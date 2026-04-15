@@ -29,6 +29,7 @@ class MqttController;
  */
 class WebRtcStreamManager : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(WebRtcStreamManager)
   Q_PROPERTY(WebRtcClient *frontClient READ frontClient CONSTANT)
   Q_PROPERTY(WebRtcClient *rearClient READ rearClient CONSTANT)
   Q_PROPERTY(WebRtcClient *leftClient READ leftClient CONSTANT)

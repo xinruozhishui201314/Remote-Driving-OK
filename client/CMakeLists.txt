@@ -5,6 +5,14 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# ── 严格编译规范 (2025/2026 远程驾驶规范) ───────────────────────────────────
+# 禁用异常以确保确定性执行路径
+add_compile_options(-fno-exceptions)
+# 开启最高级别警告并视警告为错误
+add_compile_options(-Wall -Wextra -Werror -Wpedantic -Weffc++)
+# 禁用 RTTI (可选，视需要而定，通常与 no-exceptions 配合)
+# add_compile_options(-fno-rtti)
+
 # 性能优化编译选项
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_options(-O3 -DNDEBUG)
@@ -179,6 +187,31 @@ else()
     message(WARNING "PahoMqttCpp not found; MQTT limited")
     set(ENABLE_MQTT_PAHO OFF)
 endif()
+
+# ── FlatBuffers (契约优先设计) ──────────────────────────────────────────────────
+# --- FlatBuffers (Phase 1) ---
+find_program(FLATBUFFERS_FLATC_EXECUTABLE flatc REQUIRED)
+find_path(FLATBUFFERS_INCLUDE_DIR flatbuffers/flatbuffers.h REQUIRED)
+find_library(FLATBUFFERS_LIBRARY flatbuffers REQUIRED)
+
+function(compile_flatbuffers_schema SCHEMA_FILE OUTPUT_VAR)
+    get_filename_component(SCHEMA_NAME ${SCHEMA_FILE} NAME_WE)
+    set(HEADER "${CMAKE_CURRENT_BINARY_DIR}/${SCHEMA_NAME}_generated.h")
+    add_custom_command(
+        OUTPUT "${HEADER}"
+        COMMAND ${FLATBUFFERS_FLATC_EXECUTABLE} --cpp --gen-object-api --no-includes --gen-compare 
+                --no-prefix -o "${CMAKE_CURRENT_BINARY_DIR}" "${SCHEMA_FILE}"
+        DEPENDS "${SCHEMA_FILE}"
+        COMMENT "Generating FlatBuffers header for ${SCHEMA_FILE}"
+    )
+    set(${OUTPUT_VAR} ${HEADER} PARENT_SCOPE)
+endfunction()
+
+compile_flatbuffers_schema("${CMAKE_CURRENT_SOURCE_DIR}/../backend/src/protocol/message_types.fbs" PROTOCOL_FB_HEADERS)
+
+# ── Boost.SML (状态机驱动架构) ──────────────────────────────────────────────
+# 使用本地源码 (deps/sml)
+add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../deps/sml" "${CMAKE_CURRENT_BINARY_DIR}/deps/sml" EXCLUDE_FROM_ALL)
 
 # ── Google Benchmark (optional) ───────────────────────────────────────────────
 option(BUILD_BENCHMARKS "Build performance benchmarks" OFF)
@@ -443,7 +476,7 @@ if(ENABLE_NVDEC)
 endif()
 
 # ── Executable ────────────────────────────────────────────────────────────────
-qt_add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+qt_add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS} ${PROTOCOL_FB_HEADERS})
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -454,13 +487,21 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/services
     ${CMAKE_CURRENT_SOURCE_DIR}/src/presentation
     ${CMAKE_CURRENT_SOURCE_DIR}/../backend/src/protocol
+    ${CMAKE_CURRENT_BINARY_DIR} # 用于查找生成的 FlatBuffers 头文件
 )
+
+# ── Link FlatBuffers ─────────────────────────────────────────────────────────
+target_link_libraries(${PROJECT_NAME} PRIVATE ${FLATBUFFERS_LIBRARY})
+
+# ── Link Boost.SML ───────────────────────────────────────────────────────────
+target_link_libraries(${PROJECT_NAME} PUBLIC sml::sml)
 
 # ── Link Qt (required) ────────────────────────────────────────────────────────
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core Qt6::Quick Qt6::Network Qt6::Qml Qt6::Gui
     Qt6::Multimedia Qt6::MultimediaQuick
 )
+target_compile_options(${PROJECT_NAME} PRIVATE -Wno-effc++)
 
 # Linux：Qt 6 gcc_64 的 libQt6Multimedia 常带 DT_NEEDED(libpulse)，但 CMake 目标未传播，
 # 最终链接 RemoteDrivingClient 会出现大量 undefined reference to pa_*。显式链接 libpulse。
@@ -668,6 +709,7 @@ qt_add_qml_module(DrivingFacadeQml
         RemoteDriving
 )
 target_link_libraries(DrivingFacadeQml PRIVATE Qt6::Quick)
+target_compile_options(DrivingFacadeQml PRIVATE -Wno-effc++)
 target_link_libraries(${PROJECT_NAME} PRIVATE DrivingFacadeQmlplugin)
 set(_DRIVING_FACADE_TYPEINFO_SRC "${CMAKE_CURRENT_SOURCE_DIR}/qml/DrivingFacade/driving-facade.qmltypes")
 if(CLIENT_SYNC_GENERATED_QMLTYPES_TO_SOURCE)
@@ -708,15 +750,18 @@ if(ENABLE_QT6_Test)
         src/core/configuration.cpp
     )
     target_include_directories(client_systemstatemachine_test PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/../deps/sml/include)
     target_link_libraries(client_systemstatemachine_test PRIVATE
-        Qt6::Core Qt6::Test)
+        Qt6::Core Qt6::Test sml::sml)
+    target_compile_options(client_systemstatemachine_test PRIVATE -Wno-effc++)
     add_test(NAME client_systemstatemachine_test
         COMMAND client_systemstatemachine_test)
 
     # Unit tests for services — 每个测试文件有 QTEST_MAIN，各自独立可执行
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tests/unit")
         set(_TEST_DEPS
+            ${PROTOCOL_FB_HEADERS}
             src/core/eventbus.cpp
             src/core/systemstatemachine.cpp
             src/core/configuration.cpp
@@ -733,8 +778,10 @@ if(ENABLE_QT6_Test)
         set(_TEST_INCLUDES 
             ${CMAKE_CURRENT_SOURCE_DIR}/src 
             ${CMAKE_CURRENT_SOURCE_DIR}/../backend/src/protocol
+            ${CMAKE_CURRENT_SOURCE_DIR}/../deps/sml/include
+            ${CMAKE_CURRENT_BINARY_DIR}
         )
-        set(_TEST_LIBS Qt6::Core Qt6::Test Qt6::Network)
+        set(_TEST_LIBS Qt6::Core Qt6::Test Qt6::Network sml::sml)
 
         # 通用测试目标宏（避免重复代码）
         function(add_client_unit_test NAME TEST_FILE)

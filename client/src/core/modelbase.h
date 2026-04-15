@@ -32,6 +32,7 @@
  */
 class ModelBase : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(ModelBase)
 
  protected:
   explicit ModelBase(QObject* parent = nullptr) : QObject(parent) {}

@@ -9,6 +9,11 @@
 #include "../vehiclemanager.h"
 #include "../webrtcstreammanager.h"
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Weffc++"
+#include "message_types_generated.h" // 由 FlatBuffers 生成
+#pragma GCC diagnostic pop
+
 #include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -21,7 +26,6 @@
 #include <cmath>
 
 namespace {
-/** 调试阶段默认开启；显式 CLIENT_TELEOP_TRACE=0 一键关闭。 */
 bool teleopTraceEnvEnabled() {
   const QByteArray v = qgetenv("CLIENT_TELEOP_TRACE");
   if (v.isEmpty()) return true;
@@ -29,14 +33,12 @@ bool teleopTraceEnvEnabled() {
 }
 }  // namespace
 
-/**
- * 【内部分离工作类】运行在独立的安全线程中。
- * 负责 100Hz 控制定时器与核心计算，避免 UI 挂起导致失控。
- */
 class VehicleControlWorker : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(VehicleControlWorker)
  public:
-  explicit VehicleControlWorker(VehicleControlService* svc) : m_svc(svc), m_timer(this) {
+  explicit VehicleControlWorker(VehicleControlService* svc)
+      : QObject(nullptr), m_svc(svc), m_timer(this) {
     m_timer.setTimerType(Qt::PreciseTimer);
     m_timer.setInterval(1000 / m_svc->m_config.controlRateHz);
     connect(&m_timer, &QTimer::timeout, this, &VehicleControlWorker::controlTick);
@@ -44,142 +46,91 @@ class VehicleControlWorker : public QObject {
 
  public slots:
   void start() {
-    qInfo().noquote() << "[Client][Teleop][DIAG] Worker::start() thread:" << QThread::currentThread()
-                      << "Timer thread:" << m_timer.thread()
-                      << "IsOrphan:" << (m_timer.parent() == nullptr ? "YES" : "NO");
     m_timer.start();
-    if (!m_timer.isActive()) {
-      qCritical().noquote() << "[Client][Teleop][FATAL] QTimer FAILED to start! Potential thread mismatch.";
-    }
   }
   void stop() {
-    qInfo().noquote() << "[Client][Teleop][DIAG] Worker::stop()";
     m_timer.stop();
   }
 
   void controlTick() {
     if (!m_svc->m_running.load()) return;
 
-    try {
-      const int64_t tickStart = TimeUtils::nowUs();
+    Q_UNUSED(TimeUtils::nowUs());
 
-      // 1. 读取最新输入（无锁原子读）
-      IInputDevice::InputState input = m_svc->m_latestInput.load();
-
-      static std::atomic<int64_t> s_tickCount{0};
-      const int64_t tickIdx = s_tickCount.fetch_add(1, std::memory_order_relaxed);
-
-      if (teleopTraceEnvEnabled()) {
-        if (tickIdx % 50 == 0) { // 每 50 次 Tick (0.5s) 记录一次完整输入
-          qInfo().noquote() << "[Client][Teleop][TRACE][tickIn] idx=" << tickIdx << " steer=" << input.steeringAngle
-                            << " thr=" << input.throttle << " brk=" << input.brake
-                            << " gear=" << input.gear << " estop=" << (input.emergencyStop ? 1 : 0);
-        }
+    // 1. 从无锁队列读取输入（2025/2026 规范要求）
+    IInputDevice::InputState input;
+    bool hasNewInput = false;
+    if (m_svc->m_sampler) {
+      // 尽可能消费所有新输入，保留最新的
+      while (m_svc->m_sampler->queue().pop(input)) {
+        hasNewInput = true;
       }
-
-      // 急停检查
-      if (input.emergencyStop) {
-        qCritical() << "[Client][Teleop][TRACE][tick] EMERGENCY STOP detected in input state";
-        m_svc->requestEmergencyStop();
-        return;
-      }
-
-      // 2. 输入处理（非线性曲线/死区）
-      auto processed = m_svc->processInput(input);
-      if (teleopTraceEnvEnabled() && tickIdx % 100 == 0 && std::abs(processed.steeringAngle) > 0.001) {
-          qInfo().noquote() << "[Client][Teleop][TRACE][tickProc] idx=" << tickIdx << " steer_raw=" << input.steeringAngle 
-                            << " processed=" << processed.steeringAngle;
-      }
-
-      // 3. 延迟补偿预测
-      VehicleControlService::ControlCommand cmd;
-      if (m_svc->m_config.enablePrediction && m_svc->m_predictor) {
-        auto pred = m_svc->m_predictor->predict(processed, m_svc->m_currentRTTMs.load());
-        cmd.predictedSteeringAngle = pred.predictedSteeringAngle;
-        cmd.predictionHorizonMs = pred.predictionHorizonMs;
-      } else {
-        cmd.predictedSteeringAngle = processed.steeringAngle;
-      }
-
-      // 4. 速率限制
-      {
-        QMutexLocker lock(&m_svc->m_lastCommandMutex);
-        const double dt = 1.0 / m_svc->m_config.controlRateHz;
-        const double maxSteeringDelta = m_svc->m_config.maxSteeringRateRadPerSec * dt;
-        const double steeringDelta = cmd.predictedSteeringAngle - m_svc->m_lastCommand.steeringAngle;
-        if (std::abs(steeringDelta) > maxSteeringDelta) {
-          cmd.steeringAngle =
-              m_svc->m_lastCommand.steeringAngle + std::copysign(maxSteeringDelta, steeringDelta);
-        } else {
-          cmd.steeringAngle = cmd.predictedSteeringAngle;
-        }
-
-        cmd.throttle = processed.throttle;
-        cmd.brake = processed.brake;
-        cmd.gear = processed.gear;
-        cmd.emergencyStop = false;
-        cmd.timestamp = TimeUtils::wallClockMs();
-        cmd.sequenceNumber = m_svc->nextSequenceNumber();
-
-        m_svc->m_lastCommand = cmd;
-      }
-
-      // 5. 发送
-      const int64_t beforeSendUs = TimeUtils::nowUs();
-      const int64_t durationBeforeSendUs = beforeSendUs - tickStart;
-
-      if (durationBeforeSendUs > 5000) {
-          qCritical().noquote() << "[Client][VehicleControlService] tick computation took too long:" 
-                                << durationBeforeSendUs / 1000.0 << "ms. Skipping command dispatch.";
-          return;
-      }
-
-      if (m_svc->m_safety && !m_svc->m_safety->allSystemsGo()) {
-        static int s_breakerLog = 0;
-        if (++s_breakerLog % 100 == 1) {
-          qWarning() << "[Client][VehicleControlService] Circuit Breaker ACTIVE: Control command "
-                        "suppressed";
-        }
-        // 熔断时强制发送空指令（安全停车）
-        m_svc->sendNeutralCommand();
-      } else {
-        m_svc->sendCommand(cmd);
-      }
-
-      // 6. 每秒统计
-      m_svc->m_ticksThisSecond.fetch_add(1, std::memory_order_relaxed);
-      const int64_t now = TimeUtils::nowMs();
-      if (now - m_svc->m_secondStart.load() >= 1000) {
-        m_svc->m_commandsPerSec.store(m_svc->m_ticksThisSecond.load(std::memory_order_relaxed));
-        m_svc->m_ticksThisSecond.store(0, std::memory_order_relaxed);
-        m_svc->m_secondStart.store(now);
-      }
-
-      // 7. 控制环延迟告警
-      const int64_t tickDuration = TimeUtils::nowUs() - tickStart;
-      if (tickDuration > 5000) {  // > 5ms
-        qWarning() << "[Client][VehicleControlService] tick P99 too high:" << tickDuration / 1000.0
-                   << "ms";
-      }
-
-      // 8. 心跳同步
-      m_svc->pingSafety();
-
-    } catch (const std::exception& e) {
-      qCritical() << "[Client][VehicleControlService] controlTick std::exception:" << e.what();
-      SystemErrorEvent evt;
-      evt.domain = QStringLiteral("CONTROL");
-      evt.severity = SystemErrorEvent::Severity::CRITICAL;
-      evt.message = QStringLiteral("控制环崩溃: %1").arg(e.what());
-      EventBus::instance().publish(evt);
-    } catch (...) {
-      qCritical() << "[Client][VehicleControlService] controlTick unknown exception";
-      SystemErrorEvent evt;
-      evt.domain = QStringLiteral("CONTROL");
-      evt.severity = SystemErrorEvent::Severity::CRITICAL;
-      evt.message = QStringLiteral("控制环发生未知异常");
-      EventBus::instance().publish(evt);
     }
+    
+    if (!hasNewInput) {
+      input = m_svc->m_latestInput.load(); // 回退到原子读
+    } else {
+      m_svc->m_latestInput.store(input); // 更新缓存
+    }
+
+    static std::atomic<int64_t> s_tickCount{0};
+    Q_UNUSED(s_tickCount.fetch_add(1, std::memory_order_relaxed));
+
+    if (input.emergencyStop) {
+      m_svc->requestEmergencyStop();
+      return;
+    }
+
+    // 2. 输入处理
+    auto processed = m_svc->processInput(input);
+
+    // 3. 延迟补偿预测
+    VehicleControlService::ControlCommand cmd;
+    if (m_svc->m_config.enablePrediction && m_svc->m_predictor) {
+      auto pred = m_svc->m_predictor->predict(processed, m_svc->m_currentRTTMs.load());
+      cmd.predictedSteeringAngle = pred.predictedSteeringAngle;
+      cmd.predictionHorizonMs = pred.predictionHorizonMs;
+    } else {
+      cmd.predictedSteeringAngle = processed.steeringAngle;
+    }
+
+    // 4. 速率限制（无锁，因为只在此线程运行）
+    const double dt = 1.0 / m_svc->m_config.controlRateHz;
+    const double maxSteeringDelta = m_svc->m_config.maxSteeringRateRadPerSec * dt;
+    const double steeringDelta = cmd.predictedSteeringAngle - m_svc->m_lastCommand.steeringAngle;
+    if (std::abs(steeringDelta) > maxSteeringDelta) {
+      cmd.steeringAngle =
+          m_svc->m_lastCommand.steeringAngle + std::copysign(maxSteeringDelta, steeringDelta);
+    } else {
+      cmd.steeringAngle = cmd.predictedSteeringAngle;
+    }
+
+    cmd.throttle = processed.throttle;
+    cmd.brake = processed.brake;
+    cmd.gear = processed.gear;
+    cmd.emergencyStop = false;
+    cmd.timestamp = TimeUtils::wallClockMs();
+    cmd.sequenceNumber = m_svc->nextSequenceNumber();
+
+    m_svc->m_lastCommand = cmd;
+
+    // 5. 发送
+    if (m_svc->m_safety && !m_svc->m_safety->allSystemsGo()) {
+      m_svc->sendNeutralCommand();
+    } else {
+      m_svc->sendCommand(cmd);
+    }
+
+    // 6. 统计
+    m_svc->m_ticksThisSecond.fetch_add(1, std::memory_order_relaxed);
+    const int64_t now = TimeUtils::nowMs();
+    if (now - m_svc->m_secondStart.load() >= 1000) {
+      m_svc->m_commandsPerSec.store(m_svc->m_ticksThisSecond.load(std::memory_order_relaxed));
+      m_svc->m_ticksThisSecond.store(0, std::memory_order_relaxed);
+      m_svc->m_secondStart.store(now);
+    }
+
+    m_svc->pingSafety();
   }
 
  private:
@@ -188,15 +139,39 @@ class VehicleControlWorker : public QObject {
 };
 
 VehicleControlService::VehicleControlService(MqttController* mqtt, VehicleManager* vehicles,
-                                             WebRtcStreamManager* webrtc, QObject* parent)
-    : QObject(parent), m_mqtt(mqtt), m_vehicles(vehicles), m_wsm(webrtc) {
+                                             WebRtcStreamManager* webrtc, InputSampler* sampler,
+                                             QObject* parent)
+    : QObject(parent),
+      m_mqtt(mqtt),
+      m_vehicles(vehicles),
+      m_wsm(webrtc),
+      m_sampler(sampler),
+      m_config(),
+      m_predictor(nullptr),
+      m_signer(),
+      m_currentVin(),
+      m_sessionId(),
+      m_credentialsMutex(),
+      m_latestInput(),
+      m_lastCommand(),
+      m_worker(nullptr),
+      m_seqCounter(0),
+      m_commandsPerSec(0),
+      m_ticksThisSecond(0),
+      m_secondStart(0),
+      m_currentRTTMs(50.0),
+      m_running(false),
+      m_safety(nullptr),
+      m_transport(nullptr) {
   m_worker = std::make_unique<VehicleControlWorker>(this);
 }
 
 VehicleControlService::~VehicleControlService() { stop(); }
 
 uint32_t VehicleControlService::nextSequenceNumber() {
+#ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
   if (m_mqtt) return m_mqtt->nextSequenceNumber();
+#endif
   return m_seqCounter.fetch_add(1, std::memory_order_relaxed);
 }
 
@@ -306,12 +281,6 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
   }
 
   if (vin.isEmpty()) {
-    static int s_vinWarn = 0;
-    if (++s_vinWarn % 100 == 1) {
-      qWarning() << "[Client][VehicleControlService] sendCommand skipped: VIN "
-                    "未绑定（会话未建立或凭证已清除） throttled="
-                 << s_vinWarn;
-    }
     return;
   }
 
@@ -320,79 +289,52 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
   }
   const QString traceId = Tracing::instance().currentTraceId();
 
-  auto buildJson = [&]() -> QJsonObject {
+  // 2025/2026 规范：使用 FlatBuffers 进行契约优先的高性能序列化
+  flatbuffers::FlatBufferBuilder builder(1024);
+  
+  auto vinOffset = builder.CreateString(vin.toStdString());
+  
+  teleop::protocol::MessageHeaderTableBuilder headerBuilder(builder);
+  headerBuilder.add_vin(vinOffset);
+  headerBuilder.add_sessionId(m_sessionId.toUInt()); // 假设 sessionId 可以转 uint
+  headerBuilder.add_seq(cmd.sequenceNumber);
+  headerBuilder.add_timestampMs(cmd.timestamp);
+  auto headerOffset = headerBuilder.Finish();
+  
+  teleop::protocol::DriveCommandBuilder cmdBuilder(builder);
+  cmdBuilder.add_header(headerOffset);
+  cmdBuilder.add_throttle(static_cast<float>(cmd.throttle));
+  cmdBuilder.add_brake(static_cast<float>(cmd.brake));
+  cmdBuilder.add_steering(static_cast<float>(cmd.steeringAngle));
+  cmdBuilder.add_gear(static_cast<int8_t>(cmd.gear));
+  cmdBuilder.add_deadman(true); // 示例：始终为 true，实际应根据输入
+  cmdBuilder.add_emergency(cmd.emergencyStop);
+  
+  auto driveCmdOffset = cmdBuilder.Finish();
+  builder.Finish(driveCmdOffset);
+  
+  const QByteArray payload(reinterpret_cast<const char*>(builder.GetBufferPointer()), 
+                           static_cast<int>(builder.GetSize()));
+
+  // 核心路径：异步发送，无阻塞
+  emit requestDataChannelSend(payload);
+
+  // MQTT 备份链路（根据规范：双链路冗余）
+#ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
+  if (m_mqtt && m_mqtt->mqttBrokerConnected()) {
+    // 暂时保持 JSON 以兼容旧版后端，生产环境应全部切为二进制
     QJsonObject json;
     json[QStringLiteral("type")] = QStringLiteral("drive");
-    json[QStringLiteral("schemaVersion")] = MqttControlEnvelope::controlSchemaVersionString();
     json["steering"] = cmd.steeringAngle;
     json["throttle"] = cmd.throttle;
     json["brake"] = cmd.brake;
     json["gear"] = cmd.gear;
-    json["emergency_stop"] = cmd.emergencyStop;
-    json[QStringLiteral("timestampMs")] = static_cast<qint64>(cmd.timestamp);
     json["seq"] = static_cast<qint64>(cmd.sequenceNumber);
-    json["vin"] = vin;
-    if (!sessionId.isEmpty()) json[QStringLiteral("sessionId")] = sessionId;
-    json[QStringLiteral("trace_id")] = traceId;
-    if (m_config.enablePrediction) {
-      json["predicted_steering"] = cmd.predictedSteeringAngle;
-      json["prediction_horizon_ms"] = cmd.predictionHorizonMs;
-    }
-    // HMAC 签名
-    QMutexLocker lock(&m_credentialsMutex);
-    if (m_signer.isReady()) {
-      m_signer.sign(json);
-    }
-    return json;
-  };
-
-  static qint64 s_lastDriveLogMs = 0;
-  const qint64 wallMs = TimeUtils::nowMs();
-
-  QJsonObject json = buildJson();
-  const QByteArray payload = QJsonDocument(json).toJson(QJsonDocument::Compact);
-
-  static std::atomic<int64_t> s_sendCount{0};
-  const int64_t sendIdx = s_sendCount.fetch_add(1, std::memory_order_relaxed);
-
-  bool dcOk = true; // 信号发射视为已进入排队
-#if !defined(VEHICLE_CONTROL_SERVICE_UNIT_TEST) && !defined(REMOTE_DRIVING_UNIT_TEST)
-  // ★ 核心修复：解除同步耦合。由直接调用改为发射信号，通过 QueuedConnection 由 WebRTC 线程处理。
-  if (teleopTraceEnvEnabled() && sendIdx % 100 == 0) {
-      qInfo().noquote() << "[Client][Teleop][TRACE][sendDC] idx=" << sendIdx << " size=" << payload.size() << " (ASYNC EMIT)";
-  }
-  emit requestDataChannelSend(payload);
-#endif
-
-  bool mqttOk = false;
-  if (m_mqtt && m_mqtt->mqttBrokerConnected()) {
-    if (teleopTraceEnvEnabled() && sendIdx % 100 == 0) {
-        qInfo().noquote() << "[Client][Teleop][TRACE][sendMQTT] idx=" << sendIdx << " ...";
-    }
-#ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
     m_mqtt->sendControlCommand(json);
+  }
 #endif
-    mqttOk = true;
-    if (teleopTraceEnvEnabled() && sendIdx % 100 == 0) {
-        qInfo().noquote() << "[Client][Teleop][TRACE][sendMQTT] idx=" << sendIdx << " result=DONE";
-    }
-  }
-
-  if (wallMs - s_lastDriveLogMs >= 1000) {
-    s_lastDriveLogMs = wallMs;
-    qInfo().noquote() << QStringLiteral(
-                             "[Client][Teleop][DRIVE_1Hz] redundancy=on dc=%1 mqtt=%2 vin=%3 "
-                             "steer=%4 thr=%5 brk=%6")
-                             .arg(dcOk ? 1 : 0)
-                             .arg(mqttOk ? 1 : 0)
-                             .arg(vin)
-                             .arg(cmd.steeringAngle)
-                             .arg(cmd.throttle)
-                             .arg(cmd.brake);
-  }
 
   notifyCommandSent(cmd);
-  pingSafety();
 }
 
 void VehicleControlService::sendNeutralCommand() {

@@ -51,9 +51,22 @@ AuthManager::AuthManager(QObject *parent)
 
 AuthManager::AuthManager(QObject *parent, bool loadSavedCredentials)
     : QObject(parent),
-      m_networkManager(new QNetworkAccessManager(this)),
+      m_username(),
+      m_usernameHistory(),
+      m_authToken(),
+      m_serverUrl(),
+      m_isLoggedIn(false),
+      m_pendingUsername(),
+      m_tokenExpiresIn(0),
+      m_tokenIssuedAt(0),
+      m_refreshToken(),
       m_keystore(&KeystoreManager::instance()),
-      m_tokenExpiryTimer(new QTimer(this)) {
+      m_tokenExpiryTimer(nullptr),
+      m_networkManager(nullptr),
+      m_currentReply(nullptr),
+      m_refreshReply(nullptr) {
+  m_networkManager = new QNetworkAccessManager(this);
+  m_tokenExpiryTimer = new QTimer(this);
   // 设置令牌过期检查定时器（每 30 秒检查一次）
   m_tokenExpiryTimer->setInterval(30000);
   connect(m_tokenExpiryTimer, &QTimer::timeout, this, &AuthManager::onTokenExpiryCheck);

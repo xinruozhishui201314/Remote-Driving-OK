@@ -33,6 +33,7 @@
  */
 class ErrorRegistry : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(ErrorRegistry)
 
  public:
   // 错误分类
@@ -45,8 +46,8 @@ class ErrorRegistry : public QObject {
   struct Error {
     Category category = Category::Unknown;
     Level level = Level::Info;
-    QString message;
-    QString component;
+    QString message = {};
+    QString component = {};
     qint64 timestampMs = 0;
     int occurrenceCount = 1;
   };

@@ -7,7 +7,9 @@
 
 class TestDegradationManager : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestDegradationManager)
+ public:
+  explicit TestDegradationManager(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void cleanup() { DegradationManager::clearUnitTestClockForTesting(); }
 

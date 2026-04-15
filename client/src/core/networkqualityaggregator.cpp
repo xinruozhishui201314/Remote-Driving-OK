@@ -48,7 +48,23 @@ const QStringList &logicalSlots() {
 NetworkQualityAggregator::NetworkQualityAggregator(VehicleStatus *vehicleStatus,
                                                    NodeHealthChecker *nodeHealthChecker,
                                                    QObject *parent)
-    : QObject(parent), m_vs(vehicleStatus), m_nodes(nodeHealthChecker) {
+    : QObject(parent),
+      m_vs(vehicleStatus),
+      m_nodes(nodeHealthChecker),
+      m_score(1.0),
+      m_degraded(false),
+      m_backendOk(true),
+      m_rttMs(0.0),
+      m_packetLossRate(0.0),
+      m_bandwidthKbps(0.0),
+      m_jitterMs(0.0),
+      m_videoE2EMs(0.0),
+      m_mediaPresentationFactor(1.0),
+      m_mediaAggModeLabel(QStringLiteral("weighted")),
+      m_mediaUseMinAggregate(false),
+      m_frontSlotWeight(2.0),
+      m_slotPenaltyUntilMs(),
+      m_mediaSlotsPollTimer() {
   m_mediaSlotsPollTimer.setInterval(kMediaPollIntervalMs);
   connect(&m_mediaSlotsPollTimer, &QTimer::timeout, this,
           &NetworkQualityAggregator::onMediaSlotsPoll);

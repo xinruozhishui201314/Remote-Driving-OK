@@ -5,6 +5,9 @@
 
 class TestClientMediaBudget : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestClientMediaBudget)
+ public:
+  explicit TestClientMediaBudget(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void initTestCase();
   void cleanup();

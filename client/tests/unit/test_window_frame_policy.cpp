@@ -4,7 +4,9 @@
 
 class TestWindowFramePolicy : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestWindowFramePolicy)
+ public:
+  explicit TestWindowFramePolicy(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void explicit_use_window_frame() {
     ClientApp::WindowFramePolicyInputs in;

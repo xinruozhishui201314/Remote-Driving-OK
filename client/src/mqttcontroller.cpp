@@ -35,19 +35,46 @@ bool shouldLogMqttInboundMessage(quint64 &seq) {
   return (seq % static_cast<quint64>(mod)) == 0u;
 }
 
-quint64 s_mqttPahoInboundSeq = 0;
 quint64 s_mqttSubInboundSeq = 0;
-
-bool mqttChainVerbose() {
-  static const int v = qEnvironmentVariableIntValue("CLIENT_MQTT_CHAIN_DIAG");
-  return v != 0;
-}
 }  // namespace
 
-MqttController::MqttController(QObject *parent) : QObject(parent) {
+MqttController::MqttController(QObject *parent)
+    : QObject(parent),
+      m_brokerUrl(QStringLiteral("mqtt://localhost:1883")),
+      m_clientId(QStringLiteral("remote_driving_client")),
+      m_controlTopic(QStringLiteral("vehicle/control")),
+      m_statusTopic(QStringLiteral("vehicle/status")),
+      m_currentVin(),
+      m_isConnected(false),
+      m_seq(0),
+      m_stateMutex(),
+      m_reconnectTimer(nullptr),
+      m_reconnectAttempts(0),
+      m_maxReconnectAttempts(10),
+      m_baseReconnectDelayMs(1000),
+      m_maxReconnectDelayMs(30000),
+      m_reconnectScheduled(false),
+      m_webrtcClient(nullptr),
+      m_preferredChannel(ChannelType::AUTO),
+      m_activeChannel(ChannelType::MQTT),
+      m_controlChannelReadyCache(false),
+      m_brokerConnectInFlight(false),
+      m_connectWatchdogGeneration(0),
+      m_dataChannelCount(0),
+      m_mqttCount(0),
+      m_websocketCount(0)
 #ifdef ENABLE_MQTT_PAHO
-  // Paho MQTT 客户端将在 connectToBroker 时初始化
+      ,
+      m_client(nullptr),
+      m_mutex(),
+      m_mqttThread(),
+      m_shouldStop(false)
+#else
+      ,
+      m_mosquittoSubProcess(nullptr),
+      m_mosquittoLineBuffer()
 #endif
+{
   // 初始化重连定时器（指数退避）
   m_reconnectTimer = new QTimer(this);
   m_reconnectTimer->setSingleShot(true);
@@ -187,14 +214,10 @@ void MqttController::connectToBroker() {
   });
 
 #ifdef ENABLE_MQTT_PAHO
-  try {
-    QString address = QString("%1:%2").arg(host).arg(port);
-    if (mqttChainVerbose()) {
-      qInfo() << "[CLIENT][MQTT][CHAIN] phase=PAHO_CREATE clientId=" << m_clientId << " server=" << address;
-    }
+  QString address = QString("%1:%2").arg(host).arg(port);
 
-    m_client =
-        std::make_unique<mqtt::async_client>(address.toStdString(), m_clientId.toStdString());
+  m_client =
+      std::make_unique<mqtt::async_client>(address.toStdString(), m_clientId.toStdString());
 
     m_client->set_connected_handler([this](const std::string &) {
       qInfo().noquote() << "[CLIENT][MQTT][CHAIN] phase=PAHO_TCP_OK vin=" << m_currentVin
@@ -212,9 +235,6 @@ void MqttController::connectToBroker() {
     m_client->set_message_callback([this](mqtt::const_message_ptr msg) {
       QString topic = QString::fromStdString(msg->get_topic());
       QByteArray payload(msg->to_string().data(), msg->to_string().length());
-      if (shouldLogMqttInboundMessage(s_mqttPahoInboundSeq)) {
-        qDebug() << "[MQTT] 消息回调触发，主题:" << topic << "大小:" << payload.size() << "bytes";
-      }
       QMetaObject::invokeMethod(this, "onMessageReceived", Qt::QueuedConnection,
                                 Q_ARG(QByteArray, topic.toUtf8()), Q_ARG(QByteArray, payload));
     });
@@ -225,19 +245,7 @@ void MqttController::connectToBroker() {
     connOpts.set_keep_alive_interval(60);
     connOpts.set_connect_timeout(10);
 
-    if (mqttChainVerbose()) {
-      qInfo() << "[CLIENT][MQTT][CHAIN] phase=PAHO_CONNECT_ASYNC connect_timeout_s=10 keepalive_s=60";
-    }
     m_client->connect(connOpts);
-
-  } catch (const mqtt::exception &exc) {
-    ++m_connectWatchdogGeneration;
-    m_brokerConnectInFlight = false;
-    const QString err = QStringLiteral("MQTT Paho 异常: %1").arg(exc.what());
-    qCritical().noquote() << "[CLIENT][MQTT][CHAIN] phase=PAHO_EXCEPTION " << err;
-    emit mqttConnectResolved(false, QStringLiteral("paho_exception|%1").arg(exc.what()));
-    emit errorOccurred(err);
-  }
 #else
   qInfo() << "[CLIENT][MQTT][CHAIN] phase=MOSQUITTO_SUB_SCHEDULE delay_ms=500 (无 Paho：订阅靠子进程)";
   QTimer::singleShot(500, this, [this, watchdogGen]() {
@@ -258,18 +266,11 @@ void MqttController::disconnectFromBroker() {
   qInfo() << "[CLIENT][MQTT][CHAIN] phase=USER_DISCONNECT url=" << m_brokerUrl;
 
 #ifdef ENABLE_MQTT_PAHO
-  try {
-    if (m_client) {
-      // 异步断开：不阻塞主线程；用 QTimer 延迟销毁客户端给 paho 内部清理时间
-      auto *rawClient = m_client.release();
-      try {
-        rawClient->disconnect();
-      } catch (...) {
-      }
-      QTimer::singleShot(2000, [rawClient]() { delete rawClient; });
-    }
-  } catch (const mqtt::exception &exc) {
-    qWarning() << "[CLIENT][MQTT] disconnect error:" << exc.what();
+  if (m_client) {
+    // 异步断开：不阻塞主线程；用 QTimer 延迟销毁客户端给 paho 内部清理时间
+    auto *rawClient = m_client.release();
+    rawClient->disconnect();
+    QTimer::singleShot(2000, [rawClient]() { delete rawClient; });
   }
 #else
   // 停止 mosquitto_sub 进程（异步终止，不阻塞主线程）
@@ -531,18 +532,8 @@ void MqttController::requestRemoteControl(bool enable) {
         QStringLiteral("远驾接管未发送：请先连接 MQTT（视频/DataChannel 不能替代 MQTT）"));
     return;
   }
-  try {
-    sendControlCommand(
-        MqttControlEnvelope::buildRemoteControl(enable, QDateTime::currentMSecsSinceEpoch()));
-  } catch (const std::exception &e) {
-    qCritical() << "[REMOTE_CONTROL][SEND] ✗ 异常:" << e.what();
-    emit errorOccurred(QStringLiteral("remote_control 发送异常: %1").arg(e.what()));
-    return;
-  } catch (...) {
-    qCritical() << "[REMOTE_CONTROL][SEND] ✗ 未知异常";
-    emit errorOccurred(QStringLiteral("remote_control 发送未知异常"));
-    return;
-  }
+  sendControlCommand(
+      MqttControlEnvelope::buildRemoteControl(enable, QDateTime::currentMSecsSinceEpoch()));
   qDebug() << "[REMOTE_CONTROL][SEND] <<< 已调用 sendControlCommand(remote_control) topic="
            << m_controlTopic << " 请确认车端收到";
 }
@@ -558,21 +549,15 @@ bool MqttController::publishMessage(const QString &topic, const QJsonObject &pay
   const int q = (qos >= 1) ? 1 : 0;
 
 #ifdef ENABLE_MQTT_PAHO
-  try {
-    if (m_client && m_client->is_connected()) {
-      mqtt::message_ptr msg =
-          mqtt::make_message(topic.toStdString(), std::string(data.data(), data.length()));
-      msg->set_qos(q);
-      m_client->publish(msg);
-      return true;
-    }
-    qWarning() << "[CLIENT][MQTT] ✗ Paho 未连接，未发送 topic=" << topic;
-    return false;
-  } catch (const mqtt::exception &exc) {
-    qWarning() << "[CLIENT][MQTT] ✗ Paho 发布失败 topic=" << topic << " error=" << exc.what();
-    emit errorOccurred(QString("MQTT publish error: %1").arg(exc.what()));
-    return false;
+  if (m_client && m_client->is_connected()) {
+    mqtt::message_ptr msg =
+        mqtt::make_message(topic.toStdString(), std::string(data.data(), data.length()));
+    msg->set_qos(q);
+    m_client->publish(msg);
+    return true;
   }
+  qWarning() << "[CLIENT][MQTT] ✗ Paho 未连接，未发送 topic=" << topic;
+  return false;
 #else
   QUrl url(m_brokerUrl);
   QString host = url.host();
@@ -624,22 +609,18 @@ void MqttController::onConnected() {
                     << " | 下一环节: 订阅 status；车控发布 topic=" << m_controlTopic
                     << " | QML 请监听 mqttBrokerConnectionChanged(true)";
 #ifdef ENABLE_MQTT_PAHO
-  try {
-    if (m_client) {
-      // 异步订阅，不调用 ->wait()，不阻塞主线程
-      qDebug() << "[CLIENT][MQTT] 订阅状态主题:" << m_statusTopic;
-      m_client->subscribe(m_statusTopic.toStdString(), 0);  // QoS 0，低延迟
+  if (m_client) {
+    // 异步订阅，不调用 ->wait()，不阻塞主线程
+    qDebug() << "[CLIENT][MQTT] 订阅状态主题:" << m_statusTopic;
+    m_client->subscribe(m_statusTopic.toStdString(), 0);  // QoS 0，低延迟
 
-      if (!m_currentVin.isEmpty()) {
-        QString vehicleStatusTopic = QString("vehicle/%1/status").arg(m_currentVin);
-        qDebug() << "[CLIENT][MQTT] 订阅车辆主题:" << vehicleStatusTopic;
-        m_client->subscribe(vehicleStatusTopic.toStdString(), 0);
-      }
-    } else {
-      qWarning() << "[CLIENT][MQTT] 客户端为空，无法订阅";
+    if (!m_currentVin.isEmpty()) {
+      QString vehicleStatusTopic = QString("vehicle/%1/status").arg(m_currentVin);
+      qDebug() << "[CLIENT][MQTT] 订阅车辆主题:" << vehicleStatusTopic;
+      m_client->subscribe(vehicleStatusTopic.toStdString(), 0);
     }
-  } catch (const mqtt::exception &exc) {
-    qWarning() << "[CLIENT][MQTT] 订阅错误:" << exc.what();
+  } else {
+    qWarning() << "[CLIENT][MQTT] 客户端为空，无法订阅";
   }
 #else
   // 使用 mosquitto_sub 订阅状态主题

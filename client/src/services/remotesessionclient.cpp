@@ -10,7 +10,7 @@
 #include <QUrl>
 
 RemoteSessionClient::RemoteSessionClient(QNetworkAccessManager *nam, QObject *parent)
-    : QObject(parent), m_nam(nam) {}
+    : QObject(parent), m_nam(nam), m_reply(nullptr), m_requestVin() {}
 
 void RemoteSessionClient::abortCurrent() {
   if (m_reply) {

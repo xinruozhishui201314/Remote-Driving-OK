@@ -34,6 +34,11 @@ enum class RtpPlayoutMode {
 
 class RtpTrueJitterBuffer {
  public:
+  RtpTrueJitterBuffer();
+  // 禁用拷贝以满足 -Weffc++
+  RtpTrueJitterBuffer(const RtpTrueJitterBuffer&) = delete;
+  RtpTrueJitterBuffer& operator=(const RtpTrueJitterBuffer&) = delete;
+
   void reloadEnv();
   void setClockContext(RtpStreamClockContext *ctx) { m_clock = ctx; }
 
@@ -81,8 +86,11 @@ class RtpTrueJitterBuffer {
   int m_metricsIntervalMs = 0;
 
   struct Slot {
-    RtpIngressPacket pkt;
+    RtpIngressPacket pkt = {};
     qint64 deadline_wall_ms = 0;
+
+    Slot() = default;
+    Slot(RtpIngressPacket &&p, qint64 d) : pkt(std::move(p)), deadline_wall_ms(d) {}
   };
 
   std::unordered_map<quint16, Slot> m_bySeq;

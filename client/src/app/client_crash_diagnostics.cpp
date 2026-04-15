@@ -205,25 +205,17 @@ void writeStderr(const char *s) {
 
 void clientTerminateHandler() {
   writeStderr("[Client][CrashDiag] std::terminate() invoked\n");
-  try {
+  {
     if (std::current_exception()) {
-      try {
+      {
         std::rethrow_exception(std::current_exception());
-      } catch (const std::exception &e) {
-        writeStderr("[Client][CrashDiag] active std::exception: ");
-        writeStderr(e.what());
-        writeStderr("\n");
-      } catch (...) {
-        writeStderr("[Client][CrashDiag] active exception: non-std type\n");
-      }
+      }  
     } else {
       writeStderr(
           "[Client][CrashDiag] std::current_exception() is null "
           "(typical: noexcept violation, double exception, or direct std::terminate)\n");
     }
-  } catch (...) {
-    writeStderr("[Client][CrashDiag] exception while logging in terminate handler\n");
-  }
+  } 
   if (s_prevTerminate) {
     s_prevTerminate();
   } else {

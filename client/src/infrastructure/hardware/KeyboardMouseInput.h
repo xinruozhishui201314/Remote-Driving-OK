@@ -22,6 +22,7 @@
  */
 class KeyboardMouseInput : public IInputDevice {
   Q_OBJECT
+  Q_DISABLE_COPY(KeyboardMouseInput)
 
  public:
   explicit KeyboardMouseInput(QObject* parent = nullptr);

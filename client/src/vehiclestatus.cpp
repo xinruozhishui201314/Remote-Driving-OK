@@ -8,7 +8,31 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-VehicleStatus::VehicleStatus(QObject *parent) : QObject(parent) {}
+VehicleStatus::VehicleStatus(QObject *parent)
+    : QObject(parent),
+      m_speed(0.0),
+      m_batteryLevel(100.0),
+      m_gear("N"),
+      m_steering(0.0),
+      m_videoConnected(false),
+      m_mqttConnected(false),
+      m_odometer(0.0),
+      m_voltage(48.0),
+      m_current(0.0),
+      m_temperature(25.0),
+      m_networkRtt(0.0),
+      m_networkPacketLossPercent(0.0),
+      m_networkBandwidthKbps(0.0),
+      m_networkJitterMs(0.0),
+      m_remoteControlEnabled(false),
+      m_drivingMode("自驾"),
+      m_sweepActive(false),
+      m_brakeActive(false),
+      m_waterTankLevel(75.0),
+      m_trashBinLevel(40.0),
+      m_cleaningCurrent(400),
+      m_cleaningTotal(500),
+      m_lastStatusTimestamp(0) {}
 
 void VehicleStatus::setSpeed(double speed) {
   if (qAbs(m_speed - speed) > 0.01) {

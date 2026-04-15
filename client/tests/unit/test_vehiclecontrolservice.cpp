@@ -16,7 +16,8 @@ class RecordingTransport final : public ITransportManager {
  public:
   QByteArray lastControlJson;
 
-  explicit RecordingTransport(QObject *parent = nullptr) : ITransportManager(parent) {}
+  explicit RecordingTransport(QObject *parent = nullptr)
+      : ITransportManager(parent), lastControlJson() {}
 
   bool initialize(const TransportConfig &) override { return true; }
   void shutdown() override {}
@@ -46,7 +47,9 @@ class RecordingTransport final : public ITransportManager {
 
 class TestVehicleControlService : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestVehicleControlService)
+ public:
+  explicit TestVehicleControlService(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void sendUiCommand_buildsEnvelopeWithTraceAndSession();
   void controlLoop_start_sendsDriveCommandPayloadViaTransport();
@@ -60,7 +63,7 @@ void TestVehicleControlService::sendUiCommand_buildsEnvelopeWithTraceAndSession(
   vm.setCurrentVin(QStringLiteral("VIN_UNIT_TEST"));
 
   RecordingTransport transport;
-  VehicleControlService vcs(nullptr, &vm, nullptr);
+  VehicleControlService vcs(nullptr, &vm, nullptr, nullptr); // 加入 InputSampler* 参数
   vcs.setTransport(&transport);
   QVERIFY(vcs.initialize());
 
@@ -98,7 +101,7 @@ void TestVehicleControlService::controlLoop_start_sendsDriveCommandPayloadViaTra
   vm.setCurrentVin(QStringLiteral("VIN_LOOP"));
 
   RecordingTransport transport;
-  VehicleControlService vcs(nullptr, &vm, nullptr, this);
+  VehicleControlService vcs(nullptr, &vm, nullptr, nullptr, this);
   vcs.setTransport(&transport);
   QVERIFY(vcs.initialize());
   vcs.setSessionCredentials(QStringLiteral("VIN_LOOP"), QStringLiteral("session-loop"),
@@ -135,7 +138,7 @@ void TestVehicleControlService::controlLoop_start_sendsDriveCommandPayloadViaTra
 }
 
 void TestVehicleControlService::setControlConfig_zeroHz_clamped_initializeNoCrash() {
-  VehicleControlService vcs(nullptr, nullptr, nullptr, this);
+  VehicleControlService vcs(nullptr, nullptr, nullptr, nullptr, this);
   VehicleControlService::ControlConfig c;
   c.controlRateHz = 0;
   vcs.setControlConfig(c);
@@ -150,7 +153,7 @@ void TestVehicleControlService::start_idempotent_secondStartDoesNotBreak() {
   vm.addTestVehicle(QStringLiteral("VIN_IDEM"), QStringLiteral("i"));
   vm.setCurrentVin(QStringLiteral("VIN_IDEM"));
   RecordingTransport transport;
-  VehicleControlService vcs(nullptr, &vm, nullptr, this);
+  VehicleControlService vcs(nullptr, &vm, nullptr, nullptr, this);
   vcs.setTransport(&transport);
   QVERIFY(vcs.initialize());
   vcs.setSessionCredentials(QStringLiteral("VIN_IDEM"), QStringLiteral("s"), QStringLiteral("t"));

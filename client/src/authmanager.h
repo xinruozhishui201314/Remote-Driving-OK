@@ -24,6 +24,7 @@ class KeystoreManager;
 class AuthManager : public QObject {
   Q_OBJECT
   QML_ELEMENT
+  Q_DISABLE_COPY(AuthManager)
   Q_PROPERTY(QString username READ username NOTIFY usernameChanged)
   Q_PROPERTY(bool isLoggedIn READ isLoggedIn NOTIFY loginStatusChanged)
   Q_PROPERTY(QString authToken READ authToken NOTIFY authTokenChanged)

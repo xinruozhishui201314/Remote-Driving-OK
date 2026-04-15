@@ -35,6 +35,9 @@ static RtpIngressPacket makePkt(const QByteArray &rtpHdr) {
 
 class TestRtpTrueJitterBuffer : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestRtpTrueJitterBuffer)
+ public:
+  explicit TestRtpTrueJitterBuffer(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void init();
   void mode_off_enqueue_no_buffer();

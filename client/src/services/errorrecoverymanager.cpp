@@ -6,7 +6,14 @@
 
 #include <algorithm>
 
-ErrorRecoveryManager::ErrorRecoveryManager(QObject* parent) : QObject(parent) {
+ErrorRecoveryManager::ErrorRecoveryManager(QObject* parent)
+    : QObject(parent),
+      m_config(),
+      m_errors(),
+      m_actions(),
+      m_retryTimer(),
+      m_pendingCategory(ErrorCategory::UNKNOWN) {
+  m_retryTimer.setParent(this);
   connect(&m_retryTimer, &QTimer::timeout, this, &ErrorRecoveryManager::attemptRecovery);
   m_retryTimer.setSingleShot(true);
 }

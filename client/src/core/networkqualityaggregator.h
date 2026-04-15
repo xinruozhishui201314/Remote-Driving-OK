@@ -26,6 +26,7 @@ class NodeHealthChecker;
  */
 class NetworkQualityAggregator : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(NetworkQualityAggregator)
   Q_PROPERTY(double score READ score NOTIFY scoreChanged)
   Q_PROPERTY(bool degraded READ degraded NOTIFY degradedChanged)
   /** 端到端延时（ms），目前映射自 MQTT 反馈的 RTT */

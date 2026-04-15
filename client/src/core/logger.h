@@ -34,6 +34,7 @@
  */
 class Logger : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(Logger)
 
  public:
   enum class Level { Debug, Info, Warning, Critical };
@@ -100,8 +101,8 @@ class Logger : public QObject {
 
  private:
   struct LogEntry {
-    Level level;
-    QString formatted;
+    Level level = Level::Info;
+    QString formatted = {};
   };
 
   void workerLoop();

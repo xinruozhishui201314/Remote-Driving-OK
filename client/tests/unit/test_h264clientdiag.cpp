@@ -8,6 +8,9 @@
 
 class TestH264ClientDiag : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestH264ClientDiag)
+ public:
+  explicit TestH264ClientDiag(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void initTestCase();
   void cleanup();

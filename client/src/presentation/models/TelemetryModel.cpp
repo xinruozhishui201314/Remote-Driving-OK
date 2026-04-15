@@ -3,7 +3,20 @@
 #include <QDateTime>
 #include <QDebug>
 
-TelemetryModel::TelemetryModel(QObject* parent) : QObject(parent) {}
+TelemetryModel::TelemetryModel(QObject* parent)
+    : QObject(parent),
+      m_speed(0.0),
+      m_throttle(0.0),
+      m_brake(0.0),
+      m_steering(0.0),
+      m_gear(0),
+      m_battery(100.0),
+      m_rpm(0.0),
+      m_heading(0.0),
+      m_latitude(0.0),
+      m_longitude(0.0),
+      m_vehicleReady(false),
+      m_lastUpdateTimestamp(0) {}
 
 void TelemetryModel::update(double speed, double throttle, double brake, double steering, int gear,
                             double battery) {

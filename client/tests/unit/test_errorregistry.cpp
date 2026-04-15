@@ -4,6 +4,9 @@
 
 class TestErrorRegistry : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestErrorRegistry)
+ public:
+  explicit TestErrorRegistry(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void init();
   void singleton_same_instance();

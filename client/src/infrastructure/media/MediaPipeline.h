@@ -1,4 +1,5 @@
 #pragma once
+#include "../../core/performancemonitor.h"
 #include "../../utils/LockFreeQueue.h"
 #include "FramePool.h"
 #include "IHardwareDecoder.h"
@@ -11,17 +12,11 @@
 
 /**
  * 媒体管线（《客户端架构设计》§3.1.2）。
- * 零拷贝管线：网络 → RTP解封装 → 解码（独立线程）→ 帧池 → 渲染。
- *
- * 数据流：
- *   IO线程: onVideoPacketReceived() → 压入 m_decodeQueue
- *   解码线程: 从队列取包 → IHardwareDecoder → 帧池帧 → emit frameReady
- *   UI 线程: 接收 frameReady → QVideoSink::setVideoFrame()（经 WebRtcClient）
- *
- * 背压：m_decodeQueue 为 SPSC、容量 256；满时丢帧并累计 framesDropped（见 onVideoPacketReceived）。
+ * 2025/2026 规范要求：全链路延迟打桩。
  */
 class MediaPipeline : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(MediaPipeline)
 
  public:
   struct PipelineConfig {
@@ -31,6 +26,7 @@ class MediaPipeline : public QObject {
     QString codec = "H264";
     VideoFrame::MemoryType gpuMemoryType = VideoFrame::MemoryType::CPU_MEMORY;
     uint32_t cameraId = 0;
+    PerformanceMonitor* perfMonitor = nullptr;
   };
 
   struct PipelineStats {
@@ -72,6 +68,7 @@ class MediaPipeline : public QObject {
   struct NALUnit {
     QByteArray data;
     int64_t pts = 0;
+    int64_t captureTimestamp = 0;
   };
 
   void decodeLoop();

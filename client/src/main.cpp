@@ -22,6 +22,8 @@
 #include "infrastructure/mqtttransportadapter.h"
 #include "mqttcontroller.h"
 #include "nodehealthchecker.h"
+#include "infrastructure/hardware/InputSampler.h"
+#include "infrastructure/hardware/KeyboardMouseInput.h"
 #include "services/degradationmanager.h"
 #include "services/safetymonitorservice.h"
 #include "services/sessionmanager.h"
@@ -244,8 +246,13 @@ int main(int argc, char *argv[]) {
       std::make_unique<SafetyMonitorService>(vehicleStatus.get(), systemStateMachine.get(), nullptr);
   safetyMonitor->attachToSafetyThread(safetyThread.get());
 
+  auto inputSampler = std::make_unique<InputSampler>(&app);
+  auto hidDevice = std::make_unique<KeyboardMouseInput>(&app);
+  inputSampler->setDevice(hidDevice.get());
+  inputSampler->start(200); // 200Hz 采样速率
+
   auto vehicleControl = std::make_unique<VehicleControlService>(
-      mqttController.get(), vehicleManager.get(), webrtcStreamManager.get(), nullptr);
+      mqttController.get(), vehicleManager.get(), webrtcStreamManager.get(), inputSampler.get(), nullptr);
   vehicleControl->attachToSafetyThread(safetyThread.get());
 
   // ★ 核心修复：连接异步 DataChannel 发送信号
@@ -293,7 +300,7 @@ int main(int argc, char *argv[]) {
   QObject::connect(
       vehicleStatus.get(), &VehicleStatus::remoteControlEnabledChanged, &app,
       [fsm = systemStateMachine.get(), vs = vehicleStatus.get()](bool enabled) {
-        try {
+        {
           if (!enabled || !fsm || !vs)
             return;
           if (fsm->stateEnum() != SystemStateMachine::SystemState::PRE_FLIGHT)
@@ -303,16 +310,12 @@ int main(int argc, char *argv[]) {
           } else {
             qInfo().noquote() << "[Client][Session] PREFLIGHT_OK：车端已确认远驾，进入 DRIVING";
           }
-        } catch (const std::exception &e) {
-          qCritical() << "[Client][Session] remoteControlEnabledChanged:" << e.what();
-        } catch (...) {
-          qCritical() << "[Client][Session] remoteControlEnabledChanged: unknown exception";
-        }
+        }  
       });
   QObject::connect(systemStateMachine.get(), &SystemStateMachine::stateChanged, &app,
                    [fsm = systemStateMachine.get(),
                     vs = vehicleStatus.get()](const QString &newName, const QString & /*old*/) {
-                     try {
+                     {
                        if (newName != QLatin1String("PRE_FLIGHT") || !fsm || !vs)
                          return;
                        if (!vs->remoteControlEnabled())
@@ -323,11 +326,7 @@ int main(int argc, char *argv[]) {
                        } else {
                          qInfo().noquote() << "[Client][Session] PRE_FLIGHT：远驾已先确认，进入 DRIVING";
                        }
-                     } catch (const std::exception &e) {
-                       qCritical() << "[Client][Session] stateChanged PRE_FLIGHT:" << e.what();
-                     } catch (...) {
-                       qCritical() << "[Client][Session] stateChanged PRE_FLIGHT: unknown exception";
-                     }
+                     }  
                    });
 
   QObject::connect(authManager.get(), &AuthManager::loginSucceeded, teleopSession.get(),

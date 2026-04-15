@@ -12,6 +12,7 @@ namespace ClientApp {
 namespace {
 
 bool readinessGateSkipped(const QProcessEnvironment &env) {
+  Q_UNUSED(env);
   if (qEnvironmentVariableIntValue("CLIENT_SKIP_PLATFORM_GATE") == 1) {
     return true;
   }

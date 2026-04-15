@@ -9,9 +9,20 @@
 
 VehicleManager::VehicleManager(QObject *parent)
     : QObject(parent),
-      m_networkManager(new QNetworkAccessManager(this)),
-      m_catalog(new VehicleCatalogClient(m_networkManager, this)),
-      m_sessionClient(new RemoteSessionClient(m_networkManager, this)) {
+      m_vehicleList(),
+      m_vehicles(),
+      m_currentVin(),
+      m_networkManager(nullptr),
+      m_catalog(nullptr),
+      m_sessionClient(nullptr),
+      m_lastSessionId(),
+      m_lastSessionVin(),
+      m_lastWhipUrl(),
+      m_lastWhepUrl(),
+      m_lastControlConfig() {
+  m_networkManager = new QNetworkAccessManager(this);
+  m_catalog = new VehicleCatalogClient(m_networkManager, this);
+  m_sessionClient = new RemoteSessionClient(m_networkManager, this);
   connect(m_catalog, &VehicleCatalogClient::listSucceeded, this,
           [this](const QJsonArray &vehicles) {
             updateVehicleList(vehicles);

@@ -89,15 +89,15 @@ class Tracing : public QObject {
    * Span 结构体，记录追踪跨度信息
    */
   struct Span {
-    QString traceId;
-    QString spanId;
-    QString parentSpanId;
-    QString name;
-    QString operation;
+    QString traceId = {};
+    QString spanId = {};
+    QString parentSpanId = {};
+    QString name = {};
+    QString operation = {};
     int64_t startTimeNs = 0;
     int64_t endTimeNs = 0;
-    QVariantMap tags;
-    QString error;
+    QVariantMap tags = {};
+    QString error = {};
     bool ended = false;
 
     /**
@@ -178,15 +178,11 @@ class Tracing : public QObject {
   template <typename Func>
   auto trace(const QString& name, Func&& func) -> decltype(func()) {
     Span span = beginSpan(name);
-    try {
+    {
       auto result = func();
       endSpan(span);
       return result;
-    } catch (...) {
-      markSpanError(span, "exception");
-      endSpan(span);
-      throw;
-    }
+    } 
   }
 
   /**
@@ -195,15 +191,11 @@ class Tracing : public QObject {
   template <typename Func>
   auto trace(const QString& name, const QString& operation, Func&& func) -> decltype(func()) {
     Span span = beginSpan(name, operation);
-    try {
+    {
       auto result = func();
       endSpan(span);
       return result;
-    } catch (...) {
-      markSpanError(span, "exception");
-      endSpan(span);
-      throw;
-    }
+    } 
   }
 
   // ═══════════════════════════════════════════════════════════════

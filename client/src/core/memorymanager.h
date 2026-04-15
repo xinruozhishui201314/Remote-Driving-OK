@@ -1,51 +1,59 @@
 #pragma once
 #include <QObject>
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <vector>
 
 /**
  * 内存管理器（《客户端架构设计》§4.3）。
- *
- * 功能：
- * 1. ObjectPool<T>：预分配对象池，消除关键路径动态分配
- * 2. mlockall()：锁定所有内存页到物理内存（防止 page fault 抖动）
- * 3. 内存使用统计
  */
 
 /**
  * 类型安全对象池（预分配，O(1) acquire/release）。
+ * 2025/2026 规范要求：Lock-free 设计，消除控制路径上的 std::mutex。
  */
 template <typename T, std::size_t PoolSize = 64>
 class ObjectPool {
  public:
   ObjectPool() {
     m_storage.resize(PoolSize);
-    m_freeList.reserve(PoolSize);
     for (std::size_t i = 0; i < PoolSize; ++i) {
-      m_freeList.push_back(&m_storage[i]);
+      m_freeNodes[i].store(&m_storage[i]);
+    }
+    m_top.store(PoolSize);
+  }
+
+  // 获取对象（O(1)，无锁原子操作）
+  T* acquire() {
+    while (true) {
+      std::size_t currentTop = m_top.load(std::memory_order_acquire);
+      if (currentTop == 0) {
+        return nullptr; // 池已空
+      }
+      std::size_t nextTop = currentTop - 1;
+      if (m_top.compare_exchange_weak(currentTop, nextTop, std::memory_order_release)) {
+        return m_freeNodes[nextTop].load(std::memory_order_acquire);
+      }
     }
   }
 
-  // 获取对象（O(1)，不调用构造函数）
-  T* acquire() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (m_freeList.empty())
-      return nullptr;
-    T* obj = m_freeList.back();
-    m_freeList.pop_back();
-    return obj;
-  }
-
-  // 归还对象（O(1)，不调用析构函数）
+  // 归还对象（O(1)，无锁原子操作）
   void release(T* obj) {
-    if (!obj)
-      return;
-    std::lock_guard<std::mutex> lock(m_mutex);
-    m_freeList.push_back(obj);
+    if (!obj) return;
+    while (true) {
+      std::size_t currentTop = m_top.load(std::memory_order_acquire);
+      if (currentTop >= PoolSize) {
+        return;
+      }
+      std::size_t nextTop = currentTop + 1;
+      m_freeNodes[currentTop].store(obj, std::memory_order_release);
+      if (m_top.compare_exchange_weak(currentTop, nextTop, std::memory_order_release)) {
+        return;
+      }
+    }
   }
 
   // RAII 句柄
@@ -53,28 +61,49 @@ class ObjectPool {
     T* ptr = nullptr;
     ObjectPool* pool = nullptr;
 
+    Handle() = default;
+    Handle(T* p, ObjectPool* pl) : ptr(p), pool(pl) {}
     ~Handle() {
       if (pool && ptr)
         pool->release(ptr);
     }
+    
+    Handle(Handle&& other) noexcept : ptr(other.ptr), pool(other.pool) {
+      other.ptr = nullptr;
+      other.pool = nullptr;
+    }
+    Handle& operator=(Handle&& other) noexcept {
+      if (this != &other) {
+        if (pool && ptr) pool->release(ptr);
+        ptr = other.ptr;
+        pool = other.pool;
+        other.ptr = nullptr;
+        other.pool = nullptr;
+      }
+      return *this;
+    }
+    
+    Handle(const Handle&) = delete;
+    Handle& operator=(const Handle&) = delete;
+
     T* operator->() { return ptr; }
     T& operator*() { return *ptr; }
     explicit operator bool() const { return ptr != nullptr; }
+    T* get() const { return ptr; }
   };
 
-  Handle acquireHandle() { return {acquire(), this}; }
+  Handle acquireHandle() { return Handle(acquire(), this); }
 
   std::size_t available() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    return m_freeList.size();
+    return m_top.load(std::memory_order_relaxed);
   }
 
   static constexpr std::size_t capacity() { return PoolSize; }
 
  private:
   std::vector<T> m_storage;
-  std::vector<T*> m_freeList;
-  mutable std::mutex m_mutex;
+  std::atomic<T*> m_freeNodes[PoolSize];
+  std::atomic<std::size_t> m_top;
 };
 
 /**
@@ -82,6 +111,7 @@ class ObjectPool {
  */
 class MemoryManager : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(MemoryManager)
 
  public:
   static MemoryManager& instance() {

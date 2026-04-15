@@ -7,6 +7,9 @@
 
 class TestNetworkQualityAggregator : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestNetworkQualityAggregator)
+ public:
+  explicit TestNetworkQualityAggregator(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void initTestCase();
   void cleanupTestCase();
@@ -83,7 +86,7 @@ void TestNetworkQualityAggregator::test_scoreProperty() {
   NetworkQualityAggregator aggregator(&vehicleStatus, &nodeHealthChecker);
 
   // 获取初始分数
-  double initialScore = aggregator.score();
+  Q_UNUSED(aggregator.score());
 
   // 触发状态变化（模拟车辆连接）
   vehicleStatus.setVideoConnected(true);
@@ -171,7 +174,7 @@ void TestNetworkQualityAggregator::test_recomputeOnStatusChange() {
   NetworkQualityAggregator aggregator(&vehicleStatus, &nodeHealthChecker);
 
   // 获取初始分数
-  double initialScore = aggregator.score();
+  Q_UNUSED(aggregator.score());
 
   // 模拟视频断开
   vehicleStatus.setVideoConnected(false);

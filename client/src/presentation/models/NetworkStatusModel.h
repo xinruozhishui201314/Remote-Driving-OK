@@ -8,6 +8,7 @@
  */
 class NetworkStatusModel : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(NetworkStatusModel)
 
   Q_PROPERTY(double rttMs READ rttMs NOTIFY networkChanged)
   Q_PROPERTY(double packetLossRate READ packetLossRate NOTIFY networkChanged)

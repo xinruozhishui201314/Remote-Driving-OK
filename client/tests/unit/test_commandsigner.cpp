@@ -5,6 +5,9 @@
 
 class TestCommandSigner : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestCommandSigner)
+ public:
+  explicit TestCommandSigner(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void not_ready_sign_fails();
   void sign_and_verify_roundtrip();

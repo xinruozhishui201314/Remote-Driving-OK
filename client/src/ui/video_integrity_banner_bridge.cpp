@@ -30,7 +30,8 @@ QString presentAlertTitle(const QString &code) {
 
 }  // namespace
 
-VideoIntegrityBannerBridge::VideoIntegrityBannerBridge(QObject *parent) : QObject(parent) {
+VideoIntegrityBannerBridge::VideoIntegrityBannerBridge(QObject *parent)
+    : QObject(parent), m_decodeSub(0), m_presentSub(0) {
   m_decodeSub = EventBus::instance().subscribe<VideoDecodeIntegrityEvent>(
       [this](const VideoDecodeIntegrityEvent &e) {
         const QString title = decodeAlertTitle(e.code);

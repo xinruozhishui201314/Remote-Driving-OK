@@ -208,7 +208,32 @@ void WebRtcStreamManager::connectEncoderHintMqttRelay(MqttController *mqtt) {
              "MqttController::publishClientEncoderHint (topic teleop/client_encoder_hint)";
 }
 
-WebRtcStreamManager::WebRtcStreamManager(QObject *parent) : QObject(parent) {
+WebRtcStreamManager::WebRtcStreamManager(QObject *parent)
+    : QObject(parent),
+      m_front(nullptr),
+      m_rear(nullptr),
+      m_left(nullptr),
+      m_right(nullptr),
+      m_app(QStringLiteral("teleop")),
+      m_vin(),
+      m_vehicleManager(nullptr),
+      m_currentBase(),
+      m_zlmPollTimer(nullptr),
+      m_presentDiag1HzTimer(nullptr),
+      m_lastZlmStreamsSeen(),
+      m_lastEmittedAnyConnected(false),
+      m_qmlLayerEventsThisSecond(0),
+      m_glInfoLoggedOnce(false),
+      m_runtimeHighQueuedLagStreakSec(0),
+      m_runtimeLowQueuedLagStreakSec(0),
+      m_runtimeQueuedLagSloBreached(false),
+      m_streamsConnectedVin(),
+      m_zlmReadyTimer(nullptr),
+      m_zlmReadyNam(nullptr),
+      m_zlmReadyReply(nullptr),
+      m_zlmReadyWhep(),
+      m_zlmReadyDeadlineMs(0),
+      m_zlmReadyPollInFlight(false) {
   m_front = new WebRtcClient(this);
   m_rear = new WebRtcClient(this);
   m_left = new WebRtcClient(this);
@@ -344,14 +369,9 @@ WebRtcStreamManager::WebRtcStreamManager(QObject *parent) : QObject(parent) {
   m_zlmPollTimer = new QTimer(this);
   m_zlmPollTimer->setInterval(15000);  // 每 15s 查一次，避免频繁
   connect(m_zlmPollTimer, &QTimer::timeout, this, [this]() {
-    try {
+    {
       checkZlmStreamRegistration();
-    } catch (const std::exception &e) {
-      qCritical() << "[StreamManager][Timer][ERROR] ZLM 流状态轮询定时器异常: stream=" << m_vin
-                  << " error=" << e.what();
-    } catch (...) {
-      qCritical() << "[StreamManager][Timer][ERROR] ZLM 流状态轮询定时器未知异常: stream=" << m_vin;
-    }
+    }  
   });
   m_zlmPollTimer->start();
   qInfo() << "[StreamManager][Diag] ZLM 流状态轮询已启动，周期=15s";
@@ -1129,14 +1149,10 @@ void WebRtcStreamManager::forceRefreshAllRenderers(const QString &reason) {
   // 遍历四路 WebRtcClient，调用其 forceRefresh 方法
   auto refreshClient = [&](const char *name, WebRtcClient *client) {
     if (client) {
-      try {
+      {
         client->forceRefresh();
         qInfo() << "[StreamManager] forceRefresh:" << name << " 已调用";
-      } catch (const std::exception &e) {
-        qWarning() << "[StreamManager] forceRefresh:" << name << " 异常:" << e.what();
-      } catch (...) {
-        qWarning() << "[StreamManager] forceRefresh:" << name << " 未知异常";
-      }
+      }  
     } else {
       qWarning() << "[StreamManager] forceRefresh:" << name << " 为 nullptr，跳过";
     }
@@ -1229,7 +1245,7 @@ void WebRtcStreamManager::syncStreamVinFromVehicleManager() {
 void WebRtcStreamManager::connectFourStreams(const QString &whepUrl) {
   const int e2eSeq = ++g_streamE2eConnectSeq;
   const qint64 wallMs = QDateTime::currentMSecsSinceEpoch();
-  try {
+  {
     qInfo().noquote() << QStringLiteral("[Client][StreamE2E][CFS_ENTER] seq=") << e2eSeq
                       << "wallMs=" << wallMs << "whepEmpty=" << (whepUrl.isEmpty() ? 1 : 0)
                       << "whepLen=" << whepUrl.size()
@@ -1311,13 +1327,9 @@ void WebRtcStreamManager::connectFourStreams(const QString &whepUrl) {
     m_currentBase = resolvedBase;
 
     // 统一在 try 块内执行断连，确保异常时仍能打日志
-    try {
+    {
       disconnectAll();
-    } catch (const std::exception &e) {
-      qWarning() << "[StreamManager] disconnectAll 异常:" << e.what();
-    } catch (...) {
-      qWarning() << "[StreamManager] disconnectAll 未知异常";
-    }
+    }  
 
     QString base = resolvedBase;
     if (base.isEmpty()) {
@@ -1370,71 +1382,47 @@ void WebRtcStreamManager::connectFourStreams(const QString &whepUrl) {
             << " left=" << (void *)m_left << " right=" << (void *)m_right;
 
     if (m_front) {
-      try {
+      {
         m_front->connectToStream(base, app, sFront);
         // ── 诊断：下发后检查 videoFrameReady 信号接收者数 ───────────────
         int rc = m_front->receiverCountVideoFrameReady();
         qInfo() << "[StreamManager][Diag] front.connectToStream 下发后:"
                 << " stream=" << sFront << " videoFrameReady receivers=" << rc
                 << " ★ rc>0=QML有连接 | rc=0=信号静默丢弃，对比 QML console 日志确认";
-      } catch (const std::exception &e) {
-        qCritical() << "[StreamManager][ERROR] front.connectToStream 异常:" << e.what()
-                    << "base=" << base << " stream=" << sFront;
-      } catch (...) {
-        qCritical() << "[StreamManager][ERROR] front.connectToStream 未知异常 base=" << base
-                    << " stream=" << sFront;
-      }
+      }  
     } else {
       qWarning() << "[StreamManager][WARN] m_front 为 nullptr，跳过";
     }
 
     if (m_rear) {
-      try {
+      {
         m_rear->connectToStream(base, app, sRear);
         int rc = m_rear->receiverCountVideoFrameReady();
         qInfo() << "[StreamManager][Diag] rear.connectToStream 下发后:"
                 << " stream=" << sRear << " videoFrameReady receivers=" << rc;
-      } catch (const std::exception &e) {
-        qCritical() << "[StreamManager][ERROR] rear.connectToStream 异常:" << e.what()
-                    << "base=" << base << " stream=" << sRear;
-      } catch (...) {
-        qCritical() << "[StreamManager][ERROR] rear.connectToStream 未知异常 base=" << base
-                    << " stream=" << sRear;
-      }
+      }  
     } else {
       qWarning() << "[StreamManager][WARN] m_rear 为 nullptr，跳过";
     }
 
     if (m_left) {
-      try {
+      {
         m_left->connectToStream(base, app, sLeft);
         int rc = m_left->receiverCountVideoFrameReady();
         qInfo() << "[StreamManager][Diag] left.connectToStream 下发后:"
                 << " stream=" << sLeft << " videoFrameReady receivers=" << rc;
-      } catch (const std::exception &e) {
-        qCritical() << "[StreamManager][ERROR] left.connectToStream 异常:" << e.what()
-                    << "base=" << base << " stream=" << sLeft;
-      } catch (...) {
-        qCritical() << "[StreamManager][ERROR] left.connectToStream 未知异常 base=" << base
-                    << " stream=" << sLeft;
-      }
+      }  
     } else {
       qWarning() << "[StreamManager][WARN] m_left 为 nullptr，跳过";
     }
 
     if (m_right) {
-      try {
+      {
         m_right->connectToStream(base, app, sRight);
         int rc = m_right->receiverCountVideoFrameReady();
         qInfo() << "[StreamManager][Diag] right.connectToStream 下发后:"
                 << " stream=" << sRight << " videoFrameReady receivers=" << rc;
-      } catch (const std::exception &e) {
-        qCritical() << "[StreamManager][ERROR] right.connectToStream 异常:" << e.what()
-                    << "base=" << base << " stream=" << sRight;
-      } catch (...) {
-        qCritical() << "[StreamManager][ERROR] right.connectToStream 未知异常 base=" << base
-                    << " stream=" << sRight;
-      }
+      }  
     } else {
       qWarning() << "[StreamManager][WARN] m_right 为 nullptr，跳过";
     }
@@ -1454,17 +1442,7 @@ void WebRtcStreamManager::connectFourStreams(const QString &whepUrl) {
     qInfo() << "[Client][WebRTC][StreamManager] connectFourStreams 已下发四路"
             << " base=" << base << " app=" << app << " totalDuration=" << (doneTime - sendTime)
             << "ms";
-  } catch (const std::exception &e) {
-    qCritical().noquote() << QStringLiteral("[Client][StreamE2E][CFS_EXIT] seq=") << e2eSeq
-                          << "branch=EXCEPTION" << e.what();
-    qCritical() << "[StreamManager][ERROR] connectFourStreams 异常:"
-                << " vin=" << (m_vin.isEmpty() ? "(empty)" : m_vin) << " error=" << e.what();
-  } catch (...) {
-    qCritical().noquote() << QStringLiteral("[Client][StreamE2E][CFS_EXIT] seq=") << e2eSeq
-                          << "branch=UNKNOWN_EXCEPTION";
-    qCritical() << "[StreamManager][ERROR] connectFourStreams 未知异常 vin="
-                << (m_vin.isEmpty() ? "(empty)" : m_vin);
-  }
+  }  
 }
 
 void WebRtcStreamManager::onZlmSnapshotRequested(int disconnectWaveId, const QString &stream,
@@ -1735,40 +1713,28 @@ void WebRtcStreamManager::disconnectAll() {
                     << "rt=" << (m_right && m_right->isConnected() ? 1 : 0)
                     << "★ m_currentBase 在 disconnectAll 内不清空（仅断 PeerConnection）";
   qInfo() << "[Client][WebRTC][StreamManager] disconnectAll 四路";
-  try {
+  {
     if (m_front) {
-      try {
+      {
         m_front->disconnect();
-      } catch (...) {
-        qWarning() << "[StreamManager][WARN] front->disconnect() 异常";
-      }
+      } 
     }
     if (m_rear) {
-      try {
+      {
         m_rear->disconnect();
-      } catch (...) {
-        qWarning() << "[StreamManager][WARN] rear->disconnect() 异常";
-      }
+      } 
     }
     if (m_left) {
-      try {
+      {
         m_left->disconnect();
-      } catch (...) {
-        qWarning() << "[StreamManager][WARN] left->disconnect() 异常";
-      }
+      } 
     }
     if (m_right) {
-      try {
+      {
         m_right->disconnect();
-      } catch (...) {
-        qWarning() << "[StreamManager][WARN] right->disconnect() 异常";
-      }
+      } 
     }
-  } catch (const std::exception &e) {
-    qCritical() << "[StreamManager][ERROR] disconnectAll 异常:" << e.what();
-  } catch (...) {
-    qCritical() << "[StreamManager][ERROR] disconnectAll 未知异常";
-  }
+  }  
   qInfo().noquote() << QStringLiteral("[Client][StreamE2E][DISCONNECT_ALL] done vin=")
                     << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin) << "m_currentBase="
                     << (m_currentBase.isEmpty() ? QStringLiteral("(empty)") : m_currentBase)
@@ -1816,11 +1782,9 @@ void WebRtcStreamManager::checkZlmStreamRegistration() {
     // 若此断言失败，说明回调跑到了错误的线程，可能访问已销毁的对象
     Q_ASSERT_X(QThread::currentThread() == this->thread(), "checkZlmStreamRegistration callback",
                "Callback in wrong thread — potential race condition!");
-    try {
+    {
       reply->deleteLater();
-    } catch (...) {
-      qWarning() << "[StreamManager][ZlmPoll][WARN] reply->deleteLater() 异常";
-    }
+    } 
 
     if (reply->error() != QNetworkReply::NoError) {
       qWarning() << "[StreamManager][ZlmPoll][ERROR] ZLM API 请求失败:" << reply->errorString()
@@ -1857,7 +1821,7 @@ void WebRtcStreamManager::checkZlmStreamRegistration() {
     QStringList foundStreams;
     QJsonArray mediaList = doc.object().value("data").toArray();
     for (const QJsonValue &v : mediaList) {
-      try {
+      {
         QString stream = v.toObject().value("stream").toString();
         QString schema = v.toObject().value("schema").toString();
         qint64 aliveSec = v.toObject().value("aliveSecond").toVariant().toLongLong();
@@ -1872,11 +1836,7 @@ void WebRtcStreamManager::checkZlmStreamRegistration() {
             s_lastAliveLog[stream] = QDateTime::currentMSecsSinceEpoch();
           }
         }
-      } catch (const std::exception &e) {
-        qWarning() << "[StreamManager][ZlmPoll][ERROR] 解析流条目异常:" << e.what();
-      } catch (...) {
-        qWarning() << "[StreamManager][ZlmPoll][ERROR] 解析流条目未知异常";
-      }
+      }  
     }
 
     // ── 诊断：解析完成，准备输出 ZLM 流状态汇总 ─────────────────────────────

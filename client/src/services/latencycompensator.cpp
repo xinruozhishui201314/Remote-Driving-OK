@@ -6,7 +6,9 @@
 #include <cmath>
 
 LatencyCompensator::LatencyCompensator(double processingDelayMs, double maxPredictionAngleRad)
-    : m_processingDelayMs(processingDelayMs), m_maxPredictionAngleRad(maxPredictionAngleRad) {}
+    : m_processingDelayMs(processingDelayMs),
+      m_maxPredictionAngleRad(maxPredictionAngleRad),
+      m_history() {}
 
 LatencyCompensator::PredictionResult LatencyCompensator::predict(
     const IInputDevice::InputState& current, double currentRTTMs) {

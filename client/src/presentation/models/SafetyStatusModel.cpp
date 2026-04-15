@@ -2,7 +2,15 @@
 
 #include <QDebug>
 
-SafetyStatusModel::SafetyStatusModel(QObject* parent) : QObject(parent) {}
+SafetyStatusModel::SafetyStatusModel(QObject* parent)
+    : QObject(parent),
+      m_allSafe(true),
+      m_emergencyStop(false),
+      m_deadmanActive(false),
+      m_warningCount(0),
+      m_lastWarning(),
+      m_systemState(QStringLiteral("IDLE")),
+      m_latencyMs(0.0) {}
 
 void SafetyStatusModel::setAllSafe(bool safe) {
   if (m_allSafe != safe) {

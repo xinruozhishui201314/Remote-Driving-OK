@@ -12,6 +12,7 @@ class FaultManager : public QObject {
     Q_OBJECT
     QML_ELEMENT
     QML_SINGLETON
+    Q_DISABLE_COPY(FaultManager)
     Q_PROPERTY(QStringList activeCodes READ activeCodes NOTIFY activeCodesChanged)
     Q_PROPERTY(bool hasFaults READ hasFaults NOTIFY activeCodesChanged)
 

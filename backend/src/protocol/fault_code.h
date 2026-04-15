@@ -35,14 +35,14 @@ enum class FaultDomain {
  * 故障码基础结构
  */
 struct FaultCode {
-    std::string code;           // 故障码，如 "TEL-1001"
-    std::string name;           // 简短描述
+    std::string code = "";           // 故障码，如 "TEL-1001"
+    std::string name = "";           // 简短描述
     FaultSeverity severity = FaultSeverity::INFO; // 严重级别
     FaultDomain domain = FaultDomain::TELEOP;   // 故障域
     bool latch = false;             // 是否锁存（需人工清除）
-    std::string message;          // 详细描述
-    std::string recommendedAction;   // 推荐操作
-    std::string payloadExample;   // 示例 JSON payload
+    std::string message = "";          // 详细描述
+    std::string recommendedAction = "";   // 推荐操作
+    std::string payloadExample = "";   // 示例 JSON payload
 };
 
 /**
@@ -97,48 +97,48 @@ private:
 namespace FaultCodes {
 
 // TELEOP 域
-static const FaultCode TEL_1001{"TEL-1001", "Video stream not received", FaultSeverity::ERROR, FaultDomain::TELEOP, false, "等待视频流"};
-static const FaultCode TEL_1002{"TEL-1002", "Audio not connected", FaultSeverity::WARN, FaultDomain::TELEOP, false, "音频通道未连接"};
-static const FaultCode TEL_1003{"TEL-1003", "Control channel lost", FaultSeverity::ERROR, FaultDomain::TELEOP, false, "控制通道断开"};
-static const FaultCode TEL_1004{"TEL-1004", "Session expired", FaultSeverity::WARN, FaultDomain::TELEOP, false, "会话过期"};
-static const FaultCode TEL_1005{"TEL-1005", "Operator inactive", FaultSeverity::WARN, FaultDomain::TELEOP, false, "操作员长时间未操作"};
-static const FaultCode TEL_1006{"TEL-1006", "Deadman protection triggered", FaultSeverity::CRITICAL, FaultDomain::TELEOP, true, "死手保护触发（无操作超时）"};
+static const FaultCode TEL_1001{"TEL-1001", "Video stream not received", FaultSeverity::ERROR, FaultDomain::TELEOP, false, "等待视频流", "", ""};
+static const FaultCode TEL_1002{"TEL-1002", "Audio not connected", FaultSeverity::WARN, FaultDomain::TELEOP, false, "音频通道未连接", "", ""};
+static const FaultCode TEL_1003{"TEL-1003", "Control channel lost", FaultSeverity::ERROR, FaultDomain::TELEOP, false, "控制通道断开", "", ""};
+static const FaultCode TEL_1004{"TEL-1004", "Session expired", FaultSeverity::WARN, FaultDomain::TELEOP, false, "会话过期", "", ""};
+static const FaultCode TEL_1005{"TEL-1005", "Operator inactive", FaultSeverity::WARN, FaultDomain::TELEOP, false, "操作员长时间未操作", "", ""};
+static const FaultCode TEL_1006{"TEL-1006", "Deadman protection triggered", FaultSeverity::CRITICAL, FaultDomain::TELEOP, true, "死手保护触发（无操作超时）", "", ""};
 
 // NETWORK 域
-static const FaultCode NET_2001{"NET-2001", "High latency detected", FaultSeverity::WARN, FaultDomain::NETWORK, false, "高延迟检测"};
-static const FaultCode NET_2002{"NET_2002", "Packet loss rate high", FaultSeverity::WARN, FaultDomain::NETWORK, false, "丢包率高"};
-static const FaultCode NET_2003{"NET-2003", "Connection unstable", FaultSeverity::INFO, FaultDomain::NETWORK, false, "连接不稳定"};
-static const FaultCode NET_2004{"NET-2004", "DNS resolution failed", FaultSeverity::ERROR, FaultDomain::NETWORK, false, "DNS解析失败"};
+static const FaultCode NET_2001{"NET-2001", "High latency detected", FaultSeverity::WARN, FaultDomain::NETWORK, false, "高延迟检测", "", ""};
+static const FaultCode NET_2002{"NET_2002", "Packet loss rate high", FaultSeverity::WARN, FaultDomain::NETWORK, false, "丢包率高", "", ""};
+static const FaultCode NET_2003{"NET-2003", "Connection unstable", FaultSeverity::INFO, FaultDomain::NETWORK, false, "连接不稳定", "", ""};
+static const FaultCode NET_2004{"NET-2004", "DNS resolution failed", FaultSeverity::ERROR, FaultDomain::NETWORK, false, "DNS解析失败", "", ""};
 
 // VEHICLE_CTRL 域
-static const FaultCode VEH_3001{"VEH-3001", "Control command rejected", FaultSeverity::ERROR, FaultDomain::VEHICLE_CTRL, false, "控制指令被拒绝（参数错误）"};
-static const FaultCode VEH_3002{"VEH-3002", "Vehicle not responding", FaultSeverity::ERROR, FaultDomain::VEHICLE_CTRL, false, "车端无响应"};
-static const FaultCode VEH_3003{"VEH-3003", "Invalid command format", FaultSeverity::WARN, FaultDomain::VEHICLE_CTRL, false, "指令格式错误"};
-static const FaultCode VEH_3004{"VEH-3004", "Safe stop triggered", FaultSeverity::ERROR, FaultDomain::VEHICLE_CTRL, false, "安全停车已触发"};
-static const FaultCode VEH_3005{"VEH-3005", "CAN bus error", FaultSeverity::WARN, FaultDomain::VEHICLE_CTRL, false, "CAN总线错误"};
+static const FaultCode VEH_3001{"VEH-3001", "Control command rejected", FaultSeverity::ERROR, FaultDomain::VEHICLE_CTRL, false, "控制指令被拒绝（参数错误）", "", ""};
+static const FaultCode VEH_3002{"VEH-3002", "Vehicle not responding", FaultSeverity::ERROR, FaultDomain::VEHICLE_CTRL, false, "车端无响应", "", ""};
+static const FaultCode VEH_3003{"VEH-3003", "Invalid command format", FaultSeverity::WARN, FaultDomain::VEHICLE_CTRL, false, "指令格式错误", "", ""};
+static const FaultCode VEH_3004{"VEH-3004", "Safe stop triggered", FaultSeverity::ERROR, FaultDomain::VEHICLE_CTRL, false, "安全停车已触发", "", ""};
+static const FaultCode VEH_3005{"VEH-3005", "CAN bus error", FaultSeverity::WARN, FaultDomain::VEHICLE_CTRL, false, "CAN总线错误", "", ""};
 
 // CAMERA 域
-static const FaultCode CAM_4001{"CAM-4001", "Camera offline", FaultSeverity::ERROR, FaultDomain::CAMERA, false, "摄像头离线"};
-static const FaultCode CAM_4002{"CAM-4002", "Encoding failed", FaultSeverity::ERROR, FaultDomain::CAMERA, false, "编码失败"};
-static const FaultCode CAM_4003{"CAM-4003", "Bitrate too high", FaultSeverity::WARN, FaultDomain::CAMERA, false, "码率过高"};
+static const FaultCode CAM_4001{"CAM-4001", "Camera offline", FaultSeverity::ERROR, FaultDomain::CAMERA, false, "摄像头离线", "", ""};
+static const FaultCode CAM_4002{"CAM-4002", "Encoding failed", FaultSeverity::ERROR, FaultDomain::CAMERA, false, "编码失败", "", ""};
+static const FaultCode CAM_4003{"CAM-4003", "Bitrate too high", FaultSeverity::WARN, FaultDomain::CAMERA, false, "码率过高", "", ""};
 
 // POWER 域
-static const FaultCode PWR_5001{"PWR-5001", "Battery low", FaultSeverity::WARN, FaultDomain::POWER, false, "电量低"};
-static const FaultCode PWR_5002{"PWR-5002", "Voltage unstable", FaultSeverity::WARN, FaultDomain::POWER, false, "电压不稳定"};
-static const FaultCode PWR_5003{"PWR-5003", "Inverter fault", FaultSeverity::ERROR, FaultDomain::POWER, false, "逆变器故障"};
+static const FaultCode PWR_5001{"PWR-5001", "Battery low", FaultSeverity::WARN, FaultDomain::POWER, false, "电量低", "", ""};
+static const FaultCode PWR_5002{"PWR-5002", "Voltage unstable", FaultSeverity::WARN, FaultDomain::POWER, false, "电压不稳定", "", ""};
+static const FaultCode PWR_5003{"PWR-5003", "Inverter fault", FaultSeverity::ERROR, FaultDomain::POWER, false, "逆变器故障", "", ""};
 
 // SWEEPER 域
-static const FaultCode SWP_6001{"SWP-6001", "Sweeper offline", FaultSeverity::WARN, FaultDomain::SWEEPER, false, "扫地系统离线"};
-static const FaultCode SWP_6002{"SWP-6002", "Nozzle blocked", FaultSeverity::WARN, FaultDomain::SWEEPER, false, "喷嘴堵塞"};
-static const FaultCode SWP_6003{"SWP-6003", "Brush worn", FaultSeverity::INFO, FaultDomain::SWEEPER, false, "刷盘磨损"};
+static const FaultCode SWP_6001{"SWP-6001", "Sweeper offline", FaultSeverity::WARN, FaultDomain::SWEEPER, false, "扫地系统离线", "", ""};
+static const FaultCode SWP_6002{"SWP-6002", "Nozzle blocked", FaultSeverity::WARN, FaultDomain::SWEEPER, false, "喷嘴堵塞", "", ""};
+static const FaultCode SWP_6003{"SWP-6003", "Brush worn", FaultSeverity::INFO, FaultDomain::SWEEPER, false, "刷盘磨损", "", ""};
 
 // SECURITY 域
-static const FaultCode SEC_7001{"SEC-7001", "Invalid signature", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "签名验证失败"};
-static const FaultCode SEC_7002{"SEC-7002", "Replay detected", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "重放攻击检测"};
-static const FaultCode SEC_7003{"SEC-7003", "Frequency overload", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "频率超限攻击检测"};
-static const FaultCode SEC_7004{"SEC-7004", "Unauthorized access", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "未授权访问"};
-static const FaultCode SEC_7005{"SEC-7005", "Token expired", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "Token 已过期"};
-static const FaultCode SEC_7006{"SEC-7006", "Invalid session", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "会话无效或已过期"};
+static const FaultCode SEC_7001{"SEC-7001", "Invalid signature", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "签名验证失败", "", ""};
+static const FaultCode SEC_7002{"SEC-7002", "Replay detected", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "重放攻击检测", "", ""};
+static const FaultCode SEC_7003{"SEC-7003", "Frequency overload", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "频率超限攻击检测", "", ""};
+static const FaultCode SEC_7004{"SEC-7004", "Unauthorized access", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "未授权访问", "", ""};
+static const FaultCode SEC_7005{"SEC-7005", "Token expired", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "Token 已过期", "", ""};
+static const FaultCode SEC_7006{"SEC-7006", "Invalid session", FaultSeverity::ERROR, FaultDomain::SECURITY, true, "会话无效或已过期", "", ""};
 
 } // namespace FaultCodes
 

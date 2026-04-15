@@ -13,6 +13,7 @@ class SafetyMonitorService;
  */
 class DiagnosticsService : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(DiagnosticsService)
 
  public:
   explicit DiagnosticsService(PerformanceMonitor* perf, QObject* parent = nullptr);
@@ -31,7 +32,7 @@ class DiagnosticsService : public QObject {
   void collect();
 
  private:
-  PerformanceMonitor* m_perfMonitor = nullptr;
-  SafetyMonitorService* m_safety = nullptr;
+  PerformanceMonitor* m_perfMonitor;
+  SafetyMonitorService* m_safety;
   QTimer m_timer;
 };

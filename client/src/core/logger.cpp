@@ -23,7 +23,20 @@ static const char* levelStr(Logger::Level level) {
   return "???";
 }
 
-Logger::Logger(QObject* parent) : QObject(parent) {}
+Logger::Logger(QObject* parent)
+    : QObject(parent),
+      m_file(),
+      m_mutex(),
+      m_condition(),
+      m_queue(),
+      m_running(false),
+      m_workerThread(nullptr),
+      m_messageInterceptor(),
+      m_maxQueueSize(DEFAULT_MAX_QUEUE_SIZE),
+      m_droppedCount(0),
+      m_rotationConfig(),
+      m_baseLogPath(),
+      m_currentFileSize(0) {}
 
 Logger::~Logger() {
   if (m_workerThread) {

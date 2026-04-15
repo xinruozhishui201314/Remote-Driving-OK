@@ -4,6 +4,9 @@
 
 class TestVideoFrameFingerprintCache : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestVideoFrameFingerprintCache)
+ public:
+  explicit TestVideoFrameFingerprintCache(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void empty_stream_tag_record_is_ignored();
   void empty_stream_tag_peek_fails();

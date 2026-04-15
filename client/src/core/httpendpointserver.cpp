@@ -11,7 +11,24 @@
 #include <atomic>
 
 HttpEndpointServer::HttpEndpointServer(QObject* parent)
-    : QObject(parent), m_server(new QTcpServer(this)) {
+    : QObject(parent),
+      m_server(nullptr),
+      m_port(9080),
+      m_running(false),
+      m_metricsMutex(),
+      m_numericMetrics(),
+      m_stringMetrics(),
+      m_healthMutex(),
+      m_healthStatus(),
+      m_readyMutex(),
+      m_ready(false),
+      m_readyReason(),
+      m_handlersMutex(),
+      m_handlers(),
+      m_jsonHandlers(),
+      m_requestCount(0),
+      m_errorCount(0) {
+  m_server = new QTcpServer(this);
   // 连接服务器信号
   connect(m_server, &QTcpServer::newConnection, this, [this]() {
     while (m_server->hasPendingConnections()) {

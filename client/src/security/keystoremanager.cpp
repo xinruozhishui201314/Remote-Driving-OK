@@ -17,7 +17,8 @@
 // 集成 libsecret，届时重新启用安全存储路径。
 // ═══════════════════════════════════════════════════════════════════════════════
 
-KeystoreManager::KeystoreManager(QObject* parent) : QObject(parent) {
+KeystoreManager::KeystoreManager(QObject* parent)
+    : QObject(parent), m_serviceName(QStringLiteral("RemoteDrivingClient")) {
   qDebug() << "[KeystoreManager] Initialized (QSettings fallback)";
 }
 

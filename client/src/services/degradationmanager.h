@@ -24,6 +24,7 @@ class SystemStateMachine;
  */
 class DegradationManager : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(DegradationManager)
 
  public:
   enum class DegradationLevel : uint8_t {

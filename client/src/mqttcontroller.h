@@ -30,6 +30,7 @@ class WebRtcClient;
  */
 class MqttController : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(MqttController)
 
   Q_PROPERTY(QString brokerUrl READ brokerUrl WRITE setBrokerUrl NOTIFY brokerUrlChanged)
   Q_PROPERTY(QString clientId READ clientId WRITE setClientId NOTIFY clientIdChanged)

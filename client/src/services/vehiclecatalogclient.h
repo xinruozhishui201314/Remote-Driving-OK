@@ -14,6 +14,7 @@ class QNetworkReply;
  */
 class VehicleCatalogClient final : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(VehicleCatalogClient)
  public:
   explicit VehicleCatalogClient(QNetworkAccessManager *nam, QObject *parent = nullptr);
 

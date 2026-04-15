@@ -7,6 +7,9 @@
 
 class TestConfiguration : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestConfiguration)
+ public:
+  explicit TestConfiguration(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void initTestCase();
   void cleanupTestCase();
@@ -56,7 +59,7 @@ void TestConfiguration::cleanup() {}
 void TestConfiguration::test_singletonAccess() {
   // 测试单例访问
   Configuration& config = Configuration::instance();
-  QVERIFY2(&config != nullptr, "Configuration singleton should not be null");
+  Q_UNUSED(config);
 
   // 多次访问应返回同一实例
   Configuration& config2 = Configuration::instance();

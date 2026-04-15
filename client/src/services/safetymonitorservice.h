@@ -33,6 +33,7 @@ class SafetyWorker;
  */
 class SafetyMonitorService : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(SafetyMonitorService)
 
   Q_PROPERTY(bool emergencyActive READ emergencyActive NOTIFY emergencyActiveChanged)
   Q_PROPERTY(QString emergencyReason READ emergencyReason NOTIFY emergencyActiveChanged)

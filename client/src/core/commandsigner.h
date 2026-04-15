@@ -25,7 +25,7 @@
  */
 class CommandSigner {
  public:
-  CommandSigner() = default;
+  CommandSigner() : m_signingKey() {}
 
   /**
    * 设置会话凭证，派生签名密钥。

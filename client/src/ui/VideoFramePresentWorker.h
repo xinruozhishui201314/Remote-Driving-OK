@@ -15,6 +15,7 @@
  */
 class VideoFramePresentWorker : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(VideoFramePresentWorker)
 
  public:
   explicit VideoFramePresentWorker(QObject *parent = nullptr);

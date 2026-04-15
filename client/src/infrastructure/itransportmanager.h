@@ -43,13 +43,16 @@ struct NetworkQuality {
 
 // ─── 通道统计 ─────────────────────────────────────────────────────────────────
 struct ChannelStats {
-  TransportChannel channel;
+  TransportChannel channel = TransportChannel::TELEMETRY;
   uint64_t bytesSent = 0;
   uint64_t bytesReceived = 0;
   uint64_t packetsSent = 0;
   uint64_t packetsReceived = 0;
   uint64_t packetsLost = 0;
   double latencyMs = 0;
+
+  ChannelStats() = default;
+  explicit ChannelStats(TransportChannel ch) : channel(ch) {}
 };
 
 // ─── 包元数据 ─────────────────────────────────────────────────────────────────
@@ -120,6 +123,7 @@ struct TransportConfig {
 // ─── ITransportManager 接口 ──────────────────────────────────────────────────
 class ITransportManager : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(ITransportManager)
  public:
   explicit ITransportManager(QObject* parent = nullptr) : QObject(parent) {}
   ~ITransportManager() override = default;

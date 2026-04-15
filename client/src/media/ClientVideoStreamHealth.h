@@ -8,6 +8,36 @@
  * 与每路 H264Decoder / H264WebRtcHwBridge 运行时状态组合，便于 grep stream= 对齐四路契约。
  */
 struct ClientVideoGlobalPolicySnapshot {
+  ClientVideoGlobalPolicySnapshot()
+      : webRtcHwDecodeEnvRaw(),
+        webRtcHwDecodeEffective(false),
+        mediaRequireHardwareDecode(false),
+        hwDecodeVaapiCompiled(false),
+        hwDecodeNvdecCompiled(false),
+        ffmpegCompiled(false),
+        eglDmabufCompiled(false),
+        webRtcDmabufSgEnvRaw(),
+        webRtcHwExportDmaBufEnv(0),
+        webRtcDmabufSgEnvEffective(false),
+        nv12DmabufSgCompiled(false),
+        ffmpegDecodeThreadsEnvRaw(),
+        ffmpegDecodeThreadsParsedDefault(1),
+        stripeAutoMitigationEnvRaw(),
+        stripeAutoMitigationEffective(true),
+        libglAlwaysSoftware(),
+        qsgRhiBackend(),
+        clientAssumeSoftwareGl(),
+        videoDecoupledPresentEffective(true),
+        h264DecodeFrameSummaryEveryEnvRaw(),
+        decodeFrameSummaryEveryEffective(60),
+        h264StripeDiagEnv(0),
+        cpuPresentFormatStrictEnvRaw(),
+        cpuPresentFormatStrictEffective(true),
+        interlacedPolicyEnvRaw(),
+        interlacedPolicyTag(),
+        swsColorspaceEnvRaw(),
+        swsColorspaceTag() {}
+
   QString webRtcHwDecodeEnvRaw;
   /** 与 H264WebRtcHwBridge::hardwareDecodeRequested() 一致（配置 media.hardware_decode + 兼容关断） */
   bool webRtcHwDecodeEffective = false;

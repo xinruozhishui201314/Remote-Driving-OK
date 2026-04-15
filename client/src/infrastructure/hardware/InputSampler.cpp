@@ -8,7 +8,7 @@ InputSampler::InputSampler(QObject* parent) : QObject(parent) {}
 
 InputSampler::~InputSampler() { stop(); }
 
-void InputSampler::setDevice(std::shared_ptr<IInputDevice> device) { m_device = std::move(device); }
+void InputSampler::setDevice(IInputDevice* device) { m_device = device; }
 
 void InputSampler::start(uint32_t sampleRateHz) {
   if (m_samplerThread)
@@ -56,6 +56,13 @@ void InputSampler::onTimer() {
 
   auto filtered = applyFilter(raw);
   m_latestInput.store(filtered);
+  
+  // 规范要求：通过无锁队列推送数据
+  if (!m_queue.push(filtered)) {
+    // 队列满，可能消费者（VehicleControlService）处理过慢
+    // 考虑到控制数据的实时性，这种情况下通常丢弃旧数据，但 SPSC 队列 push 失败通常意味着积压
+  }
+  
   emit inputSampled(filtered);
 }
 

@@ -5,6 +5,9 @@
 
 class TestVideoInterlacedPolicy : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestVideoInterlacedPolicy)
+ public:
+  explicit TestVideoInterlacedPolicy(QObject* parent = nullptr) : QObject(parent), m_savedIlace() {}
  private slots:
   void init() {
     m_savedIlace = qgetenv("CLIENT_VIDEO_INTERLACED_POLICY");

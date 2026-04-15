@@ -5,9 +5,14 @@
 #include <QMutexLocker>
 
 AntiReplayGuard::AntiReplayGuard()
-    : m_overflowCount(0), m_lastSeqBeforeOverflow(0), m_lastOverflowTimeMs(0) {
-  m_lastResetReason = "Initial construction";
-}
+    : m_mutex(),
+      m_highestSeq(0),
+      m_initialized(false),
+      m_window(),
+      m_overflowCount(0),
+      m_lastSeqBeforeOverflow(0),
+      m_lastResetReason(QStringLiteral("Initial construction")),
+      m_lastOverflowTimeMs(0) {}
 
 bool AntiReplayGuard::checkAndRecord(uint32_t seq, int64_t timestampMs, int64_t localTimeMs,
                                      QString* reason) {
@@ -23,6 +28,8 @@ bool AntiReplayGuard::checkAndRecord(uint32_t seq, int64_t timestampMs, int64_t 
 
 bool AntiReplayGuard::checkAndRecordInternal(uint32_t seq, int64_t timestampMs, int64_t localTimeMs,
                                              QString* reason) {
+  Q_UNUSED(timestampMs);
+  Q_UNUSED(localTimeMs);
   QMutexLocker lock(&m_mutex);
 
   if (!m_initialized) {

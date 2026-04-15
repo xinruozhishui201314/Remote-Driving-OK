@@ -55,13 +55,20 @@ static QUrl keycloakHealthUrlFromServer(const QString &serverUrl) {
 }
 
 NodeHealthChecker::NodeHealthChecker(QObject *parent)
-    : QObject(parent), m_networkManager(new QNetworkAccessManager(this)) {
-  m_backendStatus = QStringLiteral("—");
-  m_backendMessage = QString();
-  m_keycloakStatus = QStringLiteral("—");
-  m_keycloakMessage = QString();
-  m_zlmStatus = QStringLiteral("—");
-  m_zlmMessage = QString();
+    : QObject(parent),
+      m_networkManager(nullptr),
+      m_backendReply(nullptr),
+      m_keycloakReply(nullptr),
+      m_zlmReply(nullptr),
+      m_backendStatus(QStringLiteral("—")),
+      m_backendMessage(),
+      m_keycloakStatus(QStringLiteral("—")),
+      m_keycloakMessage(),
+      m_zlmStatus(QStringLiteral("—")),
+      m_zlmMessage(),
+      m_isChecking(false),
+      m_pendingCount(0) {
+  m_networkManager = new QNetworkAccessManager(this);
 }
 
 void NodeHealthChecker::setBackendStatus(const QString &status, const QString &message) {

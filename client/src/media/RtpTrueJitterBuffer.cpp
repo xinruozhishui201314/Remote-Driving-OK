@@ -69,6 +69,36 @@ static RtpPlayoutMode parseModeEnv(int *outFixedDelay) {
 
 }  // namespace
 
+RtpTrueJitterBuffer::RtpTrueJitterBuffer()
+    : m_clock(nullptr),
+      m_mode(RtpPlayoutMode::Off),
+      m_fixedDelayMs(0),
+      m_maxPackets(1024),
+      m_seqOrder(true),
+      m_holeTimeoutMs(80),
+      m_srStaleMs(800),
+      m_clockHz(90000.0),
+      m_ntpMarginMs(0),
+      m_adaptMinMs(20),
+      m_adaptMaxMs(180),
+      m_adaptGain(1.5),
+      m_metricsIntervalMs(0),
+      m_bySeq(),
+      m_fifo(),
+      m_nextSeq(0),
+      m_nextInited(false),
+      m_holeStartWallMs(0),
+      m_holeKeyframePending(false),
+      m_loggedMode(false),
+      m_lastMetricsLogMs(0),
+      m_jitterPrev(false),
+      m_prevRecvWallMs(0),
+      m_prevRtpTs(0),
+      m_jitterEwmaMs(0.0),
+      m_targetDelayMs(40),
+      m_metrics_overflow_clears(0),
+      m_metrics_late_drops(0) {}
+
 void RtpTrueJitterBuffer::reloadEnv() {
   int fixedDelay = 0;
   m_mode = parseModeEnv(&fixedDelay);

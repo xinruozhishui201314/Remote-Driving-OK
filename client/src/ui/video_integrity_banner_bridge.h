@@ -5,6 +5,7 @@
 
 class VideoIntegrityBannerBridge : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(VideoIntegrityBannerBridge)
 
  public:
   explicit VideoIntegrityBannerBridge(QObject *parent = nullptr);

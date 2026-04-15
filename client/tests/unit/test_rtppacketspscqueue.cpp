@@ -6,6 +6,9 @@
 
 class TestRtpPacketSpscQueue : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestRtpPacketSpscQueue)
+ public:
+  explicit TestRtpPacketSpscQueue(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void initTestCase();
   void cleanup();

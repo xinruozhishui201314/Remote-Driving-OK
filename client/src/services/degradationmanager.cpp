@@ -28,7 +28,15 @@ static int64_t degradationNowMs() {
 }
 
 DegradationManager::DegradationManager(SystemStateMachine* fsm, QObject* parent)
-    : QObject(parent), m_fsm(fsm) {
+    : QObject(parent),
+      m_config(),
+      m_fsm(fsm),
+      m_checkTimer(),
+      m_currentLevel(DegradationLevel::FULL),
+      m_pendingLevel(DegradationLevel::FULL),
+      m_pendingLevelSince(0),
+      m_currentScore(1.0) {
+  m_checkTimer.setParent(this);
   connect(&m_checkTimer, &QTimer::timeout, this, &DegradationManager::checkDegradation);
   m_checkTimer.setInterval(m_config.checkIntervalMs);
 }
@@ -73,7 +81,6 @@ void DegradationManager::checkDegradation() {
 
   // 检查滞后
   const bool isDowngrade = static_cast<uint8_t>(target) > static_cast<uint8_t>(m_currentLevel);
-  const bool isUpgrade = !isDowngrade;
   const int64_t elapsed = now - m_pendingLevelSince;
 
   // 快降级（任何超时都立即执行）；慢升级（等待 hysteresisMs）

@@ -51,6 +51,7 @@ class ThreadPool : public QObject {
  */
 class LambdaRunnable : public QRunnable {
  public:
+  Q_DISABLE_COPY(LambdaRunnable)
   explicit LambdaRunnable(std::function<void()> fn) : m_fn(std::move(fn)) { setAutoDelete(true); }
   void run() override { m_fn(); }
 

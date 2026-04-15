@@ -5,7 +5,9 @@
 
 class TestStartupReadinessProfile : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestStartupReadinessProfile)
+ public:
+  explicit TestStartupReadinessProfile(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void default_tcp_targets_full_has_four() {
     const QStringList names = ClientApp::defaultTcpTargetNamesForReadinessProfile(

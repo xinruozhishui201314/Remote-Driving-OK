@@ -11,7 +11,19 @@ using namespace std::chrono;
 // 纳秒转毫秒
 static inline double nsToMs(int64_t ns) { return static_cast<double>(ns) / 1'000'000.0; }
 
-ControlLoopTicker::ControlLoopTicker(QObject* parent) : QObject(parent) {
+ControlLoopTicker::ControlLoopTicker(QObject* parent)
+    : QObject(parent),
+      m_thread(nullptr),
+      m_running(false),
+      m_stopRequested(false),
+      m_intervalMs(10),
+      m_index(0),
+      m_actualHz(0.0),
+      m_jitterMs(0.0),
+      m_avgJitterMs(0.0),
+      m_tickMissedCount(0),
+      m_tickOverruns(0),
+      m_lastTickTimestampNs(0) {
   qInfo() << "[Client][ControlLoopTicker] created with default intervalMs=10";
 }
 

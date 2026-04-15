@@ -9,6 +9,9 @@
 
 class TestLogger : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestLogger)
+ public:
+  explicit TestLogger(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void initTestCase();
   void cleanupTestCase();

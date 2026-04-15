@@ -7,6 +7,9 @@
 
 class VehicleApiParsersTest : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(VehicleApiParsersTest)
+ public:
+  explicit VehicleApiParsersTest(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void list_vinsStringArray_flattensToObjects();
   void list_dataArray_passThrough();

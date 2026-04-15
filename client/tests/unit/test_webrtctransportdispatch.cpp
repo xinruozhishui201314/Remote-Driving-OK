@@ -4,6 +4,9 @@
 
 class TestWebRtcTransportDispatch : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestWebRtcTransportDispatch)
+ public:
+  explicit TestWebRtcTransportDispatch(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void synthesizeWhepUrl_format();
   void videoChannelForCameraId_primaryAndSecondary();

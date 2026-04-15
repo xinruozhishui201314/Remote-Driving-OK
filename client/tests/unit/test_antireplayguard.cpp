@@ -4,6 +4,9 @@
 
 class TestAntiReplayGuard : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestAntiReplayGuard)
+ public:
+  explicit TestAntiReplayGuard(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void first_packet_initializes();
   void duplicate_seq_rejected();

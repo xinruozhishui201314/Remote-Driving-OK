@@ -14,6 +14,7 @@
  */
 class RateLimiter : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(RateLimiter)
  public:
   /**
    * @param rate 每秒产生的令牌数

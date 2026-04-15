@@ -10,7 +10,11 @@
 
 Configuration::Configuration(QObject* parent)
     : QObject(parent),
-      m_settings(QSettings::IniFormat, QSettings::UserScope, "RemoteDriving", "ClientConfig") {
+      m_json(),
+      m_initialJson(),
+      m_configFilePath(),
+      m_settings(QSettings::IniFormat, QSettings::UserScope, "RemoteDriving", "ClientConfig"),
+      m_lastSchemaError() {
   // 自动尝试加载默认配置文件
   const QString envFile =
       QProcessEnvironment::systemEnvironment().value("CLIENT_CONFIG_FILE", QString{});

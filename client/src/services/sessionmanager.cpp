@@ -20,7 +20,13 @@ SessionManager::SessionManager(AuthManager *auth, VehicleManager *vehicles, Mqtt
       m_vehicles(vehicles),
       m_mqtt(mqtt),
       m_webrtc(webrtc),
-      m_fsm(fsm) {}
+      m_fsm(fsm),
+      m_vehicleControl(nullptr),
+      m_safetyMonitor(nullptr),
+      m_hadSuccessfulLogin(false),
+      m_selectedVin(),
+      m_hasError(0),
+      m_lastError() {}
 
 void SessionManager::setVehicleControl(VehicleControlService *vcs) { m_vehicleControl = vcs; }
 
@@ -33,30 +39,17 @@ void SessionManager::setError(const QString &error) {
 }
 
 void SessionManager::onLoginStatusChanged(bool loggedIn) {
-  try {
+  {
     if (m_hadSuccessfulLogin && !loggedIn) {
-      try {
+      {
         onLogout();
-      } catch (const std::exception &e) {
-        setError(QStringLiteral("onLogout exception: %1").arg(e.what()));
-        qCritical() << "[Client][Session][ERROR] onLogout 异常:" << e.what();
-      } catch (...) {
-        setError("onLogout unknown exception");
-        qCritical() << "[Client][Session][ERROR] onLogout 未知异常";
-      }
+      }  
     }
-  } catch (const std::exception &e) {
-    setError(QStringLiteral("onLoginStatusChanged exception: %1").arg(e.what()));
-    qCritical() << "[Client][Session][ERROR] onLoginStatusChanged 总异常 loggedIn=" << loggedIn
-                << " error=" << e.what();
-  } catch (...) {
-    setError("onLoginStatusChanged unknown exception");
-    qCritical() << "[Client][Session][ERROR] onLoginStatusChanged 未知异常 loggedIn=" << loggedIn;
-  }
+  }  
 }
 
 void SessionManager::onLoginSucceeded(const QString &token, const QJsonObject &userInfo) {
-  try {
+  {
     m_hadSuccessfulLogin = true;
     {
       const QString zlm =
@@ -75,30 +68,18 @@ void SessionManager::onLoginSucceeded(const QString &token, const QJsonObject &u
                        << " user=" << userInfo.value(QStringLiteral("username")).toString();
 
     if (m_fsm) {
-      try {
+      {
         m_fsm->fire(SystemStateMachine::Trigger::AUTH_SUCCESS);
-      } catch (const std::exception &e) {
-        setError(QStringLiteral("fire(AUTH_SUCCESS) exception: %1").arg(e.what()));
-        qCritical() << "[Client][Session][ERROR] fire(AUTH_SUCCESS) 异常:" << e.what();
-      } catch (...) {
-        setError("fire(AUTH_SUCCESS) unknown exception");
-        qCritical() << "[Client][Session][ERROR] fire(AUTH_SUCCESS) 未知异常";
-      }
+      }  
     }
 
     if (!m_vehicles)
       return;
 
     if (isTestToken) {
-      try {
+      {
         m_vehicles->addTestVehicle(QStringLiteral("123456789"), QStringLiteral("测试车辆"));
-      } catch (const std::exception &e) {
-        setError(QStringLiteral("addTestVehicle exception: %1").arg(e.what()));
-        qCritical() << "[Client][Session][ERROR] addTestVehicle 异常:" << e.what();
-      } catch (...) {
-        setError("addTestVehicle unknown exception");
-        qCritical() << "[Client][Session][ERROR] addTestVehicle 未知异常";
-      }
+      }  
       return;
     }
 
@@ -109,26 +90,14 @@ void SessionManager::onLoginSucceeded(const QString &token, const QJsonObject &u
       qDebug().noquote() << "[Client][Session] serverUrl empty, skip loadVehicleList";
       return;
     }
-    try {
+    {
       m_vehicles->loadVehicleList(serverUrl, token);
-    } catch (const std::exception &e) {
-      setError(QStringLiteral("loadVehicleList exception: %1").arg(e.what()));
-      qCritical() << "[Client][Session][ERROR] loadVehicleList 异常:" << e.what();
-    } catch (...) {
-      setError("loadVehicleList unknown exception");
-      qCritical() << "[Client][Session][ERROR] loadVehicleList 未知异常";
-    }
-  } catch (const std::exception &e) {
-    setError(QStringLiteral("onLoginSucceeded exception: %1").arg(e.what()));
-    qCritical() << "[Client][Session][ERROR] onLoginSucceeded 总异常:" << e.what();
-  } catch (...) {
-    setError("onLoginSucceeded unknown exception");
-    qCritical() << "[Client][Session][ERROR] onLoginSucceeded 未知异常";
-  }
+    }  
+  }  
 }
 
 void SessionManager::onLogout() {
-  try {
+  {
     qInfo().noquote()
         << QStringLiteral("[Client][StreamE2E][LOGOUT] hadLogin=") << m_hadSuccessfulLogin
         << "m_selectedVin=" << m_selectedVin
@@ -141,35 +110,17 @@ void SessionManager::onLogout() {
     if (m_vehicleControl)
       QMetaObject::invokeMethod(m_vehicleControl, "clearSessionCredentials");
     qInfo().noquote() << "[Client][Session] onLogout → disconnectAll 四路 WebRTC";
-    try {
+    {
       if (m_webrtc)
         m_webrtc->disconnectAll();
-    } catch (const std::exception &e) {
-      setError(QStringLiteral("disconnectAll exception: %1").arg(e.what()));
-      qCritical() << "[Client][Session][ERROR] disconnectAll 异常:" << e.what();
-    } catch (...) {
-      setError(QStringLiteral("disconnectAll unknown exception"));
-      qCritical() << "[Client][Session][ERROR] disconnectAll 未知异常";
-    }
+    }  
     if (m_fsm) {
-      try {
+      {
         m_fsm->fire(SystemStateMachine::Trigger::LOGOUT);
-      } catch (const std::exception &e) {
-        setError(QStringLiteral("fire(LOGOUT) exception: %1").arg(e.what()));
-        qCritical() << "[Client][Session][ERROR] fire(LOGOUT) 异常:" << e.what();
-      } catch (...) {
-        setError(QStringLiteral("fire(LOGOUT) unknown exception"));
-        qCritical() << "[Client][Session][ERROR] fire(LOGOUT) 未知异常";
-      }
+      }  
     }
     m_hadSuccessfulLogin = false;
-  } catch (const std::exception &e) {
-    setError(QStringLiteral("onLogout exception: %1").arg(e.what()));
-    qCritical() << "[Client][Session][ERROR] onLogout 总异常:" << e.what();
-  } catch (...) {
-    setError("onLogout unknown exception");
-    qCritical() << "[Client][Session][ERROR] onLogout 未知异常";
-  }
+  }  
 }
 
 void SessionManager::stop() {
@@ -185,7 +136,7 @@ void SessionManager::stop() {
 }
 
 void SessionManager::onVinSelected(const QString &vin) {
-  try {
+  {
     {
       const QString zlm =
           QProcessEnvironment::systemEnvironment().value(QStringLiteral("ZLM_VIDEO_URL"));
@@ -207,47 +158,31 @@ void SessionManager::onVinSelected(const QString &vin) {
       if (m_vehicleControl)
         QMetaObject::invokeMethod(m_vehicleControl, "clearSessionCredentials");
       if (m_webrtc) {
-        try {
+        {
           m_webrtc->setCurrentVin(QString());
           m_webrtc->disconnectAll();
-        } catch (const std::exception &e) {
-          setError(QStringLiteral("VIN clear disconnectAll exception: %1").arg(e.what()));
-          qCritical() << "[Client][Session][ERROR] VIN 清空时 disconnectAll 异常:" << e.what();
-        }
+        } 
       }
       return;
     }
     qInfo().noquote() << "[Client][Session] VIN 已选中 vin=" << vin
                       << " → setCurrentVin + connectFourStreams";
     if (m_webrtc) {
-      try {
+      {
         qInfo().noquote() << QStringLiteral(
             "[Client][StreamE2E][VIN_SELECTED] invoking setCurrentVin+connectFourStreams() no "
             "explicit whep");
         m_webrtc->setCurrentVin(vin);
         m_webrtc->connectFourStreams();
-      } catch (const std::exception &e) {
-        setError(QStringLiteral("connectFourStreams exception: %1").arg(e.what()));
-        qCritical() << "[Client][Session][ERROR] connectFourStreams 异常:" << e.what();
-      } catch (...) {
-        setError("connectFourStreams unknown exception");
-        qCritical() << "[Client][Session][ERROR] connectFourStreams 未知异常";
-      }
+      }  
     }
-  } catch (const std::exception &e) {
-    setError(QStringLiteral("onVinSelected exception: %1").arg(e.what()));
-    qCritical() << "[Client][Session][ERROR] onVinSelected 总异常 vin=" << vin
-                << " error=" << e.what();
-  } catch (...) {
-    setError("onVinSelected unknown exception");
-    qCritical() << "[Client][Session][ERROR] onVinSelected 未知异常 vin=" << vin;
-  }
+  }  
 }
 
 void SessionManager::onSessionCreated(const QString &sessionVin, const QString &sessionId,
                                       const QString &whipUrl, const QString &whepUrl,
                                       const QJsonObject &controlConfig) {
-  try {
+  {
     Q_UNUSED(whipUrl)
     Q_UNUSED(controlConfig)
     m_selectedVin = sessionVin;
@@ -303,27 +238,14 @@ void SessionManager::onSessionCreated(const QString &sessionVin, const QString &
       return;
     }
     if (m_webrtc) {
-      try {
+      {
         qInfo().noquote() << QStringLiteral(
                                  "[Client][StreamE2E][SESSION_CREATED] invoking "
                                  "setCurrentVin+connectFourStreams(whep) whepLen=")
                           << whepUrl.size();
         m_webrtc->setCurrentVin(sessionVin);
         m_webrtc->connectFourStreams(whepUrl);
-      } catch (const std::exception &e) {
-        setError(QStringLiteral("connectFourStreams(whepUrl) exception: %1").arg(e.what()));
-        qCritical() << "[Client][Session][ERROR] connectFourStreams(whepUrl) 异常:" << e.what();
-      } catch (...) {
-        setError("connectFourStreams(whepUrl) unknown exception");
-        qCritical() << "[Client][Session][ERROR] connectFourStreams(whepUrl) 未知异常";
-      }
+      }  
     }
-  } catch (const std::exception &e) {
-    setError(QStringLiteral("onSessionCreated exception: %1").arg(e.what()));
-    qCritical() << "[Client][Session][ERROR] onSessionCreated 总异常 sessionId=" << sessionId
-                << " error=" << e.what();
-  } catch (...) {
-    setError("onSessionCreated unknown exception");
-    qCritical() << "[Client][Session][ERROR] onSessionCreated 未知异常 sessionId=" << sessionId;
-  }
+  }  
 }

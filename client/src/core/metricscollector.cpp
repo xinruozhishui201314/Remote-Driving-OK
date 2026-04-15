@@ -13,7 +13,13 @@ class Configuration;
 #include "configuration.h"
 
 MetricsCollector::MetricsCollector(QObject* parent)
-    : QObject(parent), m_startTimeMs(QDateTime::currentMSecsSinceEpoch()) {
+    : QObject(parent),
+      m_mutex(),
+      m_thresholdMutex(),
+      m_metrics(),
+      m_histogramBuckets(),
+      m_startTimeMs(QDateTime::currentMSecsSinceEpoch()),
+      m_thresholds() {
   qInfo() << "[MetricsCollector] Initialized, start time:" << m_startTimeMs;
 
   // 初始化默认阈值
@@ -244,50 +250,44 @@ QVariantMap MetricsCollector::getThresholds() const {
 void MetricsCollector::loadThresholdsFromConfig() {
   // 尝试从 Configuration 加载阈值配置
   // 配置格式: metrics.thresholds.<metric_name>.warning / .critical
-  try {
-    auto& config = Configuration::instance();
+  auto& config = Configuration::instance();
 
-    // 定义可配置的阈值键名映射
-    QMap<QString, QStringList> thresholdKeys = {
-        {Metrics::VIDEO_LATENCY_MS,
-         {"metrics.thresholds.video_latency_ms.warning",
-          "metrics.thresholds.video_latency_ms.critical"}},
-        {Metrics::VIDEO_FPS,
-         {"metrics.thresholds.video_fps.warning", "metrics.thresholds.video_fps.critical"}},
-        {Metrics::NETWORK_RTT_MS,
-         {"metrics.thresholds.network_rtt_ms.warning",
-          "metrics.thresholds.network_rtt_ms.critical"}},
-        {Metrics::NETWORK_PACKET_LOSS_PERCENT,
-         {"metrics.thresholds.network_packet_loss_percent.warning",
-          "metrics.thresholds.network_packet_loss_percent.critical"}},
-        {Metrics::CONTROL_LATENCY_MS,
-         {"metrics.thresholds.control_latency_ms.warning",
-          "metrics.thresholds.control_latency_ms.critical"}},
-    };
+  // 定义可配置的阈值键名映射
+  QMap<QString, QStringList> thresholdKeys = {
+      {Metrics::VIDEO_LATENCY_MS,
+       {"metrics.thresholds.video_latency_ms.warning",
+        "metrics.thresholds.video_latency_ms.critical"}},
+      {Metrics::VIDEO_FPS,
+       {"metrics.thresholds.video_fps.warning", "metrics.thresholds.video_fps.critical"}},
+      {Metrics::NETWORK_RTT_MS,
+       {"metrics.thresholds.network_rtt_ms.warning",
+        "metrics.thresholds.network_rtt_ms.critical"}},
+      {Metrics::NETWORK_PACKET_LOSS_PERCENT,
+       {"metrics.thresholds.network_packet_loss_percent.warning",
+        "metrics.thresholds.network_packet_loss_percent.critical"}},
+      {Metrics::CONTROL_LATENCY_MS,
+       {"metrics.thresholds.control_latency_ms.warning",
+        "metrics.thresholds.control_latency_ms.critical"}},
+  };
 
-    for (auto it = thresholdKeys.begin(); it != thresholdKeys.end(); ++it) {
-      const QString& metricName = it.key();
-      const QStringList& keys = it.value();
+  for (auto it = thresholdKeys.begin(); it != thresholdKeys.end(); ++it) {
+    const QString& metricName = it.key();
+    const QStringList& keys = it.value();
 
-      if (keys.size() < 2) {
-        continue;
-      }
-
-      // 通过 Configuration 的 get 方法获取阈值
-      double warning = config.get<double>(keys[0], std::numeric_limits<double>::quiet_NaN());
-      double critical = config.get<double>(keys[1], std::numeric_limits<double>::quiet_NaN());
-
-      if (!std::isnan(warning) && !std::isnan(critical)) {
-        bool lowerIsWorse = (metricName == Metrics::VIDEO_FPS);
-        setThreshold(metricName, warning, critical, lowerIsWorse);
-        qInfo() << "[MetricsCollector] Loaded threshold from config:" << metricName
-                << "warning=" << warning << "critical=" << critical;
-      }
+    if (keys.size() < 2) {
+      continue;
     }
-  } catch (const std::exception& e) {
-    qWarning() << "[MetricsCollector] Failed to load thresholds from config:" << e.what();
-  } catch (...) {
-    // Configuration 可能未初始化，忽略错误
+
+    // 通过 Configuration 的 get 方法获取阈值
+    double warning = config.get<double>(keys[0], std::numeric_limits<double>::quiet_NaN());
+    double critical = config.get<double>(keys[1], std::numeric_limits<double>::quiet_NaN());
+
+    if (!std::isnan(warning) && !std::isnan(critical)) {
+      bool lowerIsWorse = (metricName == Metrics::VIDEO_FPS);
+      setThreshold(metricName, warning, critical, lowerIsWorse);
+      qInfo() << "[MetricsCollector] Loaded threshold from config:" << metricName
+              << "warning=" << warning << "critical=" << critical;
+    }
   }
 }
 

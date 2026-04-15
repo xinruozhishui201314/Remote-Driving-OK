@@ -56,6 +56,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # 挂载 client 源码，使 QML 等修改无需重建镜像即可生效
       - ./client:/workspace/client:ro
+      # 挂载本地依赖项 (sml, etc.)
+      - ./deps:/workspace/deps:ro
       # 挂载后端协议定义（供客户端共用故障码等定义）
       - ./backend/src/protocol:/workspace/backend/src/protocol:ro
       # 挂载仓库 scripts（无头生命周期 verify-client-headless-lifecycle.sh 等）

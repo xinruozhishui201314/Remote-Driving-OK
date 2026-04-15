@@ -10,7 +10,7 @@
 #include <unistd.h>
 #endif
 
-MemoryManager::MemoryManager(QObject* parent) : QObject(parent) {}
+MemoryManager::MemoryManager(QObject* parent) : QObject(parent), m_locked(false) {}
 
 bool MemoryManager::lockMemory() {
 #ifdef Q_OS_LINUX

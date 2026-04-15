@@ -6,7 +6,14 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-ErrorRegistry::ErrorRegistry(QObject* parent) : QObject(parent) {
+ErrorRegistry::ErrorRegistry(QObject* parent)
+    : QObject(parent),
+      m_mutex(),
+      m_errors(),
+      m_fatalErrors(0),
+      m_errorErrors(0),
+      m_totalErrorCount(0),
+      m_nextErrorId(0) {
   qInfo() << "[Client][ErrorRegistry] initialized";
 }
 
@@ -275,7 +282,7 @@ void ErrorRegistry::updateStats() {
   }
 
   const int prevFatal = m_fatalErrors.load();
-  const int prevError = m_errorErrors.load();
+  Q_UNUSED(m_errorErrors.load());
 
   m_fatalErrors.store(fatal);
   m_errorErrors.store(error);

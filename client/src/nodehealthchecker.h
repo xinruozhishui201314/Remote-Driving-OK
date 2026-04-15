@@ -13,6 +13,7 @@
  */
 class NodeHealthChecker : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(NodeHealthChecker)
   Q_PROPERTY(QString backendStatus READ backendStatus NOTIFY backendStatusChanged)
   Q_PROPERTY(QString backendMessage READ backendMessage NOTIFY backendMessageChanged)
   Q_PROPERTY(QString keycloakStatus READ keycloakStatus NOTIFY keycloakStatusChanged)

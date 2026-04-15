@@ -19,6 +19,7 @@ static const QLatin1String Auto("自驾");
 class VehicleStatus : public QObject {
   Q_OBJECT
   QML_ELEMENT
+  Q_DISABLE_COPY(VehicleStatus)
   Q_PROPERTY(double speed READ speed NOTIFY speedChanged)
   Q_PROPERTY(double batteryLevel READ batteryLevel NOTIFY batteryLevelChanged)
   Q_PROPERTY(QString gear READ gear NOTIFY gearChanged)

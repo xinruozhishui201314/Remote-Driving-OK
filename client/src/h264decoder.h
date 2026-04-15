@@ -29,6 +29,7 @@ class H264WebRtcHwBridge;
 
 class H264Decoder : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(H264Decoder)
  public:
   explicit H264Decoder(const QString &streamTag = QString(), QObject *parent = nullptr);
   ~H264Decoder();
@@ -155,6 +156,7 @@ class H264Decoder : public QObject {
 
   // 帧聚合
   struct PendingFrame {
+    PendingFrame() : timestamp(0), nalUnits(), rtpSeqs(), complete(false), hasKeyframe(false), closedByRtpMarker(false) {}
     quint32 timestamp = 0;
     std::vector<QByteArray> nalUnits;
     std::vector<quint16> rtpSeqs; // v4: 记录本帧包含的 RTP 序列号

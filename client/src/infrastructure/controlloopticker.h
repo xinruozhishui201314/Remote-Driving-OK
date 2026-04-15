@@ -10,6 +10,7 @@
 
 class ControlLoopTicker : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(ControlLoopTicker)
  public:
   struct PerfStats {
     qint64 tickIndex = 0;

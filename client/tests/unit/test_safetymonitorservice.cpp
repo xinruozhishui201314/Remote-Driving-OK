@@ -7,7 +7,9 @@
 
 class TestSafetyMonitorService : public QObject {
   Q_OBJECT
-
+  Q_DISABLE_COPY(TestSafetyMonitorService)
+ public:
+  explicit TestSafetyMonitorService(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void cleanup() { SafetyMonitorService::clearUnitTestClockForTesting(); }
 

@@ -63,6 +63,9 @@ static QJsonObject parseJsonObject(const QByteArray &utf8) {
 
 class TestHttpEndpointServer : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestHttpEndpointServer)
+ public:
+  explicit TestHttpEndpointServer(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void init();
   void cleanup();

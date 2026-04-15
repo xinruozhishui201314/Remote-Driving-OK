@@ -11,6 +11,7 @@
  */
 class KeystoreManager : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(KeystoreManager)
  public:
   static KeystoreManager& instance();
 

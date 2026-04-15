@@ -4,6 +4,9 @@
 
 class TestClientVideoDiagCache : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestClientVideoDiagCache)
+ public:
+  explicit TestClientVideoDiagCache(QObject* parent = nullptr) : QObject(parent), m_savedRhi() {}
  private slots:
   void init();
   void cleanup();

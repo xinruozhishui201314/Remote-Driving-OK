@@ -7,6 +7,9 @@ using namespace MqttControlEnvelope;
 
 class TestMqttControlEnvelope : public QObject {
   Q_OBJECT
+  Q_DISABLE_COPY(TestMqttControlEnvelope)
+ public:
+  explicit TestMqttControlEnvelope(QObject* parent = nullptr) : QObject(parent) {}
  private slots:
   void parsePreferredChannel_variants();
   void prepareForSend_adds_vin_timestamp_seq();

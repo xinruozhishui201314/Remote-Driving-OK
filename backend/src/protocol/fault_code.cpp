@@ -10,7 +10,7 @@ const FaultCode& FaultCodeManager::get(const std::string& code) {
     if (it != faultCodeMap_.end()) {
         return it->second;
     }
-    static FaultCode unknown{"UNKNOWN", "Unknown Fault", FaultSeverity::INFO, FaultDomain::TELEOP, false, "未知错误"};
+    static FaultCode unknown{"UNKNOWN", "Unknown Fault", FaultSeverity::INFO, FaultDomain::TELEOP, false, "未知错误", "", ""};
     return unknown;
 }
 

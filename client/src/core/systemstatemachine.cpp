@@ -1,206 +1,188 @@
 #include "systemstatemachine.h"
 
-#include "eventbus.h"
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Weffc++"
+#include <boost/sml.hpp>
+#pragma GCC diagnostic pop
 
+#include <mutex>
+#include <type_traits>
 #include <QDebug>
+#include <QSet>
+
+namespace sml = boost::sml;
+
+// 事件定义
+struct e_connect {};
+struct e_connected {};
+struct e_auth_success {};
+struct e_auth_failure {};
+struct e_logout {};
+struct e_start_session {};
+struct e_preflight_ok {};
+struct e_preflight_fail {};
+struct e_emergency_stop {};
+struct e_network_degrade {};
+struct e_network_recover {};
+struct e_stop_session {};
+struct e_connection_lost {};
+struct e_timeout {};
+struct e_reset {};
+
+// 状态定义 (Tags)
+struct s_idle {};
+struct s_connecting {};
+struct s_authenticating {};
+struct s_ready {};
+struct s_pre_flight {};
+struct s_driving {};
+struct s_degraded {};
+struct s_emergency {};
+struct s_stopping {};
+struct s_error {};
+
+// 子状态机：驾驶会话（Hierarchical SML）
+struct driving_session_def {
+  auto operator()() const noexcept {
+    using namespace sml;
+    return make_transition_table(
+        *state<s_driving> + event<e_network_degrade> = state<s_degraded>,
+        state<s_degraded> + event<e_network_recover> = state<s_driving>);
+  }
+};
+
+// 状态机定义移出 Impl 以提高兼容性
+struct state_machine_def {
+  SystemStateMachine* q;
+
+  auto operator()() const noexcept {
+    using namespace sml;
+
+    return make_transition_table(
+        // IDLE
+        *state<s_idle> + event<e_connect> = state<s_connecting>,
+        state<s_idle> + event<e_auth_success> = state<s_ready>,
+
+        // CONNECTING
+        state<s_connecting> + event<e_connected> = state<s_authenticating>,
+        state<s_connecting> + event<e_timeout> = state<s_idle>,
+        state<s_connecting> + event<e_reset> = state<s_idle>,
+
+        // AUTHENTICATING
+        state<s_authenticating> + event<e_auth_success> = state<s_ready>,
+        state<s_authenticating> + event<e_auth_failure> = state<s_idle>,
+        state<s_authenticating> + event<e_timeout> = state<s_idle>,
+        state<s_authenticating> + event<e_reset> = state<s_idle>,
+
+        // READY
+        state<s_ready> + event<e_auth_success> = state<s_ready>,
+        state<s_ready> + event<e_logout> = state<s_idle>,
+        state<s_ready> + event<e_start_session> = state<s_pre_flight>,
+        state<s_ready> + event<e_connection_lost> = state<s_idle>,
+        state<s_ready> + event<e_reset> = state<s_idle>,
+
+        // PRE_FLIGHT
+        state<s_pre_flight> + event<e_preflight_ok> = state<driving_session_def>,
+        state<s_pre_flight> + event<e_preflight_fail> = state<s_ready>,
+        state<s_pre_flight> + event<e_stop_session> = state<s_ready>,
+        state<s_pre_flight> + event<e_emergency_stop> = state<s_ready>,
+        state<s_pre_flight> + event<e_reset> = state<s_idle>,
+
+        // DRIVING_SESSION (Hierarchical)
+        state<driving_session_def> + event<e_stop_session> = state<s_stopping>,
+        state<driving_session_def> + event<e_logout> = state<s_stopping>,
+        state<driving_session_def> + event<e_emergency_stop> = state<s_emergency>,
+        state<driving_session_def> + event<e_connection_lost> = state<s_emergency>,
+        state<driving_session_def> + event<e_reset> = state<s_idle>,
+
+        // EMERGENCY
+        state<s_emergency> + event<e_stop_session> = state<s_stopping>,
+        state<s_emergency> + event<e_reset> = state<s_idle>,
+        state<s_emergency> + event<e_logout> = state<s_idle>,
+
+        // STOPPING
+        state<s_stopping> + event<e_stop_session> = state<s_idle>,
+        state<s_stopping> + event<e_reset> = state<s_idle>,
+
+        // ERROR
+        state<s_error> + event<e_reset> = state<s_idle>);
+  }
+};
+
+struct SystemStateMachine::Impl {
+  SystemStateMachine* q;
+  sml::sm<state_machine_def> sm;
+
+  explicit Impl(SystemStateMachine* q_ptr) : q(q_ptr), sm{state_machine_def{q_ptr}} {}
+};
 
 SystemStateMachine::SystemStateMachine(EventBus* eventBus, QObject* parent)
-    : QObject(parent), m_eventBus(eventBus) {
-  setupTransitions();
-}
+    : QObject(parent), m_eventBus(eventBus), m_impl(std::make_unique<Impl>(this)) {}
+
+SystemStateMachine::~SystemStateMachine() = default;
 
 SystemStateMachine::SystemState SystemStateMachine::stateEnum() const {
-  QMutexLocker lock(&m_mutex);
-  return m_current;
+  using S = SystemState;
+  SystemState current = S::IDLE;
+  m_impl->sm.visit_current_states([&current](auto state) {
+    using T = typename decltype(state)::type;
+    if constexpr (std::is_same_v<T, s_idle>) current = S::IDLE;
+    else if constexpr (std::is_same_v<T, s_connecting>) current = S::CONNECTING;
+    else if constexpr (std::is_same_v<T, s_authenticating>) current = S::AUTHENTICATING;
+    else if constexpr (std::is_same_v<T, s_ready>) current = S::READY;
+    else if constexpr (std::is_same_v<T, s_pre_flight>) current = S::PRE_FLIGHT;
+    else if constexpr (std::is_same_v<T, s_driving>) current = S::DRIVING;
+    else if constexpr (std::is_same_v<T, s_degraded>) current = S::DEGRADED;
+    else if constexpr (std::is_same_v<T, s_emergency>) current = S::EMERGENCY;
+    else if constexpr (std::is_same_v<T, s_stopping>) current = S::STOPPING;
+    else if constexpr (std::is_same_v<T, s_error>) current = S::ERROR;
+  });
+  return current;
 }
 
 QString SystemStateMachine::currentState() const {
-  QMutexLocker lock(&m_mutex);
-  return stateToString(m_current);
-}
-
-bool SystemStateMachine::vehicleTelemetryHeartbeatRequired() const {
-  QMutexLocker lock(&m_mutex);
-  switch (m_current) {
-    // PRE_FLIGHT：仅等待车端确认远驾/检查项，尚未正式控车；若此处要求 status 心跳，
-    // 会在「仅视频通、MQTT 断」时误急停且 EMERGENCY_STOP 无法从 PRE_FLIGHT 转移（历史缺陷）。
-    case SystemState::DRIVING:
-    case SystemState::DEGRADED:
-      return true;
-    default:
-      return false;
-  }
-}
-
-void SystemStateMachine::addTransition(SystemState from, Trigger trig, SystemState to,
-                                       std::function<bool()> guard, std::function<void()> action) {
-  m_transitions[{from, trig}] = Transition{to, std::move(guard), std::move(action)};
-}
-
-// ★★★ 状态动作注册方法实现 ★★★
-void SystemStateMachine::registerEntryAction(SystemState state, std::function<void()> action) {
-  QMutexLocker lock(&m_mutex);
-  m_entryActions[state] = std::move(action);
-}
-
-void SystemStateMachine::registerExitAction(SystemState state, std::function<void()> action) {
-  QMutexLocker lock(&m_mutex);
-  m_exitActions[state] = std::move(action);
-}
-
-void SystemStateMachine::registerTransitionAction(Trigger trigger, std::function<void()> action) {
-  QMutexLocker lock(&m_mutex);
-  m_transitionActions[trigger] = std::move(action);
-}
-
-void SystemStateMachine::setupTransitions() {
-  using S = SystemState;
-  using T = Trigger;
-
-  // ── IDLE ────────────────────────────────────────────────────────────────
-  addTransition(S::IDLE, T::CONNECT, S::CONNECTING);
-  addTransition(S::IDLE, T::AUTH_SUCCESS, S::READY);  // 直接登录（跳过连接状态的便利路径）
-
-  // ── CONNECTING ──────────────────────────────────────────────────────────
-  addTransition(S::CONNECTING, T::CONNECTED, S::AUTHENTICATING);
-  addTransition(S::CONNECTING, T::TIMEOUT, S::IDLE);
-  addTransition(S::CONNECTING, T::RESET, S::IDLE);
-
-  // ── AUTHENTICATING ──────────────────────────────────────────────────────
-  addTransition(S::AUTHENTICATING, T::AUTH_SUCCESS, S::READY);
-  addTransition(S::AUTHENTICATING, T::AUTH_FAILURE, S::IDLE);
-  addTransition(S::AUTHENTICATING, T::TIMEOUT, S::IDLE);
-  addTransition(S::AUTHENTICATING, T::RESET, S::IDLE);
-
-  // ── READY ────────────────────────────────────────────────────────────────
-  addTransition(S::READY, T::AUTH_SUCCESS, S::READY);  // 刷新登录
-  addTransition(S::READY, T::LOGOUT, S::IDLE);
-  addTransition(S::READY, T::START_SESSION, S::PRE_FLIGHT, nullptr, [this]() {
-    qInfo().noquote() << "[Client][FSM] entering PRE_FLIGHT - starting system checks";
-    emit stateEntryAction(SystemState::PRE_FLIGHT);
-  });
-  addTransition(S::READY, T::CONNECTION_LOST, S::IDLE);
-  addTransition(S::READY, T::RESET, S::IDLE);
-
-  // ── PRE_FLIGHT ────────────────────────────────────────────────────────────
-  addTransition(S::PRE_FLIGHT, T::PREFLIGHT_OK, S::DRIVING, nullptr, [this]() {
-    qInfo().noquote() << "[Client][FSM] PRE_FLIGHT checks passed - entering DRIVING";
-    emit stateEntryAction(SystemState::DRIVING);
-  });
-  addTransition(S::PRE_FLIGHT, T::PREFLIGHT_FAIL, S::READY);
-  addTransition(S::PRE_FLIGHT, T::STOP_SESSION, S::READY);
-  addTransition(S::PRE_FLIGHT, T::EMERGENCY_STOP, S::READY, nullptr, [this]() {
-    qCritical().noquote()
-        << "[Client][FSM] EMERGENCY_STOP during PRE_FLIGHT -> READY (abort session / safety)";
-    emit emergencyActivated(QStringLiteral("EMERGENCY_STOP during PRE_FLIGHT (session aborted)"));
-    publishEmergencyEvent("EMERGENCY_STOP_PRE_FLIGHT");
-  });
-  addTransition(S::PRE_FLIGHT, T::RESET, S::IDLE);
-
-  // ── DRIVING ──────────────────────────────────────────────────────────────
-  addTransition(S::DRIVING, T::STOP_SESSION, S::STOPPING, nullptr,
-                [this]() { qInfo().noquote() << "[Client][FSM] DRIVING -> STOPPING"; });
-  addTransition(S::DRIVING, T::LOGOUT, S::STOPPING);
-  addTransition(S::DRIVING, T::NETWORK_DEGRADE, S::DEGRADED, nullptr, [this]() {
-    qWarning().noquote() << "[Client][FSM] network degraded - entering DEGRADED mode";
-  });
-  addTransition(S::DRIVING, T::EMERGENCY_STOP, S::EMERGENCY, nullptr, [this]() {
-    emit emergencyActivated(QStringLiteral("EMERGENCY_STOP triggered in DRIVING state"));
-    publishEmergencyEvent("EMERGENCY_STOP");
-  });
-  addTransition(S::DRIVING, T::CONNECTION_LOST, S::EMERGENCY, nullptr, [this]() {
-    emit emergencyActivated(QStringLiteral("Connection lost during DRIVING"));
-    publishEmergencyEvent("CONNECTION_LOST");
-  });
-  addTransition(S::DRIVING, T::RESET, S::IDLE);
-
-  // ── DEGRADED ─────────────────────────────────────────────────────────────
-  addTransition(S::DEGRADED, T::NETWORK_RECOVER, S::DRIVING, nullptr, [this]() {
-    qInfo().noquote() << "[Client][FSM] network recovered - resuming DRIVING";
-  });
-  addTransition(S::DEGRADED, T::EMERGENCY_STOP, S::EMERGENCY, nullptr, [this]() {
-    emit emergencyActivated(QStringLiteral("EMERGENCY_STOP triggered in DEGRADED state"));
-    publishEmergencyEvent("EMERGENCY_STOP");
-  });
-  addTransition(S::DEGRADED, T::STOP_SESSION, S::STOPPING);
-  addTransition(S::DEGRADED, T::LOGOUT, S::STOPPING);
-  addTransition(S::DEGRADED, T::CONNECTION_LOST, S::EMERGENCY, nullptr, [this]() {
-    emit emergencyActivated(QStringLiteral("Connection lost during DEGRADED"));
-    publishEmergencyEvent("CONNECTION_LOST");
-  });
-  addTransition(S::DEGRADED, T::RESET, S::IDLE);
-
-  // ── EMERGENCY ────────────────────────────────────────────────────────────
-  addTransition(S::EMERGENCY, T::STOP_SESSION, S::STOPPING);
-  addTransition(S::EMERGENCY, T::RESET, S::IDLE);
-  addTransition(S::EMERGENCY, T::LOGOUT, S::IDLE);
-
-  // ── STOPPING ─────────────────────────────────────────────────────────────
-  addTransition(S::STOPPING, T::STOP_SESSION, S::IDLE);  // cleanup complete
-  addTransition(S::STOPPING, T::RESET, S::IDLE);
-
-  // ── ERROR ─────────────────────────────────────────────────────────────────
-  addTransition(S::ERROR, T::RESET, S::IDLE);
+  return SystemStateMachine::stateToString(stateEnum());
 }
 
 bool SystemStateMachine::fire(Trigger trigger) {
-  Transition tr;
-  SystemState oldS{};
-  SystemState newS{};
-  {
-    QMutexLocker lock(&m_mutex);
-    const auto key = std::make_pair(m_current, trigger);
-    auto it = m_transitions.find(key);
-    if (it == m_transitions.end()) {
-      qWarning().noquote() << "[Client][FSM] invalid transition state=" << stateToString(m_current)
-                           << " trigger=" << triggerToString(trigger);
-      return false;
-    }
-    tr = it->second;
-    if (tr.guard && !tr.guard()) {
-      qDebug().noquote() << "[Client][FSM] guard rejected trigger=" << triggerToString(trigger);
-      return false;
-    }
-    oldS = m_current;
-    newS = tr.target;
-
-    // 执行退出动作（持锁外）先记录，释放锁后执行
-    m_current = newS;
+  SystemState oldS = stateEnum();
+  bool handled = false;
+  
+  switch (trigger) {
+    case Trigger::CONNECT: handled = m_impl->sm.process_event(e_connect{}); break;
+    case Trigger::CONNECTED: handled = m_impl->sm.process_event(e_connected{}); break;
+    case Trigger::AUTH_SUCCESS: handled = m_impl->sm.process_event(e_auth_success{}); break;
+    case Trigger::AUTH_FAILURE: handled = m_impl->sm.process_event(e_auth_failure{}); break;
+    case Trigger::LOGOUT: handled = m_impl->sm.process_event(e_logout{}); break;
+    case Trigger::START_SESSION: handled = m_impl->sm.process_event(e_start_session{}); break;
+    case Trigger::PREFLIGHT_OK: handled = m_impl->sm.process_event(e_preflight_ok{}); break;
+    case Trigger::PREFLIGHT_FAIL: handled = m_impl->sm.process_event(e_preflight_fail{}); break;
+    case Trigger::EMERGENCY_STOP: handled = m_impl->sm.process_event(e_emergency_stop{}); break;
+    case Trigger::NETWORK_DEGRADE: handled = m_impl->sm.process_event(e_network_degrade{}); break;
+    case Trigger::NETWORK_RECOVER: handled = m_impl->sm.process_event(e_network_recover{}); break;
+    case Trigger::STOP_SESSION: handled = m_impl->sm.process_event(e_stop_session{}); break;
+    case Trigger::CONNECTION_LOST: handled = m_impl->sm.process_event(e_connection_lost{}); break;
+    case Trigger::TIMEOUT: handled = m_impl->sm.process_event(e_timeout{}); break;
+    case Trigger::RESET: handled = m_impl->sm.process_event(e_reset{}); break;
   }
 
-  // 退出动作
-  onExitState(oldS);
-
-  // 转换动作：先执行 Transition 中定义的 action，再执行 m_transitionActions 中注册的同名触发器动作
-  if (tr.action) {
-    tr.action();
-  }
-
-  // 执行已注册的转换动作（如果有）
-  {
-    QMutexLocker lock(&m_mutex);
-    auto it = m_transitionActions.find(trigger);
-    if (it != m_transitionActions.end() && it->second) {
-      it->second();
+  if (handled) {
+    SystemState newS = stateEnum();
+    if (oldS != newS) {
+      qInfo().noquote() << "[Client][FSM] transition" << SystemStateMachine::stateToString(oldS) << "->" << SystemStateMachine::stateToString(newS)
+                        << "via" << SystemStateMachine::triggerToString(trigger);
+      emit stateChanged(SystemStateMachine::stateToString(newS), SystemStateMachine::stateToString(oldS));
     }
+  } else {
+    qWarning().noquote() << "[Client][FSM] invalid transition state=" << SystemStateMachine::stateToString(oldS)
+                         << " trigger=" << SystemStateMachine::triggerToString(trigger);
   }
-
-  // 进入动作
-  onEnterState(newS);
-
-  const QString oldName = stateToString(oldS);
-  const QString newName = stateToString(newS);
-  qInfo().noquote() << "[Client][FSM] transition" << oldName << "->" << newName << "via"
-                    << triggerToString(trigger);
-  emit stateChanged(newName, oldName);
-  return true;
+  return handled;
 }
 
 bool SystemStateMachine::fireByName(const QString& triggerName) {
   Trigger t = stringToTrigger(triggerName.trimmed().toUpper());
   if (t == Trigger::RESET && triggerName.trimmed().toUpper() != QStringLiteral("RESET")) {
-    // stringToTrigger returns RESET as sentinel; check if it was actually RESET
-    // or an unknown trigger that defaulted to RESET
     static const QSet<QString> knownTriggers = {
         "CONNECT",         "CONNECTED",    "AUTH_SUCCESS",    "AUTH_FAILURE",   "LOGOUT",
         "START_SESSION",   "PREFLIGHT_OK", "PREFLIGHT_FAIL",  "EMERGENCY_STOP", "NETWORK_DEGRADE",
@@ -213,18 +195,9 @@ bool SystemStateMachine::fireByName(const QString& triggerName) {
   return fire(t);
 }
 
-void SystemStateMachine::onEnterState(SystemState state) {
-  auto it = m_entryActions.find(state);
-  if (it != m_entryActions.end() && it->second) {
-    it->second();
-  }
-}
-
-void SystemStateMachine::onExitState(SystemState state) {
-  auto it = m_exitActions.find(state);
-  if (it != m_exitActions.end() && it->second) {
-    it->second();
-  }
+bool SystemStateMachine::vehicleTelemetryHeartbeatRequired() const {
+  auto s = stateEnum();
+  return (s == SystemState::DRIVING || s == SystemState::DEGRADED);
 }
 
 void SystemStateMachine::publishEmergencyEvent(const QString& reason) {
@@ -238,69 +211,42 @@ void SystemStateMachine::publishEmergencyEvent(const QString& reason) {
 
 QString SystemStateMachine::stateToString(SystemState s) {
   switch (s) {
-    case SystemState::IDLE:
-      return QStringLiteral("IDLE");
-    case SystemState::CONNECTING:
-      return QStringLiteral("CONNECTING");
-    case SystemState::AUTHENTICATING:
-      return QStringLiteral("AUTHENTICATING");
-    case SystemState::READY:
-      return QStringLiteral("READY");
-    case SystemState::PRE_FLIGHT:
-      return QStringLiteral("PRE_FLIGHT");
-    case SystemState::DRIVING:
-      return QStringLiteral("DRIVING");
-    case SystemState::DEGRADED:
-      return QStringLiteral("DEGRADED");
-    case SystemState::EMERGENCY:
-      return QStringLiteral("EMERGENCY");
-    case SystemState::STOPPING:
-      return QStringLiteral("STOPPING");
-    case SystemState::ERROR:
-      return QStringLiteral("ERROR");
+    case SystemState::IDLE: return QStringLiteral("IDLE");
+    case SystemState::CONNECTING: return QStringLiteral("CONNECTING");
+    case SystemState::AUTHENTICATING: return QStringLiteral("AUTHENTICATING");
+    case SystemState::READY: return QStringLiteral("READY");
+    case SystemState::PRE_FLIGHT: return QStringLiteral("PRE_FLIGHT");
+    case SystemState::DRIVING: return QStringLiteral("DRIVING");
+    case SystemState::DEGRADED: return QStringLiteral("DEGRADED");
+    case SystemState::EMERGENCY: return QStringLiteral("EMERGENCY");
+    case SystemState::STOPPING: return QStringLiteral("STOPPING");
+    case SystemState::ERROR: return QStringLiteral("ERROR");
   }
   return QStringLiteral("UNKNOWN");
 }
 
 QString SystemStateMachine::triggerToString(Trigger t) {
   switch (t) {
-    case Trigger::CONNECT:
-      return QStringLiteral("CONNECT");
-    case Trigger::CONNECTED:
-      return QStringLiteral("CONNECTED");
-    case Trigger::AUTH_SUCCESS:
-      return QStringLiteral("AUTH_SUCCESS");
-    case Trigger::AUTH_FAILURE:
-      return QStringLiteral("AUTH_FAILURE");
-    case Trigger::LOGOUT:
-      return QStringLiteral("LOGOUT");
-    case Trigger::START_SESSION:
-      return QStringLiteral("START_SESSION");
-    case Trigger::PREFLIGHT_OK:
-      return QStringLiteral("PREFLIGHT_OK");
-    case Trigger::PREFLIGHT_FAIL:
-      return QStringLiteral("PREFLIGHT_FAIL");
-    case Trigger::EMERGENCY_STOP:
-      return QStringLiteral("EMERGENCY_STOP");
-    case Trigger::NETWORK_DEGRADE:
-      return QStringLiteral("NETWORK_DEGRADE");
-    case Trigger::NETWORK_RECOVER:
-      return QStringLiteral("NETWORK_RECOVER");
-    case Trigger::STOP_SESSION:
-      return QStringLiteral("STOP_SESSION");
-    case Trigger::CONNECTION_LOST:
-      return QStringLiteral("CONNECTION_LOST");
-    case Trigger::TIMEOUT:
-      return QStringLiteral("TIMEOUT");
-    case Trigger::RESET:
-      return QStringLiteral("RESET");
+    case Trigger::CONNECT: return QStringLiteral("CONNECT");
+    case Trigger::CONNECTED: return QStringLiteral("CONNECTED");
+    case Trigger::AUTH_SUCCESS: return QStringLiteral("AUTH_SUCCESS");
+    case Trigger::AUTH_FAILURE: return QStringLiteral("AUTH_FAILURE");
+    case Trigger::LOGOUT: return QStringLiteral("LOGOUT");
+    case Trigger::START_SESSION: return QStringLiteral("START_SESSION");
+    case Trigger::PREFLIGHT_OK: return QStringLiteral("PREFLIGHT_OK");
+    case Trigger::PREFLIGHT_FAIL: return QStringLiteral("PREFLIGHT_FAIL");
+    case Trigger::EMERGENCY_STOP: return QStringLiteral("EMERGENCY_STOP");
+    case Trigger::NETWORK_DEGRADE: return QStringLiteral("NETWORK_DEGRADE");
+    case Trigger::NETWORK_RECOVER: return QStringLiteral("NETWORK_RECOVER");
+    case Trigger::STOP_SESSION: return QStringLiteral("STOP_SESSION");
+    case Trigger::CONNECTION_LOST: return QStringLiteral("CONNECTION_LOST");
+    case Trigger::TIMEOUT: return QStringLiteral("TIMEOUT");
+    case Trigger::RESET: return QStringLiteral("RESET");
   }
   return QStringLiteral("?");
 }
 
 SystemStateMachine::Trigger SystemStateMachine::stringToTrigger(const QString& name) {
-  // Future-use: maps trigger name string to Trigger enum.
-  // Currently used by fireByName() for QML-friendly trigger firing.
   static const QMap<QString, Trigger> kMap{
       {"CONNECT", Trigger::CONNECT},
       {"CONNECTED", Trigger::CONNECTED},
@@ -322,27 +268,5 @@ SystemStateMachine::Trigger SystemStateMachine::stringToTrigger(const QString& n
   if (it != kMap.constEnd()) {
     return it.value();
   }
-  return Trigger::RESET;  // sentinel value for unknown triggers
-}
-
-SystemStateMachine::SystemState SystemStateMachine::stringToState(const QString& name) {
-  // Future-use: maps state name string to SystemState enum.
-  // Reserved for future QML-friendly state inspection/manipulation.
-  static const QMap<QString, SystemState> kMap{
-      {"IDLE", SystemState::IDLE},
-      {"CONNECTING", SystemState::CONNECTING},
-      {"AUTHENTICATING", SystemState::AUTHENTICATING},
-      {"READY", SystemState::READY},
-      {"PRE_FLIGHT", SystemState::PRE_FLIGHT},
-      {"DRIVING", SystemState::DRIVING},
-      {"DEGRADED", SystemState::DEGRADED},
-      {"EMERGENCY", SystemState::EMERGENCY},
-      {"STOPPING", SystemState::STOPPING},
-      {"ERROR", SystemState::ERROR},
-  };
-  auto it = kMap.constFind(name.toUpper());
-  if (it != kMap.constEnd()) {
-    return it.value();
-  }
-  return SystemState::IDLE;  // sentinel value for unknown states
+  return Trigger::RESET;
 }

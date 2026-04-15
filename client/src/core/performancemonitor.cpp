@@ -2,7 +2,19 @@
 
 #include <QDebug>
 
-PerformanceMonitor::PerformanceMonitor(QObject* parent) : QObject(parent) {
+PerformanceMonitor::PerformanceMonitor(QObject* parent)
+    : QObject(parent),
+      m_reportTimer(),
+      m_videoE2EStats(),
+      m_controlRTTStats(),
+      m_uiFrameStats(),
+      m_decodeStats(),
+      m_videoFps(),
+      m_controlHz(),
+      m_packetLossRate(0.0),
+      m_droppedFrames(0),
+      m_decoderErrors(0) {
+  m_reportTimer.setParent(this);
   connect(&m_reportTimer, &QTimer::timeout, this, &PerformanceMonitor::collectAndReport);
 }
 
