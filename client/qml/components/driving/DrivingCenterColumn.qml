@@ -433,6 +433,21 @@ ColumnLayout {
                         font.family: facade.chineseFont || font.family
                     }
                 }
+
+                // ── 端到端延时显示 ──
+                Text {
+                    id: latencyDisplayText
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 36 // 在状态文字上方一点
+                    z: 21
+                    text: (facade.appServices.networkQuality ? Math.round(facade.appServices.networkQuality.latencyMs) : 0) + " ms"
+                    color: facade.colorDanger
+                    font.pixelSize: 14
+                    font.bold: true
+                    font.family: facade.chineseFont || font.family
+                    visible: mainCameraView.everHadVideoFrame
+                }
                 
                 // 悬浮转向灯
                 Row {

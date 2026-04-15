@@ -3,6 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 1.15
 import RemoteDriving 1.0
 import "styles" as ThemeModule
+import "components"
 
 /**
  * 状态栏组件
@@ -237,6 +238,18 @@ Rectangle {
                 font.bold: true
                 font.family: statusBar.chineseFont || font.family
             }
+        }
+
+        Rectangle {
+            width: 2
+            height: parent.height * 0.6
+            radius: 1
+            color: ThemeModule.Theme.colorBorder
+        }
+
+        // 故障码指示器
+        FaultIndicator {
+            Layout.alignment: Qt.AlignVCenter
         }
 
         Item {

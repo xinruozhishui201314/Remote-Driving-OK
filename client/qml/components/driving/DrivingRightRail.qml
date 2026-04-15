@@ -23,6 +23,7 @@ ColumnLayout {
     // 上半部分：右视图（与左视图对称）
     Components.VideoPanel {
         id: rightViewVideo
+        facade: rightColMeasurer.facade
         Layout.fillWidth: true
         Layout.preferredHeight: facade.mainRowAvailH * facade.leftVideoRatio
         Layout.minimumHeight: facade.sideColTopMinHeight

@@ -28,10 +28,13 @@ class NetworkQualityAggregator : public QObject {
   Q_OBJECT
   Q_PROPERTY(double score READ score NOTIFY scoreChanged)
   Q_PROPERTY(bool degraded READ degraded NOTIFY degradedChanged)
+  /** 端到端延时（ms），目前映射自 MQTT 反馈的 RTT */
+  Q_PROPERTY(double latencyMs READ rttMs NOTIFY networkQualityChanged)
   Q_PROPERTY(double rttMs READ rttMs NOTIFY networkQualityChanged)
   Q_PROPERTY(double packetLossRate READ packetLossRate NOTIFY networkQualityChanged)
   Q_PROPERTY(double bandwidthKbps READ bandwidthKbps NOTIFY networkQualityChanged)
   Q_PROPERTY(double jitterMs READ jitterMs NOTIFY networkQualityChanged)
+  Q_PROPERTY(double videoE2EMs READ videoE2EMs NOTIFY videoE2EChanged)
   Q_PROPERTY(double mediaPresentationFactor READ mediaPresentationFactor NOTIFY
                  mediaPresentationFactorChanged)
   Q_PROPERTY(QString mediaHealthAggregateMode READ mediaHealthAggregateMode CONSTANT)
@@ -47,6 +50,7 @@ class NetworkQualityAggregator : public QObject {
   double packetLossRate() const { return m_packetLossRate; }
   double bandwidthKbps() const { return m_bandwidthKbps; }
   double jitterMs() const { return m_jitterMs; }
+  double videoE2EMs() const { return m_videoE2EMs; }
   /** 聚合后的呈现乘子，已乘入各 cam 槽位 penalty（见 CLIENT_MEDIA_HEALTH_AGGREGATE） */
   double mediaPresentationFactor() const { return m_mediaPresentationFactor; }
   QString mediaHealthAggregateMode() const { return m_mediaAggModeLabel; }
@@ -57,12 +61,14 @@ class NetworkQualityAggregator : public QObject {
    * streamTag 通常为 {vin}_cam_front 等，用于映射到 cam_front / cam_rear / …
    */
   void noteMediaPresentationDegraded(const QString &streamTag, const QString &reason);
+  void setVideoE2EMs(double ms);
 
  signals:
   void scoreChanged(double score);
   void degradedChanged(bool degraded);
   void networkQualityChanged(double score, double rttMs, double packetLossRate,
                              double bandwidthKbps, double jitterMs);
+  void videoE2EChanged(double ms);
   void mediaPresentationFactorChanged(double factor);
 
  private slots:
@@ -86,6 +92,7 @@ class NetworkQualityAggregator : public QObject {
   double m_packetLossRate = 0.0;
   double m_bandwidthKbps = 0.0;
   double m_jitterMs = 0.0;
+  double m_videoE2EMs = 0.0;
   double m_mediaPresentationFactor = 1.0;
   QString m_mediaAggModeLabel = QStringLiteral("weighted");
   bool m_mediaUseMinAggregate = false;

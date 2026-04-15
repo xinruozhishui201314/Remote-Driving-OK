@@ -242,3 +242,10 @@ void NetworkQualityAggregator::recompute() {
 
   emit networkQualityChanged(m_score, m_rttMs, m_packetLossRate, m_bandwidthKbps, m_jitterMs);
 }
+
+void NetworkQualityAggregator::setVideoE2EMs(double ms) {
+  if (qAbs(m_videoE2EMs - ms) > 0.1) {
+    m_videoE2EMs = ms;
+    emit videoE2EChanged(m_videoE2EMs);
+  }
+}

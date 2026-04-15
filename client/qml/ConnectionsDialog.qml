@@ -255,11 +255,20 @@ Popup {
                         if (mc) {
                             mc.brokerUrl = mqttBrokerField.text
                             mc.clientId = mqttClientIdField.text
-                            if (AppContext)
-                                AppContext.pendingRequestStreamAfterMqttConnect = true
-                            mc.connectToBroker()
-                            console.warn("[Client][StreamE2E][ConnectionsDialog] connectToBroker scheduled; "
-                                         + "start_stream when mqttBrokerConnectionChanged(true)")
+                            if (AppContext) {
+                                if (mc.mqttBrokerConnected) {
+                                    // ★ 系统性修复：若 MQTT 已连接，直接触发推流，避免 wait for signal 导致不发指令
+                                    if (typeof mc.requestStreamStart === "function") {
+                                        mc.requestStreamStart()
+                                        console.warn("[Client][StreamE2E][ConnectionsDialog] start_stream sent immediately (already connected)")
+                                    }
+                                } else {
+                                    AppContext.pendingRequestStreamAfterMqttConnect = true
+                                    mc.connectToBroker()
+                                    console.warn("[Client][StreamE2E][ConnectionsDialog] connectToBroker scheduled; "
+                                                 + "start_stream when mqttBrokerConnectionChanged(true)")
+                                }
+                            }
                         }
 
                         dialog.close()

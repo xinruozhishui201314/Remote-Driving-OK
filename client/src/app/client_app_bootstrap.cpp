@@ -39,6 +39,7 @@ static QString g_lastGlProbeRendererForDiag;
 
 #include "authmanager.h"
 #include "core/eventbus.h"
+#include "core/faultmanager.h"
 #include "core/networkqualityaggregator.h"
 #include "core/systemstatemachine.h"
 #include "core/tracing.h"
@@ -602,6 +603,7 @@ void registerContextProperties(QQmlContext *ctx, AuthManager *authManager,
   if (autoConnectTestVin.isEmpty())
     autoConnectTestVin = QStringLiteral("123456789");
   ctx->setContextProperty(QStringLiteral("autoConnectTestVin"), autoConnectTestVin);
+  ctx->setContextProperty("faultManager", &FaultManager::instance());
   ctx->setContextProperty("layoutDebugEnabled", QProcessEnvironment::systemEnvironment().value(
                                                     "CLIENT_LAYOUT_DEBUG") == "1");
   QString defaultServerUrlFromEnv =
@@ -625,6 +627,7 @@ void registerContextProperties(QQmlContext *ctx, AuthManager *authManager,
   ctx->setContextProperty(QStringLiteral("rd_vehicleStatus"), vehicleStatus);
   ctx->setContextProperty(QStringLiteral("rd_vehicleControl"), vehicleControl);
   ctx->setContextProperty(QStringLiteral("rd_safetyMonitor"), safetyMonitor);
+  ctx->setContextProperty(QStringLiteral("rd_networkQuality"), networkQuality);
   ctx->setContextProperty(QStringLiteral("rd_systemStateMachine"), systemStateMachine);
   ctx->setContextProperty(QStringLiteral("rd_teleopSession"), teleopSession);
   ctx->setContextProperty(QStringLiteral("rd_nodeHealthChecker"), nodeHealthChecker);

@@ -13,6 +13,7 @@ Rectangle {
     id: videoPanel
     
     // ── 属性 ────────────────────────────────────────────────────────────
+    property Item facade: null
     property string title: ""
     property bool showPlaceholder: true
     property WebRtcClient streamClient: null
@@ -347,6 +348,28 @@ Rectangle {
                 color: streamClient && streamClient.isConnected ? ThemeModule.Theme.colorAccent : ThemeModule.Theme.colorTextSecondary
                 font.pixelSize: 11
                 font.family: chineseFont || font.family
+            }
+
+            // ── 端到端延时显示 ──
+            Text {
+                id: latencyText
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                anchors.margins: 4
+                z: 17
+                text: {
+                    var nq = (facade && facade.appServices && facade.appServices.networkQuality) ? facade.appServices.networkQuality : null
+                    if (!nq) {
+                        // 回退方案：直接访问 AppContext（虽然违反 DrivingFacade 隔离但作为兜底）
+                        nq = AppContext.networkQuality
+                    }
+                    return (nq ? Math.round(nq.latencyMs) : 0) + " ms"
+                }
+                color: ThemeModule.Theme.drivingColorDanger
+                font.pixelSize: 12
+                font.bold: true
+                font.family: chineseFont || font.family
+                visible: everHadVideoFrame
             }
         }
     }

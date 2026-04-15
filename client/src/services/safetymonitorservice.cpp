@@ -2,6 +2,7 @@
 
 #include "vehiclecontrolservice.h"
 #include "../core/systemstatemachine.h"
+#include "../core/errorregistry.h"
 #include "../utils/TimeUtils.h"
 #include "../vehiclestatus.h"
 
@@ -76,6 +77,7 @@ class SafetyWorker : public QObject {
                                         .arg(count));
         m_svc->m_latencyViolationCount.store(0);
       } else if (currentOneWay > m_svc->m_config.warningLatencyMs) {
+        ErrorRegistry::instance().reportFault(QStringLiteral("NET-2001"), QStringLiteral("SafetyMonitor"));
         emit m_svc->safetyWarning(msg);
       }
     } else {
@@ -105,10 +107,12 @@ class SafetyWorker : public QObject {
 
       if (missed >= m_svc->m_config.missedBeforeEmergency) {
         qCritical().noquote() << msg;
+        ErrorRegistry::instance().reportFault(QStringLiteral("VEH-3002"), QStringLiteral("SafetyMonitor"));
         m_svc->triggerEmergencyStop(QString("Heartbeat lost: %1 consecutive misses").arg(missed));
         m_svc->m_missedHeartbeats.store(0);
       } else if (missed >= m_svc->m_config.missedBeforeWarning) {
         qWarning().noquote() << msg;
+        ErrorRegistry::instance().reportFault(QStringLiteral("NET-2003"), QStringLiteral("SafetyMonitor"));
         emit m_svc->safetyWarning(msg);
       }
     }
@@ -124,6 +128,7 @@ class SafetyWorker : public QObject {
       const QString msg =
           QString("[Client][SafetyMonitorService] operator inactive for %1ms").arg(inactiveMs);
       qWarning().noquote() << msg;
+      ErrorRegistry::instance().reportFault(QStringLiteral("TEL-1005"), QStringLiteral("SafetyMonitor"));
       emit m_svc->safetyWarning(msg);
       emit m_svc->speedLimitRequested(20.0);
     }
@@ -138,6 +143,7 @@ class SafetyWorker : public QObject {
     if (m_svc->m_deadmanActive.load() && inactiveMs > m_svc->m_config.deadmanTimeoutMs) {
       qCritical() << "[Client][SafetyMonitorService] DEADMAN timeout" << inactiveMs
                   << "ms without activity";
+      ErrorRegistry::instance().reportFault(QStringLiteral("TEL-1006"), QStringLiteral("SafetyMonitor"));
       m_svc->triggerEmergencyStop(
           QString("Deadman timer expired: no input for %1ms").arg(inactiveMs));
       m_svc->m_deadmanActive.store(false);
@@ -162,6 +168,7 @@ class SafetyWorker : public QObject {
         qCritical().noquote()
             << "[Client][SafetyMonitorService] ★★★ UI 线程疑似死锁或严重卡顿超过 200ms ★★★"
             << " elapsed=" << elapsed << "ms" << " ★ 强制触发紧急停车(Decoupled Watchdog)";
+        ErrorRegistry::instance().reportFault(QStringLiteral("TEL-1003"), QStringLiteral("SafetyMonitor"));
         m_svc->triggerEmergencyStop(QStringLiteral("UI thread stalled for %1ms").arg(elapsed));
       }
     }

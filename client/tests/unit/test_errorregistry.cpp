@@ -15,6 +15,7 @@ class TestErrorRegistry : public QObject {
   void category_string_roundtrip();
   void level_string_roundtrip();
   void stats_counters();
+  void reportFault_mapping();
 
  private:
   void clearAll() { ErrorRegistry::instance().clearErrors(ErrorRegistry::Category::Unknown); }
@@ -103,3 +104,19 @@ void TestErrorRegistry::stats_counters() {
 
 QTEST_MAIN(TestErrorRegistry)
 #include "test_errorregistry.moc"
+
+void TestErrorRegistry::reportFault_mapping() {
+    clearAll();
+    // TEL-1001: Video stream not received, Error, Teleop
+    ErrorRegistry::instance().reportFault(QStringLiteral("TEL-1001"), QStringLiteral("Test"));
+    auto list = ErrorRegistry::instance().getErrors(ErrorRegistry::Category::Session);
+    QCOMPARE(list.size(), 1);
+    QCOMPARE(list[0].message, QStringLiteral("[TEL-1001] Video stream not received"));
+    QCOMPARE(list[0].level, ErrorRegistry::Level::Error);
+
+    // CAM-4001: Camera offline, Error, Camera
+    ErrorRegistry::instance().reportFault(QStringLiteral("CAM-4001"), QStringLiteral("Test"));
+    list = ErrorRegistry::instance().getErrors(ErrorRegistry::Category::Video);
+    QCOMPARE(list.size(), 1);
+    QCOMPARE(list[0].message, QStringLiteral("[CAM-4001] Camera offline"));
+}

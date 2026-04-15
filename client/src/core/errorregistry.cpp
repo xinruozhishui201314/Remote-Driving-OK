@@ -1,4 +1,5 @@
 #include "errorregistry.h"
+#include "../../backend/src/protocol/fault_code.h"
 
 #include <QDebug>
 #include <QJsonArray>
@@ -19,6 +20,37 @@ ErrorRegistry::Error ErrorRegistry::makeError(Category category, const QString& 
   error.timestampMs = QDateTime::currentMSecsSinceEpoch();
   error.occurrenceCount = 1;
   return error;
+}
+
+int ErrorRegistry::reportFault(const QString& code, const QString& component) {
+  using namespace teleop::protocol;
+  std::string stdCode = code.toStdString();
+  if (!FaultCodeManager::exists(stdCode)) {
+    return report(Category::System, QStringLiteral("Unknown fault code: %1").arg(code), Level::Warn, component);
+  }
+
+  const FaultCode& fc = FaultCodeManager::get(stdCode);
+  Category cat = Category::Unknown;
+  switch (fc.domain) {
+    case FaultDomain::TELEOP: cat = Category::Session; break;
+    case FaultDomain::NETWORK: cat = Category::Network; break;
+    case FaultDomain::VEHICLE_CTRL: cat = Category::Control; break;
+    case FaultDomain::CAMERA: cat = Category::Video; break;
+    case FaultDomain::POWER: cat = Category::System; break;
+    case FaultDomain::SWEEPER: cat = Category::System; break;
+    case FaultDomain::SECURITY: cat = Category::Auth; break;
+  }
+
+  Level lvl = Level::Info;
+  switch (fc.severity) {
+    case FaultSeverity::INFO: lvl = Level::Info; break;
+    case FaultSeverity::WARN: lvl = Level::Warn; break;
+    case FaultSeverity::ERROR: lvl = Level::Error; break;
+    case FaultSeverity::CRITICAL: lvl = Level::Fatal; break;
+  }
+
+  QString msg = QString("[%1] %2").arg(code).arg(QString::fromStdString(fc.name));
+  return report(cat, msg, lvl, component);
 }
 
 int ErrorRegistry::report(Category category, const QString& message, Level level,

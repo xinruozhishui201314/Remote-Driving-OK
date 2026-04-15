@@ -422,6 +422,25 @@ ApplicationWindow {
         }
     }
 
+    Connections {
+        target: AppContext.vehicleManager
+        ignoreUnknownSignals: true
+        function onSessionCreated(sessionVin, sessionId, whipUrl, whepUrl, controlConfig) {
+            // ★ 核心修复：会话创建后，确保 MQTT 连通后自动发送 start_stream
+            // 解决 SessionManager 自动触发 MQTT 连接但未设置 QML 待处理标志导致的「有视频流拉取无推流指令」问题
+            if (AppContext.isMqttConnected) {
+                var mc = AppContext.mqttController
+                if (mc && typeof mc.requestStreamStart === "function") {
+                    mc.requestStreamStart()
+                    console.warn("[Client][StreamE2E][MAIN] start_stream sent immediately (sessionCreated, MQTT already up)")
+                }
+            } else {
+                AppContext.pendingRequestStreamAfterMqttConnect = true
+                console.warn("[Client][StreamE2E][MAIN] pendingRequestStream set (sessionCreated) vin=" + sessionVin)
+            }
+        }
+    }
+
     // ── 全局“防呆”覆盖层 (SafetyShield) ────────────────────────────────────
     Rectangle {
         id: safetyShield

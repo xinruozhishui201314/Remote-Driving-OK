@@ -252,6 +252,7 @@ set(SOURCES
     src/core/healthchecker.cpp
     src/core/metricscollector.cpp
     src/core/errorregistry.cpp
+    src/core/faultmanager.cpp
     src/core/modelbase.cpp
     src/core/tracing.cpp
     src/core/httpendpointserver.cpp
@@ -291,6 +292,7 @@ set(SOURCES
     src/services/latencycompensator.cpp
     src/services/errorrecoverymanager.cpp
     src/services/diagnosticsservice.cpp
+    ../backend/src/protocol/fault_code.cpp
 
     # ── Presentation Layer ───────────────────────────────────────────────────
     src/presentation/models/TelemetryModel.cpp
@@ -451,6 +453,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/media/gpu
     ${CMAKE_CURRENT_SOURCE_DIR}/src/services
     ${CMAKE_CURRENT_SOURCE_DIR}/src/presentation
+    ${CMAKE_CURRENT_SOURCE_DIR}/../backend/src/protocol
 )
 
 # ── Link Qt (required) ────────────────────────────────────────────────────────
@@ -724,8 +727,13 @@ if(ENABLE_QT6_Test)
             src/core/metricscollector.cpp
             src/vehiclestatus.cpp
             src/nodehealthchecker.cpp
+            src/core/errorregistry.cpp
+            ../backend/src/protocol/fault_code.cpp
         )
-        set(_TEST_INCLUDES ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        set(_TEST_INCLUDES 
+            ${CMAKE_CURRENT_SOURCE_DIR}/src 
+            ${CMAKE_CURRENT_SOURCE_DIR}/../backend/src/protocol
+        )
         set(_TEST_LIBS Qt6::Core Qt6::Test Qt6::Network)
 
         # 通用测试目标宏（避免重复代码）
@@ -734,6 +742,7 @@ if(ENABLE_QT6_Test)
             target_include_directories(${NAME} PRIVATE ${_TEST_INCLUDES})
             target_compile_definitions(${NAME} PRIVATE REMOTE_DRIVING_UNIT_TEST)
             target_link_libraries(${NAME} PRIVATE ${_TEST_LIBS})
+            set_target_properties(${NAME} PROPERTIES AUTOMOC ON)
             if(ENABLE_COVERAGE)
                 target_compile_options(${NAME} PRIVATE -fprofile-arcs -ftest-coverage -g -O0)
                 target_link_options(${NAME} PRIVATE -fprofile-arcs -ftest-coverage)
@@ -836,9 +845,10 @@ if(ENABLE_QT6_Test)
             tests/unit/test_errorregistry.cpp
             src/core/errorregistry.cpp
             src/core/errorregistry.h
+            ../backend/src/protocol/fault_code.cpp
         )
         target_include_directories(test_errorregistry PRIVATE ${_TEST_INCLUDES})
-        target_link_libraries(test_errorregistry PRIVATE Qt6::Core Qt6::Test)
+        target_link_libraries(test_errorregistry PRIVATE ${_TEST_LIBS})
         set_target_properties(test_errorregistry PROPERTIES AUTOMOC ON)
         if(ENABLE_COVERAGE)
             target_compile_options(test_errorregistry PRIVATE -fprofile-arcs -ftest-coverage -g -O0)
@@ -883,14 +893,10 @@ if(ENABLE_QT6_Test)
         add_executable(test_degradationmanager
             tests/unit/test_degradationmanager.cpp
             src/services/degradationmanager.cpp
-            src/core/systemstatemachine.cpp
-            src/core/eventbus.cpp
-            src/core/logger.cpp
-            src/core/metricscollector.cpp
-            src/core/configuration.cpp
+            ${_TEST_DEPS}
         )
         target_include_directories(test_degradationmanager PRIVATE ${_TEST_INCLUDES})
-        target_link_libraries(test_degradationmanager PRIVATE Qt6::Core Qt6::Test)
+        target_link_libraries(test_degradationmanager PRIVATE ${_TEST_LIBS})
         set_target_properties(test_degradationmanager PROPERTIES AUTOMOC ON)
         if(ENABLE_COVERAGE)
             target_compile_options(test_degradationmanager PRIVATE -fprofile-arcs -ftest-coverage -g -O0)
@@ -901,15 +907,11 @@ if(ENABLE_QT6_Test)
         add_executable(test_safetymonitorservice
             tests/unit/test_safetymonitorservice.cpp
             src/services/safetymonitorservice.cpp
-            src/core/systemstatemachine.cpp
-            src/core/eventbus.cpp
-            src/core/logger.cpp
-            src/core/metricscollector.cpp
-            src/core/configuration.cpp
+            ${_TEST_DEPS}
         )
         target_include_directories(test_safetymonitorservice PRIVATE ${_TEST_INCLUDES})
         target_compile_definitions(test_safetymonitorservice PRIVATE REMOTE_DRIVING_UNIT_TEST)
-        target_link_libraries(test_safetymonitorservice PRIVATE Qt6::Core Qt6::Test)
+        target_link_libraries(test_safetymonitorservice PRIVATE ${_TEST_LIBS})
         set_target_properties(test_safetymonitorservice PROPERTIES AUTOMOC ON)
         if(ENABLE_COVERAGE)
             target_compile_options(test_safetymonitorservice PRIVATE -fprofile-arcs -ftest-coverage -g -O0)

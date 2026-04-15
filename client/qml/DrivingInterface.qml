@@ -19,6 +19,7 @@ Rectangle {
         readonly property var mqttController: AppContext.mqttController
         readonly property var vehicleStatus: AppContext.vehicleStatus
         readonly property var safetyMonitor: AppContext.safetyMonitor
+        readonly property var networkQuality: AppContext.networkQuality
         readonly property var webrtcStreamManager: AppContext.webrtcStreamManager
         readonly property var vehicleControl: AppContext.vehicleControl
         readonly property var vehicleManager: AppContext.vehicleManager

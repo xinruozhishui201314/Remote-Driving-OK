@@ -70,6 +70,7 @@ file(GLOB SOURCES
   "src/*.cpp"
   "src/auth/*.cpp"
   "src/middleware/*.cpp"
+  "src/protocol/fault_code.cpp"
   "src/common/utils.cpp"
 )
 add_executable(backend ${SOURCES})

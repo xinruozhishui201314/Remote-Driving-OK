@@ -23,6 +23,7 @@ ColumnLayout {
     
     Components.VideoPanel {
         id: leftFrontPanel
+        facade: leftColLayout.facade
         Layout.fillWidth: true
         Layout.preferredHeight: facade.mainRowAvailH * facade.leftVideoRatio
         Layout.minimumHeight: facade.sideColTopMinHeight
@@ -54,6 +55,7 @@ ColumnLayout {
 
     Components.VideoPanel {
         id: leftRearPanel
+        facade: leftColLayout.facade
         Layout.fillWidth: true
         Layout.preferredHeight: facade.mainRowAvailH * facade.leftMapRatio
         Layout.minimumHeight: facade.sideColBottomMinHeight

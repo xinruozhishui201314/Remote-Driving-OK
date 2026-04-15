@@ -78,6 +78,14 @@ class ErrorRegistry : public QObject {
   int report(Category category, const QString& message, Level level, const QString& component);
 
   /**
+   * 上报故障码
+   * @param code 故障码 (如 "TEL-1001")
+   * @param component 组件名称
+   * @return 错误 ID
+   */
+  int reportFault(const QString& code, const QString& component);
+
+  /**
    * 获取指定分类的错误列表
    * @param category 错误分类（传空获取所有）
    * @param maxCount 最大返回数量（-1 表示全部）
