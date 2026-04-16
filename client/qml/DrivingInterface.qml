@@ -1,4 +1,5 @@
 import QtQuick 2.15
+import QtQuick.Layouts 1.15
 import RemoteDriving 1.0
 import "components/driving" as Drv
 import "components/driving/internal" as DiInt
@@ -262,12 +263,96 @@ Rectangle {
         teleop: teleopState
     }
 
+    // ★ 架构级防错：输入链路失效强提示（Silent Input Link Watchdog）
+    // 当 C++ 侧检测到 UI 有按键但采样器数据持续为 0 时触发，解决焦点丢失/链路断路静默失效
+    Rectangle {
+        id: inputSilentOverlay
+        anchors.fill: parent
+        color: "#CCCF4848" // 半透明红色警告
+        z: 99999
+        visible: (appServices.vehicleStatus.drivingMode === "远驾") && 
+                 (appServices.vehicleControl ? appServices.vehicleControl.inputLinkSilent : false)
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 24
+            
+            Rectangle {
+                width: 100; height: 100; radius: 50
+                color: "white"
+                Layout.alignment: Qt.AlignHCenter
+                Text {
+                    anchors.centerIn: parent
+                    text: "⌨!"
+                    font.pixelSize: 50
+                }
+            }
+
+            Column {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 8
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "输入链路无响应"
+                    color: "white"
+                    font.pixelSize: 32
+                    font.bold: true
+                    font.family: drivingInterface.chineseFont
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "检测到键盘操作未生效，请点击本区域恢复焦点"
+                    color: "white"
+                    font.pixelSize: 18
+                    font.family: drivingInterface.chineseFont
+                }
+            }
+
+            Rectangle {
+                Layout.preferredWidth: 200
+                Layout.preferredHeight: 50
+                radius: 25
+                color: "white"
+                Layout.alignment: Qt.AlignHCenter
+                Text {
+                    anchors.centerIn: parent
+                    text: "点击恢复控制"
+                    color: "#CF4848"
+                    font.pixelSize: 18
+                    font.bold: true
+                    font.family: drivingInterface.chineseFont
+                }
+                
+                SequentialAnimation on opacity {
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 0.4; duration: 800 }
+                    NumberAnimation { from: 0.4; to: 1.0; duration: 800 }
+                }
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: {
+                drivingInterface.forceActiveFocus()
+                console.log("[Client][UI][Watchdog] 用户点击警告层恢复焦点")
+            }
+        }
+    }
+
     focus: true
     Keys.onPressed: function (event) {
+        // ★ 核心修复：转发键盘事件到 C++ HID 设备，解决 InputSampler 路径被“静默”覆盖导致控车失效的问题
+        if (typeof rd_keyboardInput !== "undefined" && rd_keyboardInput) {
+            rd_keyboardInput.onKeyPressed(event.key)
+        }
         if (keyHandler.handlePressed(event))
             event.accepted = true
     }
     Keys.onReleased: function (event) {
+        if (typeof rd_keyboardInput !== "undefined" && rd_keyboardInput) {
+            rd_keyboardInput.onKeyReleased(event.key)
+        }
         if (keyHandler.handleReleased(event))
             event.accepted = true
     }
