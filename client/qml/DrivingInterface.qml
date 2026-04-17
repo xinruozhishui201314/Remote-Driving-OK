@@ -335,6 +335,9 @@ Rectangle {
             anchors.fill: parent
             onClicked: {
                 drivingInterface.forceActiveFocus()
+                var sm = appServices.safetyMonitor
+                if (sm && typeof sm.notifyOperatorActivity === "function")
+                    sm.notifyOperatorActivity()
                 console.log("[Client][UI][Watchdog] 用户点击警告层恢复焦点")
             }
         }

@@ -131,7 +131,13 @@ bool VAAPIDecoder::initialize(const DecoderConfig& config) {
     m_impl->codecCtx->extradata_size = sz;
   }
 
-  const int openRet = avcodec_open2(m_impl->codecCtx, m_impl->codec, nullptr);
+  AVDictionary* opts = nullptr;
+  av_dict_set(&opts, "flags", "low_delay", 0);
+  av_dict_set(&opts, "threads", "1", 0);  // 强制单线程解码以降低延迟
+
+  const int openRet = avcodec_open2(m_impl->codecCtx, m_impl->codec, &opts);
+  av_dict_free(&opts);
+
   if (openRet < 0) {
     char errbuf[AV_ERROR_MAX_STRING_SIZE];
     av_strerror(openRet, errbuf, sizeof(errbuf));
@@ -172,6 +178,35 @@ void VAAPIDecoder::shutdown() {
   }
   m_impl->initialized = false;
   qInfo() << "[Client][VAAPIDecoder] shutdown";
+}
+
+bool VAAPIDecoder::reconfigure(const DecoderConfig& config) {
+  if (!m_impl->initialized || !m_impl->codecCtx)
+    return false;
+
+  // 如果分辨率未发生变化，无需重配置
+  if (m_impl->codecCtx->width == config.width && m_impl->codecCtx->height == config.height) {
+    return true;
+  }
+
+  qInfo() << "[Client][HW-E2E][VAAPI][RECONF] triggering dynamic resolution switch:"
+          << m_impl->codecCtx->width << "x" << m_impl->codecCtx->height << " -> " << config.width
+          << "x" << config.height;
+
+  // 1. 清空解码队列缓冲区，防止旧分辨率帧干扰新帧
+  avcodec_flush_buffers(m_impl->codecCtx);
+
+  // 2. 更新上下文分辨率
+  // 注意：FFmpeg VAAPI 会在看到新 sequence 时自动处理，
+  // 但手动更新 width/height 有助于下游 UI 布局提前响应。
+  m_impl->codecCtx->width = config.width;
+  m_impl->codecCtx->height = config.height;
+
+  // 3. 更新 DRM Prime 导出偏好
+  m_impl->preferDmaBufExport.store(config.preferDmaBufExport, std::memory_order_release);
+  m_impl->drmPrimeReady.store(config.preferDmaBufExport, std::memory_order_release);
+
+  return true;
 }
 
 DecodeResult VAAPIDecoder::submitPacket(const uint8_t* data, size_t size, int64_t pts,

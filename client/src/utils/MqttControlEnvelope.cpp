@@ -20,11 +20,15 @@ PreferredChannel MqttControlEnvelope::parsePreferredChannel(const QString& chann
 }
 
 PrepareResult MqttControlEnvelope::prepareForSend(const QJsonObject& command,
-                                                  const QString& currentVin, qint64 timestampMs,
+                                                  const QString& currentVin,
+                                                  const QString& sessionId, qint64 timestampMs,
                                                   uint32_t& seqCounter) {
   QJsonObject cmd = command;
   if (!currentVin.isEmpty() && !cmd.contains(QStringLiteral("vin"))) {
     cmd[QStringLiteral("vin")] = currentVin;
+  }
+  if (!sessionId.isEmpty() && !cmd.contains(QStringLiteral("sessionId"))) {
+    cmd[QStringLiteral("sessionId")] = sessionId;
   }
   if (!cmd.contains(QStringLiteral("timestampMs"))) {
     cmd[QStringLiteral("timestampMs")] = timestampMs;

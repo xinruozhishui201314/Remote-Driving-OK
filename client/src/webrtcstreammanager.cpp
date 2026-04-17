@@ -415,6 +415,22 @@ WebRtcStreamManager::~WebRtcStreamManager() {
   }
 }
 
+void WebRtcStreamManager::setStreamingReady(bool ready) {
+  if (m_streamingReady != ready) {
+    m_streamingReady = ready;
+    qInfo().noquote() << "[StreamManager][Status] streamingReady 变更 →" << ready
+                     << "★ 来自 VehicleStatus 反馈；就绪后 pollTimer 仍将运行以验证 ZLM 实例状态";
+    emit streamingReadyChanged(m_streamingReady);
+    
+    // 如果就绪，且正在等待 ZLM 就绪，则可以尝试提前拉流
+    if (ready && m_zlmReadyTimer && m_zlmReadyTimer->isActive()) {
+        qInfo().noquote() << "[StreamManager][ZlmReady] 车端已上报 streamingReady=true，提前触发 connectFourStreams";
+        m_zlmReadyTimer->stop();
+        connectFourStreams(m_zlmReadyWhep);
+    }
+  }
+}
+
 void WebRtcStreamManager::setCurrentVin(const QString &vin) {
   const QString was = m_vin;
   if (was == vin) {
@@ -510,10 +526,15 @@ void WebRtcStreamManager::emitVideoPresent1HzSummary() {
   const WebRtcPresentSecondStats sri =
       m_right ? m_right->drainPresentSecondStats() : WebRtcPresentSecondStats{};
 
-  const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-  const QString sw = env.value(QStringLiteral("LIBGL_ALWAYS_SOFTWARE")).trimmed();
-  const bool swOn =
-      !sw.isEmpty() && sw != QLatin1String("0") && sw.toLower() != QLatin1String("false");
+  // ★ 性能优化：仅在必要时访问 QProcessEnvironment（非常昂贵，涉及全局锁/系统调用）
+  static bool swOn = false;
+  static std::once_flag s_swOnce;
+  std::call_once(s_swOnce, []() {
+      const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+      const QString sw = env.value(QStringLiteral("LIBGL_ALWAYS_SOFTWARE")).trimmed();
+      swOn = !sw.isEmpty() && sw != QLatin1String("0") && sw.toLower() != QLatin1String("false");
+  });
+
   const int totPend = getTotalPendingFrames();
   // totPend = 四路 pendingVideoHandlerDepth + rtpIngressRing；拆开后避免把「RTP
   // 环堆积」误判为「主线程槽排队」
@@ -1625,6 +1646,16 @@ void WebRtcStreamManager::scheduleConnectFourStreamsWhenZlmReady(const QString &
 
   syncStreamVinFromVehicleManager();
   m_zlmReadyWhep = whepUrl;
+
+  // ★ 提前解析并同步状态，解锁 checkZlmStreamRegistration 诊断
+  const QString resolvedBase = resolveBaseUrl(whepUrl);
+  if (!resolvedBase.isEmpty()) {
+      m_currentBase = resolvedBase;
+      m_app = appFromWhep(whepUrl); // 同时从 WHEP 同步 App 空间，确保轮询路径正确
+      qInfo().noquote() << "[StreamManager][ZlmReady][Prep] 已提前锁定 m_currentBase=" << m_currentBase 
+                       << "m_app=" << m_app << "解锁稳态监控";
+  }
+
   m_zlmReadyDeadlineMs = QDateTime::currentMSecsSinceEpoch() + maxWait;
   m_zlmReadyTimer->setInterval(interval);
 
@@ -1669,7 +1700,7 @@ void WebRtcStreamManager::onZlmReadyTimerTick() {
 
   m_zlmReadyPollInFlight = true;
   m_zlmReadyReply = m_zlmReadyNam->get(req);
-  QObject::connect(m_zlmReadyReply, &QNetworkReply::finished, this, [this]() {
+  QObject::connect(m_zlmReadyReply, &QNetworkReply::finished, this, [this, secret, url]() {
     QNetworkReply *reply = m_zlmReadyReply;
     m_zlmReadyReply = nullptr;
     m_zlmReadyPollInFlight = false;
@@ -1690,8 +1721,24 @@ void WebRtcStreamManager::onZlmReadyTimerTick() {
     }
     const QJsonArray rows = doc.object().value(QStringLiteral("data")).toArray();
     const int n = countVinCamStreamsInZlmMediaList(rows, m_vin);
-    qInfo() << "[StreamManager][ZlmReady] ZLM rows=" << rows.size() << "vinStreams=" << n << "/4"
-            << "vin=" << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin);
+    if (n < 4) {
+      qWarning().noquote() << "[StreamManager][ZlmReady] ★ ZLM 资源未就绪 ★: vinStreams=" << n << "/4"
+              << "vin=" << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin)
+              << "\n  [Check] 正在轮询 URL: " << url.toString()
+              << "\n  [Check] 期望 App: " << m_app 
+              << "\n  [Check] 等待 carla-bridge 完成相机创建与推流（需 ZLM_HOST 配置正确）"
+              << " | bodyLen=" << data.size() << " | rows=" << rows.size()
+              << " | secret=" << secret.left(4) << "...";
+      if (rows.size() > 0) {
+          QStringList ids;
+          for (const auto& r : rows) ids << r.toObject().value("stream").toString();
+          qInfo().noquote() << "[StreamManager][ZlmReady] ZLM 当前已有流 ID (前10个):" << ids.mid(0, 10);
+      }
+    } else {
+      qInfo() << "[StreamManager][ZlmReady] ✓ ZLM 资源已就绪: vinStreams=" << n << "/4"
+              << "vin=" << m_vin << " → connectFourStreams";
+    }
+
     if (n >= 4) {
       m_zlmReadyTimer->stop();
       connectFourStreams(m_zlmReadyWhep);
@@ -1702,6 +1749,14 @@ void WebRtcStreamManager::onZlmReadyTimerTick() {
 void WebRtcStreamManager::disconnectAll() {
   cancelZlmReadySchedule();
   m_streamsConnectedVin.clear();
+  
+  static bool s_inDisconnectAll = false;
+  if (s_inDisconnectAll) {
+    qDebug() << "[Client][StreamE2E][DISCONNECT_ALL] 递归或并发调用，跳过";
+    return;
+  }
+  s_inDisconnectAll = true;
+
   const bool hadConn = anyConnected();
   qInfo().noquote() << QStringLiteral("[Client][StreamE2E][DISCONNECT_ALL] enter vin=")
                     << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin) << "m_currentBase="
@@ -1739,6 +1794,7 @@ void WebRtcStreamManager::disconnectAll() {
                     << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin) << "m_currentBase="
                     << (m_currentBase.isEmpty() ? QStringLiteral("(empty)") : m_currentBase)
                     << "anyConnectedNow=" << anyConnected();
+  s_inDisconnectAll = false;
 }
 
 void WebRtcStreamManager::checkZlmStreamRegistration() {

@@ -1,5 +1,5 @@
 #pragma once
-#include "IHardwareDecoder.h"
+#include <infrastructure/media/IHardwareDecoder.h>
 
 /**
  * NVIDIA NVDEC 硬件解码器（通过 FFmpeg CUDA hwaccel）。
@@ -24,6 +24,7 @@ class NvdecDecoder : public IHardwareDecoder {
 
   bool initialize(const DecoderConfig& config) override;
   void shutdown() override;
+  bool reconfigure(const DecoderConfig& config) override;
   DecodeResult submitPacket(const uint8_t* data, size_t size, int64_t pts, int64_t dts) override;
   DecodeResult receiveFrame(VideoFrame& frame) override;
   void flush() override;
@@ -41,6 +42,7 @@ class NvdecDecoder : public IHardwareDecoder {
  public:
   bool initialize(const DecoderConfig&) override { return false; }
   void shutdown() override {}
+  bool reconfigure(const DecoderConfig&) override { return false; }
   DecodeResult submitPacket(const uint8_t*, size_t, int64_t, int64_t) override {
     return DecodeResult::Error;
   }

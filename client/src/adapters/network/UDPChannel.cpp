@@ -1,6 +1,7 @@
 #include "UDPChannel.h"
 
-#include "../../utils/TimeUtils.h"
+#include <core/TimeSyncService.h>
+#include <utils/TimeUtils.h>
 
 #include <QDebug>
 #include <QHostAddress>
@@ -122,18 +123,35 @@ void UDPChannel::onReadyRead() {
     quint16 senderPort;
     m_socket->readDatagram(data.data(), data.size(), &sender, &senderPort);
 
-    // Pong 检测（简单4字节心跳响应）
-    // ★★★ 修复：添加长度检查，防止短数据误判 ★★★
-    if (data.size() >= 5 && data.startsWith("PONG")) {
-      // 解析 RTT 值（格式：PONG<rtt_value>）
-      QString rttStr = QString::fromLatin1(data.mid(5)).trimmed();
+    // Pong 检测（增强版：带 4 个时间戳，满足 2025/2026 同步规范）
+    // 格式：PONG <t1_us> <t2_us> <t3_us>
+    if (data.startsWith("PONG")) {
+      const QString content = QString::fromLatin1(data.mid(5)).trimmed();
+      const QStringList parts = content.split(' ');
+      
+      const int64_t t4 = TimeUtils::nowUs(); // 接收到响应的本地时间
+
+      if (parts.size() >= 3) {
+        bool ok1, ok2, ok3;
+        int64_t t1 = parts[0].toLongLong(&ok1);
+        int64_t t2 = parts[1].toLongLong(&ok2);
+        int64_t t3 = parts[2].toLongLong(&ok3);
+        
+        if (ok1 && ok2 && ok3) {
+          // 调用高精度同步服务
+          TimeSyncService::instance().update(t1, t2, t3, t4);
+          updateRTT(t4 - t1);
+          continue;
+        }
+      }
+      
+      // 回退逻辑：处理单值 RTT 格式
       bool ok = false;
-      double rtt = rttStr.toDouble(&ok);
+      double rttVal = content.toDouble(&ok);
       if (ok) {
-        updateRTT(static_cast<int64_t>(rtt * 1000));  // 转换为微秒
+        updateRTT(static_cast<int64_t>(rttVal * 1000));
       } else {
-        // 传统格式：仅 PONG，使用本地时间戳计算
-        const int64_t rttUs = (TimeUtils::nowUs() - m_lastPingTimestamp);
+        const int64_t rttUs = (t4 - m_lastPingTimestamp);
         updateRTT(rttUs);
       }
       continue;
@@ -175,7 +193,8 @@ void UDPChannel::sendHeartbeat() {
   if (!m_socket || m_state != ConnectionState::CONNECTED)
     return;
   m_lastPingTimestamp = TimeUtils::nowUs();
-  const QByteArray ping("PING");
+  // 发送带客户端时间戳的 PING，便于车辆端计算偏移并返回
+  const QByteArray ping = QString("PING %1").arg(m_lastPingTimestamp).toLatin1();
   m_socket->writeDatagram(ping, QHostAddress(m_endpoint.host), m_config.control.port);
 }
 

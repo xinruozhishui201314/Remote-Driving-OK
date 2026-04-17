@@ -1,5 +1,5 @@
 #pragma once
-#include "IInputDevice.h"
+#include <infrastructure/hardware/IInputDevice.h>
 
 #include <QMutex>
 #include <QObject>
@@ -31,6 +31,7 @@ class KeyboardMouseInput : public IInputDevice {
   void shutdown() override;
   DeviceType type() const override { return DeviceType::KEYBOARD_MOUSE; }
   InputState poll() override;
+  void syncState(const InputState& state) override;
   void setForceFeedback(const ForceFeedbackEffect&) override {}  // 不支持
   DeviceCapabilities capabilities() const override;
 

@@ -133,15 +133,13 @@ static void run_dataset_push_script()
     LOG_STREAM_INFO("Attempting to start streaming script...");
 
     try {
-        // 先检查推流是否已在运行（精确定位：记录检查结果）
-        bool already = is_streaming_running();
-        LOG_STREAM_DEBUG("is_streaming_running() returned: {}", already);
-
-        if (already) {
-            LOG_STREAM_INFO("Streaming process already running, skipping start");
-            LOG_STREAM_INFO("Hint: Delete PID files or stop existing process to restart");
-            LOG_EXIT_WITH_VALUE("skipped: already_running");
-            return;
+        // ★ 安全：强制重置推流以确保 start_stream 成功 (Idempotency)
+        // 即使 is_streaming_running() 为真，我们也执行停止操作，确保护理掉僵尸进程或过期流
+        if (is_streaming_running()) {
+            LOG_STREAM_INFO("Detected existing streaming process, forcing reset for new start_stream request");
+            stop_streaming_processes();
+            // 等待 1s 确保清理完成
+            std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
         // 获取环境变量
@@ -459,14 +457,14 @@ bool handle_control_json(VehicleController* controller,
             LOG_CTRL_INFO("Remote control enable value: {}", enable);
 
             // 设置远驾接管状态变量（供车辆控制逻辑使用）
-            controller->setRemoteControlEnabled(enable);
+            controller->setRemoteControlEnabled(enable, sessionId);
 
             // 根据远驾接管状态设置驾驶模式
-            if (enable) {
+            if (controller->isRemoteControlEnabled()) {
                 controller->setDrivingMode(VehicleController::DrivingMode::REMOTE_DRIVING);
                 LOG_CTRL_INFO("Remote control ENABLED, driving mode set to REMOTE_DRIVING");
-            } else {
-                // 禁用远驾接管时，恢复为自驾模式
+            } else if (!enable) {
+                // 仅当显式请求关闭且成功时恢复自驾
                 controller->setDrivingMode(VehicleController::DrivingMode::AUTONOMOUS);
                 LOG_CTRL_INFO("Remote control DISABLED, driving mode set to AUTONOMOUS");
             }
@@ -727,12 +725,21 @@ bool handle_control_json(VehicleController* controller,
             return true;
         }
 
-        // 检查远驾接管状态：如果未启用，则忽略控制指令（但允许 start_stream/stop_stream/remote_control/gear/sweep/target_speed/brake/emergency_stop）
+        // 检查远驾接管状态与会话锁
         if (!typeStr.empty() && typeStr != "start_stream" && typeStr != "stop_stream" && typeStr != "remote_control") {
-            bool remoteControlEnabled = controller->isRemoteControlEnabled();
-            if (!remoteControlEnabled) {
+            if (!controller->isRemoteControlEnabled()) {
                 LOG_CTRL_WARN("Remote control not enabled, ignoring control command type={}", typeStr);
                 LOG_EXIT_WITH_VALUE("false: remote_control_disabled");
+                return false;
+            }
+            
+            // ★ 安全：会话一致性校验 (Session Lock Check)
+            std::string activeSid = controller->getActiveSessionId();
+            if (!activeSid.empty() && !sessionId.empty() && activeSid != sessionId) {
+                LOG_SEC_ERROR_WITH_CODE(SEC_SESSION_HIJACK_DETECTED,
+                    "Session Hijack detected! ActiveSession={}, MessageSession={}, Type={}",
+                    activeSid, sessionId, typeStr);
+                LOG_EXIT_WITH_VALUE("false: session_mismatch");
                 return false;
             }
         }

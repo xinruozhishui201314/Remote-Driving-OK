@@ -21,7 +21,7 @@
 #include <QSize>
 #include <QStandardPaths>
 #include <QString>
-#include <QThread>
+#include <QtConcurrent>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -271,6 +271,13 @@ QVideoSink *WebRtcClient::activeSink() const {
   return m_boundOutputSink ? m_boundOutputSink.data() : m_ownedSink;
 }
 
+void WebRtcClient::setVideoSurface(QObject *surface) {
+  if (m_boundRemoteSurface.data() == surface)
+    return;
+  bindVideoSurface(surface);
+  emit videoSurfaceChanged();
+}
+
 QVideoSink *WebRtcClient::videoSink() const { return activeSink(); }
 
 WebRtcPresentBackend WebRtcClient::computePresentBackend() const {
@@ -395,6 +402,9 @@ void WebRtcClient::bindVideoSurface(QObject *surfaceItem) {
   }
 #endif
   m_boundRemoteSurface = surf;
+  if (m_presentWorker) {
+    m_presentWorker->setRemoteSurface(surf);
+  }
   Q_ASSERT_X(!(m_boundOutputSink.data() && m_boundRemoteSurface.data()),
              "WebRtcClient::bindVideoSurface", "mutex: both output sink and remote surface set");
   ++m_bindVideoSurfaceCallCount;
@@ -833,7 +843,7 @@ void WebRtcClient::createOffer() {
                 SystemErrorEvent sysErr;
                 sysErr.domain = QStringLiteral("WEBRTC");
                 sysErr.severity = (state == rtc::PeerConnection::State::Failed) 
-                                  ? SystemErrorEvent::Severity::CRITICAL 
+                                  ? SystemErrorEvent::Severity::ERROR 
                                   : SystemErrorEvent::Severity::ERROR;
                 sysErr.code = QStringLiteral("W-CONN-LOST");
                 sysErr.message = QStringLiteral("WebRTC 连接异常终止 (%1): %2").arg(reason).arg(m_stream);
@@ -1406,6 +1416,10 @@ void WebRtcClient::processAnswer(const QString &answer) {
 }
 
 void WebRtcClient::disconnect() {
+  if (m_manualDisconnect && !m_isConnected && !m_currentReply) {
+    qDebug() << "[Client][WebRTC] disconnect() no-op, already disconnected stream=" << m_stream;
+    return;
+  }
   qDebug() << "[Client][WebRTC] disconnect() 开始 stream=" << m_stream;
 
   if (m_integrityTimer)
@@ -1756,16 +1770,18 @@ void maybeTeleopVideoSnapshotPostDecode(const QString &stream, const QImage &ima
       toSave.format() != QImage::Format_RGB888) {
     toSave = toSave.convertToFormat(QImage::Format_RGBA8888);
   }
-  if (!toSave.save(path, "PNG")) {
-    static QHash<QString, int> s_fail;
-    if (++s_fail[stream] <= 3)
-      qWarning() << "[Client][VideoDebug] post_decode save failed stream=" << stream << " path=" << path;
-    return;
-  }
-  static QHash<QString, int> s_ok;
-  const int n = ++s_ok[stream];
-  if (n <= 2 || (n % 30) == 0)
-    qInfo() << "[Client][VideoDebug] post_decode snapshot stream=" << stream << " path=" << path;
+  (void)QtConcurrent::run([toSave, path, stream, frameId]() {
+    if (!toSave.save(path, "PNG")) {
+      static QHash<QString, int> s_fail;
+      if (++s_fail[stream] <= 3)
+        qWarning() << "[Client][VideoDebug] post_decode save failed stream=" << stream << " path=" << path;
+      return;
+    }
+    static QHash<QString, int> s_ok;
+    const int n = ++s_ok[stream];
+    if (n <= 2 || (n % 30) == 0)
+      qInfo() << "[Client][VideoDebug] post_decode snapshot stream=" << stream << " path=" << path;
+  });
 }
 }  // namespace
 
@@ -2137,6 +2153,9 @@ void WebRtcClient::startPresentPipeline() {
   m_presentThread = new QThread();
   m_presentWorker = new VideoFramePresentWorker();
   m_presentWorker->setStreamTag(m_stream);
+  if (RemoteVideoSurface *rs = m_boundRemoteSurface.data()) {
+    m_presentWorker->setRemoteSurface(rs);
+  }
   m_presentWorker->moveToThread(m_presentThread);
   m_presentThread->start();
 
@@ -2145,7 +2164,13 @@ void WebRtcClient::startPresentPipeline() {
       [this]() { ++m_presentSecVideoSlotEntries; }, Qt::QueuedConnection);
   connect(
       m_presentWorker, &VideoFramePresentWorker::coalescedDropOccurred, this,
-      [this]() { ++m_presentSecCoalescedDrops; }, Qt::QueuedConnection);
+      [this](quint64 fid) {
+        ++m_presentSecCoalescedDrops;
+        if (m_h264Decoder) {
+          m_h264Decoder->releaseFrame(fid);
+        }
+      },
+      Qt::QueuedConnection);
   connect(
       m_presentWorker, &VideoFramePresentWorker::rateLimitSkipped, this,
       [this]() { ++m_presentSecSkippedRateLimit; }, Qt::QueuedConnection);
@@ -2154,6 +2179,8 @@ void WebRtcClient::startPresentPipeline() {
       [this]() { ++m_presentSecFlushCoalescedCount; }, Qt::QueuedConnection);
   connect(m_presentWorker, &VideoFramePresentWorker::presentFrameReady, this,
           &WebRtcClient::onPresentWorkerDeliveredFrame, Qt::QueuedConnection);
+  connect(m_presentWorker, &VideoFramePresentWorker::directPushDone, this,
+          &WebRtcClient::onPresentWorkerDirectPushDone, Qt::QueuedConnection);
 
   qInfo() << "[Client][WebRTC][Present] startPresentPipeline stream=" << m_stream
           << " thread=" << (void *)m_presentThread << " worker=" << (void *)m_presentWorker;
@@ -2276,6 +2303,32 @@ void WebRtcClient::onPresentWorkerDeliveredFrame(QImage image, quint64 frameId) 
   }  
 }
 
+void WebRtcClient::onPresentWorkerDirectPushDone(int width, int height, quint64 frameId) {
+  {
+    m_lastFrameWallMs = QDateTime::currentMSecsSinceEpoch();
+    m_lastPresentedImageSize = QSize(width, height);
+    ++m_presentSecFrames;
+
+    if (m_h264Decoder) {
+      const int64_t emitMs = m_h264Decoder->lastFrameReadyEmitWallMs();
+      const int64_t nowMs = static_cast<int64_t>(QDateTime::currentMSecsSinceEpoch());
+      const int64_t lagMs = (emitMs > 0) ? (nowMs - emitMs) : 0;
+      if (lagMs >= 0 && lagMs < 30000) {
+        m_presentSecMaxQueuedLagMs = std::max(m_presentSecMaxQueuedLagMs, lagMs);
+        m_presentSecTotalQueuedLagMs += lagMs;
+        ++m_presentSecQueuedLagSamples;
+      }
+    }
+
+    emit videoFrameReady(width, height, frameId);
+
+    // ★ 5-WHY 修复：极速路径也必须释放槽位，否则解码器环满后将卡死
+    if (m_h264Decoder) {
+      m_h264Decoder->releaseFrame(frameId);
+    }
+  }
+}
+
 namespace {
 /** 未设置或 1：合并多帧解码回调，仅向 QVideoSink 呈现最新帧；0：每帧立即呈现（旧行为） */
 bool videoPresentCoalesceEnabled() {
@@ -2341,6 +2394,12 @@ void WebRtcClient::flushCoalescedVideoPresent() {
 
 void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 frameId) {
   m_lastFrameWallMs = QDateTime::currentMSecsSinceEpoch();
+
+  // ★ 标记槽位为「读取中」，防止解码线程回收
+  if (m_h264Decoder) {
+    m_h264Decoder->markFrameReading(frameId);
+  }
+
   static int s_presentCount = 0;
   if (s_presentCount <= 5 || (s_presentCount % 900) == 0) {
       qInfo() << "[Client][WebRTC][Present] presentDecodedFrameToOutputs stream=" << m_stream
@@ -2418,7 +2477,7 @@ void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 fra
     qWarning() << "[Client][WebRTC][Queue] stream=" << m_stream
                << " pending=" << m_framesPendingInQueue;
   }
-    if (m_videoFrameLogCount <= 5 || (m_videoFrameLogCount % 180) == 0) {
+    if (m_videoFrameLogCount <= 5 || (m_videoFrameLogCount % 600) == 0) {
       RemoteVideoSurface *const rsPath = m_boundRemoteSurface.data();
       QVideoSink *const skPath = activeSink();
       const char *branch = "none";
@@ -2660,6 +2719,11 @@ void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId)
                      << " lag=" << lagMs << "ms"
                      << " frameId=" << frameId << " pending=" << m_framesPendingInQueue
                      << " → 主线程卡顿，解码帧在队列中等待超 100ms";
+        }
+
+        // ★ 5-WHY 背压：若排队延迟 > 50ms，告知解码器进入「轻量模式」（跳过 P 帧转换）
+        if (m_h264Decoder) {
+          m_h264Decoder->setMainThreadLag(lagMs);
         }
       }
     }

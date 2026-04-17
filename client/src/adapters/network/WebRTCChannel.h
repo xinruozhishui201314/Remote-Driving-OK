@@ -1,5 +1,5 @@
 #pragma once
-#include "../itransportmanager.h"
+#include <infrastructure/itransportmanager.h>
 
 #include <QMap>
 #include <QObject>
@@ -36,9 +36,11 @@ class WebRTCChannel : public ITransportManager {
   ChannelStats getChannelStats(TransportChannel ch) const override;
   ConnectionState connectionState() const override;
 
-  // WebRTC 特有：访问底层 stream manager（供 QML 和旧代码访问）
-  WebRtcStreamManager* streamManager() const { return m_streamManager.get(); }
-  WebRtcClient* primaryClient() const { return m_primaryClient.get(); }
+  // WebRTC 特有：注入底层实例（解决分裂脑问题，由外部 main 管理生命周期）
+  void injectInstances(WebRtcStreamManager* wsm, WebRtcClient* primary);
+
+  WebRtcStreamManager* streamManager() const { return m_streamManager; }
+  WebRtcClient* primaryClient() const { return m_primaryClient; }
 
  private slots:
   void onPrimaryConnectionChanged(bool connected);
@@ -47,8 +49,8 @@ class WebRTCChannel : public ITransportManager {
  private:
   TransportConfig m_config;
   EndpointInfo m_endpoint;
-  std::unique_ptr<WebRtcStreamManager> m_streamManager;
-  std::unique_ptr<WebRtcClient> m_primaryClient;
+  WebRtcStreamManager* m_streamManager = nullptr;
+  WebRtcClient* m_primaryClient = nullptr;
 
   QMap<TransportChannel, std::function<void(const uint8_t*, size_t, const PacketMetadata&)>>
       m_receivers;

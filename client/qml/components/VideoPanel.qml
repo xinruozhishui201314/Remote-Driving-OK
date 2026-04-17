@@ -64,11 +64,11 @@ Rectangle {
 
     function rebindPanelVideoOutput() {
         if (_prevVideoBindClient && _prevVideoBindClient !== streamClient) {
-            _prevVideoBindClient.bindVideoSurface(null)
+            _prevVideoBindClient.videoSurface = null
             _prevVideoBindClient = null
         }
         if (streamClient && videoOutPanel) {
-            streamClient.bindVideoSurface(videoOutPanel)
+            streamClient.videoSurface = videoOutPanel
             _prevVideoBindClient = streamClient
         }
     }
@@ -250,7 +250,7 @@ Rectangle {
                 id: videoOutPanel
                 anchors.fill: parent
                 z: 5
-                fillMode: 1
+                fillMode: RemoteVideoSurface.PreserveAspectCrop
                 panelLabel: videoPanel.title
                 Component.onCompleted: videoPanel.rebindPanelVideoOutput()
                 onWidthChanged: {

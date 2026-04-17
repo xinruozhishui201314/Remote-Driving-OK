@@ -38,6 +38,17 @@ class InputSampler : public QObject {
   void start(uint32_t sampleRateHz = 200);
   void stop();
 
+  /**
+   * 同步状态到硬件设备。
+   * 用于解决 UI 与硬件采样冲突（Root Cause 修复）。
+   */
+  void syncDeviceState(const IInputDevice::InputState& state) {
+    if (m_device) {
+      m_device->syncState(state);
+    }
+    m_latestInput.store(state);
+  }
+
   // 供控制线程拉取数据的无锁队列
   SPSCQueue<IInputDevice::InputState, 512>& queue() { return m_queue; }
 

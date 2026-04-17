@@ -1,5 +1,6 @@
 #include "VideoFramePresentWorker.h"
 
+#include "RemoteVideoSurface.h"
 #include "media/VideoFrameEvidenceDiag.h"
 
 #include <QCoreApplication>
@@ -41,6 +42,9 @@ VideoFramePresentWorker::VideoFramePresentWorker(QObject *parent)
 }
 
 void VideoFramePresentWorker::resetState() {
+  if (m_coalescedFrameId > 0) {
+    emit coalescedDropOccurred(m_coalescedFrameId);
+  }
   m_coalescedImage = QImage();
   m_coalescedFrameId = 0;
   m_coalescedEpoch.store(0, std::memory_order_release);
@@ -71,11 +75,12 @@ void VideoFramePresentWorker::ingestDecoderFrame(QImage image, quint64 frameId) 
   }
 
   const bool wasCoalesced = !m_coalescedImage.isNull();
+  const quint64 oldFid = m_coalescedFrameId;
   m_coalescedImage = std::move(image);
   m_coalescedFrameId = frameId;
   m_coalescedEpoch.fetch_add(1, std::memory_order_relaxed);
   if (wasCoalesced)
-    emit coalescedDropOccurred();
+    emit coalescedDropOccurred(oldFid);
 
   queueFlushToSelf();
 }
@@ -125,5 +130,17 @@ void VideoFramePresentWorker::emitToMainThread(const QImage &img, quint64 fid) {
   if (VideoFrameEvidence::shouldLogVideoStage(fid)) {
     qInfo().noquote() << VideoFrameEvidence::diagLine("PRESENT_TX", m_streamTag, fid, img);
   }
-  emit presentFrameReady(img, fid);
+
+  // ★ v4 极速路径：若已绑定 RemoteVideoSurface，直接 push
+  if (m_remoteSurface) {
+    static std::atomic<int> s_pushDirectLog{0};
+    if (s_pushDirectLog.fetch_add(1, std::memory_order_relaxed) < 5) {
+      qInfo() << "[Client][PresentWorker][Direct] pushFrameDirect stream=" << m_streamTag
+              << " fid=" << fid << " ★ 走极速路径，需核对 WebRtcClient 是否补全信号与释放";
+    }
+    m_remoteSurface->pushFrameDirect(img, fid, m_streamTag);
+    emit directPushDone(img.width(), img.height(), fid);
+  } else {
+    emit presentFrameReady(img, fid);
+  }
 }

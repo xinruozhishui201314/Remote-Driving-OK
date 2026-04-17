@@ -292,8 +292,12 @@ ApplicationWindow {
             var whepLen = whep ? String(whep).length : 0
             console.warn("[Client][StreamE2E][QML_TEST_AUTOCONNECT] path=main.autoConnectTriggerTimer whepLen=" + whepLen
                         + " currentVin=" + (vm && vm.currentVin ? vm.currentVin : "")
-                        + " ★ 测试模式：无 whep 时 C++ 用 ZLM_VIDEO_URL")
-            wsm.connectFourStreams(whep || "")
+                        + " ★ 测试模式：无 whep 时 C++ 用 ZLM_VIDEO_URL → 轮询 ZLM 就绪")
+                if (wsm.scheduleConnectFourStreamsWhenZlmReady !== undefined) {
+                    wsm.scheduleConnectFourStreamsWhenZlmReady(whep || "", 1000, 60000)
+                } else {
+                wsm.connectFourStreams(whep || "")
+            }
         }
     }
 

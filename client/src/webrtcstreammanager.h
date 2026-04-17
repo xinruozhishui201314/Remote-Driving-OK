@@ -35,6 +35,8 @@ class WebRtcStreamManager : public QObject {
   Q_PROPERTY(WebRtcClient *leftClient READ leftClient CONSTANT)
   Q_PROPERTY(WebRtcClient *rightClient READ rightClient CONSTANT)
   Q_PROPERTY(bool anyConnected READ anyConnected NOTIFY anyConnectedChanged)
+  /** 车端推流就绪状态（由 VehicleStatus 同步） */
+  Q_PROPERTY(bool streamingReady READ streamingReady WRITE setStreamingReady NOTIFY streamingReadyChanged)
 
  public:
   explicit WebRtcStreamManager(QObject *parent = nullptr);
@@ -46,6 +48,8 @@ class WebRtcStreamManager : public QObject {
   WebRtcClient *rightClient() const { return m_right; }
 
   bool anyConnected() const;
+  bool streamingReady() const { return m_streamingReady; }
+  void setStreamingReady(bool ready);
 
   /** 设置当前 VIN，供 connectFourStreams 构造 VIN-prefixed 流名（实现于 .cpp，带
    * [Client][StreamE2E] 日志） */
@@ -102,6 +106,7 @@ class WebRtcStreamManager : public QObject {
 
  signals:
   void anyConnectedChanged();
+  void streamingReadyChanged(bool ready);
 
  private:
   /** 诊断：每 15s 查询一次 ZLM getMediaList，验证推流是否在册 */
@@ -137,6 +142,7 @@ class WebRtcStreamManager : public QObject {
   int m_runtimeHighQueuedLagStreakSec = 0;
   int m_runtimeLowQueuedLagStreakSec = 0;
   bool m_runtimeQueuedLagSloBreached = false;
+  bool m_streamingReady = false;
 
  private slots:
   void onZlmReadyTimerTick();
@@ -152,6 +158,7 @@ class WebRtcStreamManager : public QObject {
   void cancelZlmReadySchedule();
 
   QString m_streamsConnectedVin;
+  QString m_startStreamRequestedVin; // ★ 记录已发送 start_stream 的 VIN，避免重复触发 Bridge 重置
   QTimer *m_zlmReadyTimer = nullptr;
   QNetworkAccessManager *m_zlmReadyNam = nullptr;
   QNetworkReply *m_zlmReadyReply = nullptr;

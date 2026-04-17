@@ -1,6 +1,7 @@
 #include "MediaPipeline.h"
 
 #include "../../core/eventbus.h"
+#include "../../core/TimeSyncService.h"
 #include "../../utils/TimeUtils.h"
 #include "DecoderFactory.h"
 

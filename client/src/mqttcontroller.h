@@ -43,6 +43,7 @@ class MqttController : public QObject {
   /** 可经 MQTT 投递控车 JSON：与 broker 会话已建立（车端/carla-bridge 仅订阅 MQTT） */
   Q_PROPERTY(bool controlChannelReady READ controlChannelReady NOTIFY controlChannelReadyChanged)
   Q_PROPERTY(QString currentVin READ currentVin WRITE setCurrentVin NOTIFY currentVinChanged)
+  Q_PROPERTY(QString sessionId READ sessionId WRITE setSessionId NOTIFY sessionIdChanged)
 
  public:
   explicit MqttController(QObject *parent = nullptr);
@@ -62,6 +63,9 @@ class MqttController : public QObject {
 
   QString currentVin() const { return m_currentVin; }
   void setCurrentVin(const QString &vin);
+
+  QString sessionId() const { return m_sessionId; }
+  void setSessionId(const QString &id);
 
   /** 与 controlChannelReady 一致：MQTT 控制面是否可用 */
   bool isConnected() const;
@@ -115,6 +119,7 @@ class MqttController : public QObject {
   void brokerUrlChanged(const QString &url);
   void clientIdChanged(const QString &id);
   void currentVinChanged(const QString &vin);
+  void sessionIdChanged(const QString &sessionId);
   void controlTopicChanged(const QString &topic);
   void statusTopicChanged(const QString &topic);
   void connectionStatusChanged(bool connected);
@@ -150,11 +155,14 @@ class MqttController : public QObject {
   // 自动选择通道发送控制指令
   void sendControlCommandAuto(const QJsonObject &command);
 
+  QString m_startStreamRequestedVin; // ★ 记录已发送 start_stream 的 VIN，避免重复触发 Bridge 重置
+  qint64 m_lastStartStreamTime = 0;   // ★ 记录上次发送 start_stream 的时间戳，支持超时重试
   QString m_brokerUrl = "mqtt://localhost:1883";
   QString m_clientId = "remote_driving_client";
   QString m_controlTopic = "vehicle/control";
   QString m_statusTopic = "vehicle/status";
   QString m_currentVin;  // 当前车辆 VIN
+  QString m_sessionId;   // 当前会话 ID
   bool m_isConnected = false;
   std::atomic<uint32_t> m_seq{0};  // 控制指令序列号（防重放）
   mutable std::mutex m_stateMutex;  // 保护 m_currentVin, m_isConnected 等状态

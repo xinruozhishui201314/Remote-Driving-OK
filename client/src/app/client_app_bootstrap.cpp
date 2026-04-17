@@ -675,7 +675,7 @@ void logQmlRootContextRdSnapshot(const QQmlContext *root) {
       QStringLiteral("rd_mqttController"),     QStringLiteral("rd_vehicleStatus"),
       QStringLiteral("rd_vehicleControl"),     QStringLiteral("rd_safetyMonitor"),
       QStringLiteral("rd_systemStateMachine"), QStringLiteral("rd_teleopSession"),
-      QStringLiteral("rd_nodeHealthChecker"),
+      QStringLiteral("rd_nodeHealthChecker"),  QStringLiteral("rd_keyboardInput"),
   };
   qInfo().noquote() << "[Client][QML][rd_*] snapshot begin ( QObject* 期望非空 )";
   for (const QString &key : kRdObjectKeys) {

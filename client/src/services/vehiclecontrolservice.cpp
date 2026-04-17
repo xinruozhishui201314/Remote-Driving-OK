@@ -55,8 +55,6 @@ class VehicleControlWorker : public QObject {
   void controlTick() {
     if (!m_svc->m_running.load()) return;
 
-    Q_UNUSED(TimeUtils::nowUs());
-
     // 1. 从无锁队列读取输入（2025/2026 规范要求）
     IInputDevice::InputState input;
     bool hasNewInput = false;
@@ -70,7 +68,27 @@ class VehicleControlWorker : public QObject {
     if (!hasNewInput) {
       input = m_svc->m_latestInput.load(); // 回退到原子读
     } else {
-      m_svc->m_latestInput.store(input); // 更新缓存
+      // ★ 核心修复（5 Why 分析结论）：
+      // 硬件设备采样回来的 InputState 是快照，如果直接 store 会覆盖掉 UI 先前修改的 modal 状态（如 gear）。
+      // 我们需要将最新的 modal 状态合并进去。
+      IInputDevice::InputState current = m_svc->m_latestInput.load();
+      
+      // 如果硬件设备的档位没变，则保留服务当前的档位（可能是 UI 刚改的）
+      // 如果硬件设备的档位变了（说明用户动了硬件拨杆），则以硬件为准
+      if (input.gear == m_lastPollGear) {
+          input.gear = current.gear;
+      } else {
+          m_lastPollGear = input.gear;
+      }
+
+      // 同理处理 emergencyStop 等 modal 状态
+      if (input.emergencyStop == m_lastPollEmg) {
+          input.emergencyStop = current.emergencyStop;
+      } else {
+          m_lastPollEmg = input.emergencyStop;
+      }
+
+      m_svc->m_latestInput.store(input); // 更新合并后的缓存
     }
 
     static std::atomic<int64_t> s_tickCount{0};
@@ -84,19 +102,68 @@ class VehicleControlWorker : public QObject {
     // 2. 输入处理
     auto processed = m_svc->processInput(input);
 
+    // ★ 核心防错：输入链路活跃度监控 (Input Link Watchdog)
+    const int64_t nowMs = TimeUtils::wallClockMs();
+    bool hasEffectiveInput = (std::abs(processed.steeringAngle) > 0.001 || 
+                              processed.throttle > 0.001 || 
+                              processed.brake > 0.001);
+    
+    if (hasEffectiveInput) {
+      m_svc->m_lastEffectiveInputMs.store(nowMs, std::memory_order_relaxed);
+    }
+
+    // 检查静默状态：操作员有活动（来自 UI）但采样器持续上报 0
+    const int64_t lastActivity = m_svc->m_lastOperatorActivityMs.load(std::memory_order_relaxed);
+    const int64_t lastEffective = m_svc->m_lastEffectiveInputMs.load(std::memory_order_relaxed);
+    
+    // 如果 1s 内有 UI 活动，但采样器超过 silentThresholdMs 没有有效输入
+    bool isSilent = false;
+    if (nowMs - lastActivity < 1000) {
+      if (nowMs - lastEffective > m_svc->m_config.silentThresholdMs) {
+        isSilent = true;
+      }
+    }
+
+    if (isSilent != m_svc->m_inputLinkSilent.load()) {
+      m_svc->m_inputLinkSilent.store(isSilent);
+      auto svc = m_svc;
+      QMetaObject::invokeMethod(svc, [svc, isSilent]() {
+        emit svc->inputLinkSilentChanged(isSilent);
+      }, Qt::QueuedConnection);
+      
+      if (isSilent) {
+        qCritical() << "[Client][Control][Watchdog] ⚠ 检测到静默输入链路！"
+                    << "UI 有活动但控制环数据持续为 0。可能原因：焦点丢失、映射冲突或采样器断路。";
+      }
+    }
+
     // 3. 延迟补偿预测
-    VehicleControlService::ControlCommand cmd;
+    auto cmdHandle = m_svc->commandPool().acquireHandle();
+    auto& cmd = *cmdHandle;
+    
+    // 初始化命令基础信息 (2025/2026 规范：从热路径对象池获取)
+    cmd.steeringAngle = processed.steeringAngle;
+    cmd.throttle = processed.throttle;
+    cmd.brake = processed.brake;
+    cmd.gear = processed.gear;
+    cmd.emergencyStop = processed.emergencyStop;
+    cmd.timestamp = TimeUtils::wallClockMs();
+    cmd.sequenceNumber = m_svc->nextSequenceNumber();
+
     if (m_svc->m_config.enablePrediction && m_svc->m_predictor) {
       auto pred = m_svc->m_predictor->predict(processed, m_svc->m_currentRTTMs.load());
       cmd.predictedSteeringAngle = pred.predictedSteeringAngle;
       cmd.predictionHorizonMs = pred.predictionHorizonMs;
     } else {
       cmd.predictedSteeringAngle = processed.steeringAngle;
+      cmd.predictionHorizonMs = 0.0;
     }
 
     // 4. 速率限制（无锁，因为只在此线程运行）
     const double dt = 1.0 / m_svc->m_config.controlRateHz;
     const double maxSteeringDelta = m_svc->m_config.maxSteeringRateRadPerSec * dt;
+    
+    // 对预测后的转向角应用物理限制
     const double steeringDelta = cmd.predictedSteeringAngle - m_svc->m_lastCommand.steeringAngle;
     if (std::abs(steeringDelta) > maxSteeringDelta) {
       cmd.steeringAngle =
@@ -104,13 +171,6 @@ class VehicleControlWorker : public QObject {
     } else {
       cmd.steeringAngle = cmd.predictedSteeringAngle;
     }
-
-    cmd.throttle = processed.throttle;
-    cmd.brake = processed.brake;
-    cmd.gear = processed.gear;
-    cmd.emergencyStop = false;
-    cmd.timestamp = TimeUtils::wallClockMs();
-    cmd.sequenceNumber = m_svc->nextSequenceNumber();
 
     m_svc->m_lastCommand = cmd;
 
@@ -136,6 +196,8 @@ class VehicleControlWorker : public QObject {
  private:
   VehicleControlService* m_svc;
   QTimer m_timer;
+  int m_lastPollGear = 0;
+  bool m_lastPollEmg = false;
 };
 
 VehicleControlService::VehicleControlService(MqttController* mqtt, VehicleManager* vehicles,
@@ -149,9 +211,7 @@ VehicleControlService::VehicleControlService(MqttController* mqtt, VehicleManage
       m_config(),
       m_predictor(nullptr),
       m_signer(),
-      m_currentVin(),
-      m_sessionId(),
-      m_credentialsMutex(),
+      m_activeContext(nullptr),
       m_latestInput(),
       m_lastCommand(),
       m_worker(nullptr),
@@ -161,18 +221,37 @@ VehicleControlService::VehicleControlService(MqttController* mqtt, VehicleManage
       m_secondStart(0),
       m_currentRTTMs(50.0),
       m_running(false),
+      m_lastEffectiveInputMs(0),
+      m_lastOperatorActivityMs(0),
+      m_inputLinkSilent(false),
       m_safety(nullptr),
       m_transport(nullptr) {
   m_worker = std::make_unique<VehicleControlWorker>(this);
 }
 
-VehicleControlService::~VehicleControlService() { stop(); }
+VehicleControlService::~VehicleControlService() { 
+  stop(); 
+  SessionContext* ctx = m_activeContext.exchange(nullptr);
+  delete ctx;
+}
 
 uint32_t VehicleControlService::nextSequenceNumber() {
 #ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
   if (m_mqtt) return m_mqtt->nextSequenceNumber();
 #endif
   return m_seqCounter.fetch_add(1, std::memory_order_relaxed);
+}
+
+void VehicleControlService::setSafetyMonitor(SafetyMonitorService* safety) {
+  m_safety = safety;
+  if (m_safety) {
+    // 监听来自 UI 的原始操作活动信号，用于输入链路对齐检查
+    connect(m_safety.data(), &SafetyMonitorService::operatorActivityReported, this, &VehicleControlService::noteOperatorActivity, Qt::QueuedConnection);
+  }
+}
+
+void VehicleControlService::noteOperatorActivity() {
+  m_lastOperatorActivityMs.store(TimeUtils::wallClockMs(), std::memory_order_relaxed);
 }
 
 void VehicleControlService::setControlConfig(const ControlConfig& cfg) {
@@ -246,42 +325,98 @@ void VehicleControlService::updateInput(const IInputDevice::InputState& input) {
 
 IInputDevice::InputState VehicleControlService::processInput(const IInputDevice::InputState& raw) {
   IInputDevice::InputState out = raw;
-  // ★ 核心修复：死区从 0.02 调小至 0.005，提高键盘微调灵敏度
-  out.steeringAngle = applyCurve(applyDeadzone(raw.steeringAngle, 0.005), m_config.steeringCurve);
-  out.throttle = applyCurve(applyDeadzone(raw.throttle, m_config.throttleDeadzone), 1.0);
-  out.brake = applyDeadzone(raw.brake, m_config.brakeDeadzone);
+
+  // 1. 边界值检查 (Range Check)
+  out.steeringAngle = std::clamp(raw.steeringAngle, -1.0, 1.0);
+  out.throttle = std::clamp(raw.throttle, 0.0, 1.0);
+  out.brake = std::clamp(raw.brake, 0.0, 1.0);
+
+  // 2. 变化率检查 (Slew Rate Limit) - 防止输入异常跳变
+  // 仅在热路径（DRIVING 状态）且有上一次合法输入时应用
+  const double dt = 1.0 / m_config.controlRateHz;
+  const double maxSteeringJump = 4.0 * dt;  // 每秒最多变化 400% (2秒从最左到最右)
+  const double maxPedalJump = 8.0 * dt;     // 每秒最多变化 800% (0.125秒从0到100%)
+
+  if (m_running.load() && m_lastProcessedInput.timestamp > 0) {
+    auto applySlewLimit = [&](double current, double previous, double maxDelta,
+                              const char* name) {
+      double delta = current - previous;
+      if (std::abs(delta) > maxDelta) {
+        double limited = previous + (delta > 0 ? maxDelta : -maxDelta);
+        // 降低日志频率，避免 100Hz 灌满控制台
+        static std::atomic<int> s_logCount{0};
+        if (s_logCount.fetch_add(1, std::memory_order_relaxed) % 100 == 0) {
+            qWarning() << "[Client][Control][Safety] Slew rate limit hit on" << name << "delta=" << delta
+                       << "max=" << maxDelta << "clamped=" << limited;
+        }
+        return limited;
+      }
+      return current;
+    };
+
+    out.steeringAngle =
+        applySlewLimit(out.steeringAngle, m_lastProcessedInput.steeringAngle, maxSteeringJump, "steering");
+    out.throttle =
+        applySlewLimit(out.throttle, m_lastProcessedInput.throttle, maxPedalJump, "throttle");
+    out.brake =
+        applySlewLimit(out.brake, m_lastProcessedInput.brake, maxPedalJump, "brake");
+  }
+
+  // 状态保存：必须保存【曲线处理前】的线性值，否则下一帧变化率计算会因非线性映射出错
+  m_lastProcessedInput = out;
+
+  // 3. 曲线与死区处理 (仅用于输出，不存入 m_lastProcessedInput)
+  out.steeringAngle = applyCurve(applyDeadzone(out.steeringAngle, 0.005), m_config.steeringCurve);
+  out.throttle = applyCurve(applyDeadzone(out.throttle, m_config.throttleDeadzone), 1.0);
+  out.brake = applyDeadzone(out.brake, m_config.brakeDeadzone);
+
   return out;
 }
 
 void VehicleControlService::setSessionCredentials(const QString& vin, const QString& sessionId,
                                                   const QString& token) {
-  QMutexLocker lock(&m_credentialsMutex);
-  m_currentVin = vin;
-  m_sessionId = sessionId;
+  auto* newCtx = new SessionContext();
+  std::strncpy(newCtx->vin, vin.toUtf8().constData(), sizeof(newCtx->vin) - 1);
+  std::strncpy(newCtx->sessionId, sessionId.toUtf8().constData(), sizeof(newCtx->sessionId) - 1);
+  std::strncpy(newCtx->token, token.toUtf8().constData(), sizeof(newCtx->token) - 1);
+
+  SessionContext* oldCtx = m_activeContext.exchange(newCtx, std::memory_order_acq_rel);
   m_signer.setCredentials(vin, sessionId, token);
-  qInfo().noquote() << "[Client][VehicleControlService] session credentials set vin=" << vin
-                    << "sessionId=" << sessionId.left(12) << " tokenLen=" << token.size();
+  
+  // 延迟删除旧上下文以确保 Worker 线程不再引用（控制频率 100Hz，等待 50ms 足够）
+  if (oldCtx) {
+    QTimer::singleShot(50, [oldCtx]() { delete oldCtx; });
+  }
+
+  qInfo().noquote() << "[Client][VehicleControlService] session context updated vin=" << vin
+                    << "sessionId=" << sessionId.left(12) << " (lock-free)";
 }
 
 void VehicleControlService::clearSessionCredentials() {
-  QMutexLocker lock(&m_credentialsMutex);
-  m_currentVin.clear();
-  m_sessionId.clear();
+  SessionContext* oldCtx = m_activeContext.exchange(nullptr, std::memory_order_acq_rel);
   m_signer.clearCredentials();
-  qInfo() << "[Client][VehicleControlService] session credentials cleared";
+  if (oldCtx) {
+    QTimer::singleShot(50, [oldCtx]() { delete oldCtx; });
+  }
+  qInfo() << "[Client][VehicleControlService] session context cleared";
 }
 
 void VehicleControlService::sendCommand(const ControlCommand& cmd) {
-  QString vin;
-  QString sessionId;
-  {
-    QMutexLocker lock(&m_credentialsMutex);
-    vin = m_currentVin;
-    sessionId = m_sessionId;
+  // 1. 原子读取上下文 (O(1) 无锁)
+  const SessionContext* ctx = m_activeContext.load(std::memory_order_acquire);
+  if (!ctx || ctx->vin[0] == '\0') {
+    return;
   }
 
-  if (vin.isEmpty()) {
-    return;
+  const char* vinStr = ctx->vin;
+  const char* sessionIdStr = ctx->sessionId;
+
+  // 为兼容 FlatBuffers 既有 uint32 契约，对非数字 sessionId 取哈希（生产环境建议更新 fbs 契约为 string）
+  uint32_t sessionIdNum = 0;
+  bool ok = false;
+  sessionIdNum = QString::fromUtf8(sessionIdStr).toUInt(&ok);
+  if (!ok) {
+    sessionIdNum = static_cast<uint32_t>(qHash(QString::fromUtf8(sessionIdStr)));
   }
 
   if (Tracing::instance().currentTraceId().isEmpty()) {
@@ -292,11 +427,11 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
   // 2025/2026 规范：使用 FlatBuffers 进行契约优先的高性能序列化
   flatbuffers::FlatBufferBuilder builder(1024);
   
-  auto vinOffset = builder.CreateString(vin.toStdString());
+  auto vinOffset = builder.CreateString(vinStr);
   
   teleop::protocol::MessageHeaderTableBuilder headerBuilder(builder);
   headerBuilder.add_vin(vinOffset);
-  headerBuilder.add_sessionId(m_sessionId.toUInt()); // 假设 sessionId 可以转 uint
+  headerBuilder.add_sessionId(sessionIdNum);
   headerBuilder.add_seq(cmd.sequenceNumber);
   headerBuilder.add_timestampMs(cmd.timestamp);
   auto headerOffset = headerBuilder.Finish();
@@ -316,21 +451,51 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
   const QByteArray payload(reinterpret_cast<const char*>(builder.GetBufferPointer()), 
                            static_cast<int>(builder.GetSize()));
 
-  // 核心路径：异步发送，无阻塞
-  emit requestDataChannelSend(payload);
+  // 核心路径：使用传输聚合器进行发送（内部实现双链路冗余热切换）
+  if (m_transport) {
+    m_transport->send(TransportChannel::CONTROL_CRITICAL, 
+                      reinterpret_cast<const uint8_t*>(payload.constData()), 
+                      static_cast<size_t>(payload.size()));
+  } else {
+    // 回退路径
+    emit requestDataChannelSend(payload);
+  }
 
-  // MQTT 备份链路（根据规范：双链路冗余）
+  // ★ 系统性修复：针对 MQTT 链路，始终同步发送一份 JSON 格式的 drive 指令备份。
+  // 注意：如果使用的是 mosquitto_pub 进程模式，必须降频发送以免压垮系统。
 #ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
   if (m_mqtt && m_mqtt->mqttBrokerConnected()) {
-    // 暂时保持 JSON 以兼容旧版后端，生产环境应全部切为二进制
-    QJsonObject json;
+    static QElapsedTimer s_mqttBackupTimer;
+    if (!s_mqttBackupTimer.isValid()) s_mqttBackupTimer.start();
+    
+    // 降频到 10Hz (100ms)，足以满足车端 500ms 看门狗
+    if (s_mqttBackupTimer.elapsed() >= 100) {
+      s_mqttBackupTimer.restart();
+      QJsonObject json;
     json[QStringLiteral("type")] = QStringLiteral("drive");
-    json["steering"] = cmd.steeringAngle;
-    json["throttle"] = cmd.throttle;
-    json["brake"] = cmd.brake;
-    json["gear"] = cmd.gear;
-    json["seq"] = static_cast<qint64>(cmd.sequenceNumber);
+    json[QStringLiteral("steering")] = cmd.steeringAngle;
+    json[QStringLiteral("throttle")] = cmd.throttle;
+    json[QStringLiteral("brake")] = cmd.brake;
+    json[QStringLiteral("gear")] = cmd.gear;
+    json[QStringLiteral("seq")] = static_cast<qint64>(cmd.sequenceNumber);
+    json[QStringLiteral("timestamp")] = static_cast<qint64>(cmd.timestamp);
+    json[QStringLiteral("traceId")] = traceId;
+    if (ctx) {
+        json[QStringLiteral("sessionId")] = QString::fromUtf8(ctx->sessionId);
+        json[QStringLiteral("vin")] = QString::fromUtf8(ctx->vin);
+    }
+    
+    if (teleopTraceEnvEnabled()) {
+      static int s_sendCount = 0;
+      if (s_sendCount++ % 100 == 0) {
+          qInfo().noquote() << "[Client][Control][MQTT] send drive backup: steer=" << cmd.steeringAngle 
+                            << " thr=" << cmd.throttle << " brk=" << cmd.brake
+                            << " gear=" << cmd.gear << " seq=" << cmd.sequenceNumber;
+      }
+    }
+    
     m_mqtt->sendControlCommand(json);
+    } // if (s_mqttBackupTimer.elapsed() >= 100)
   }
 #endif
 
@@ -360,16 +525,16 @@ void VehicleControlService::sendUiCommand(const QString& type, const QVariantMap
   const QString traceId = Tracing::instance().currentTraceId();
 
   QString vin;
-  QString sessionId;
-  {
-    QMutexLocker lock(&m_credentialsMutex);
-    vin = m_currentVin;
-    sessionId = m_sessionId;
+  QString sessionId = QStringLiteral("0");
+  const SessionContext* ctx = m_activeContext.load(std::memory_order_acquire);
+  if (ctx) {
+    vin = QString::fromUtf8(ctx->vin);
+    sessionId = QString::fromUtf8(ctx->sessionId);
   }
 
   qInfo().noquote() << "[Client][Control][UI] type=" << type << "traceId=" << traceId.left(16)
                     << "vin=" << (vin.isEmpty() && m_vehicles ? m_vehicles->currentVin() : vin)
-                    << "sessionId=" << sessionId.left(12)
+                    << "sessionId=" << sessionId
                     << "payload="
                     << QJsonDocument(QJsonObject::fromVariantMap(payload))
                            .toJson(QJsonDocument::Compact);
@@ -396,11 +561,8 @@ void VehicleControlService::sendUiCommand(const QString& type, const QVariantMap
       static_cast<qint64>(TimeUtils::wallClockMs()), seq, traceId);
 
   // ★ 安全增强：对 UI 发起的遥操作指令进行签名
-  {
-    QMutexLocker lock(&m_credentialsMutex);
-    if (m_signer.isReady()) {
-      m_signer.sign(json);
-    }
+  if (m_signer.isReady()) {
+    m_signer.sign(json);
   }
   sendRawControlJson(json);
 }
@@ -411,7 +573,13 @@ void VehicleControlService::setGear(int gear) {
     input.gear = gear;
     input.timestamp = TimeUtils::nowUs();
     m_latestInput.store(input);
-    qDebug() << "[Client][VehicleControlService] gear updated in input state:" << gear;
+    
+    // ★ 核心修复：同步到硬件采样器，防止下次采样被旧状态覆盖
+    if (m_sampler) {
+      m_sampler->syncDeviceState(input);
+    }
+    
+    qInfo() << "[Client][VehicleControlService] gear updated to" << gear << "(sync-to-device)";
   }
 }
 
@@ -435,6 +603,16 @@ void VehicleControlService::sendDriveCommand(double steering, double throttle, d
 }
 
 void VehicleControlService::requestEmergencyStop() {
+  // ★ 安全增强：更新最新输入状态，确保控制环后续 tick 维持急停
+  IInputDevice::InputState input = m_latestInput.load();
+  input.emergencyStop = true;
+  input.timestamp = TimeUtils::nowUs();
+  m_latestInput.store(input);
+  
+  if (m_sampler) {
+    m_sampler->syncDeviceState(input);
+  }
+
   ControlCommand emg{};
   emg.emergencyStop = true;
   emg.brake = 1.0;
@@ -506,10 +684,11 @@ void VehicleControlService::pingSafety() {
   SafetyMonitorService* s = m_safety.data();
   if (!s) return;
   // 避免字符串 invokeMethod；同线程直接调用，异线程用成员指针排队（Qt 文档推荐）。
+  // ★ 核心修复：改用 onControlTick 仅代表控制环心跳，不 reset 操作员活跃度，解决看门狗误报。
   if (QThread::currentThread() == s->thread()) {
-    s->onOperatorActivity();
+    s->onControlTick();
   } else {
-    QMetaObject::invokeMethod(s, &SafetyMonitorService::onOperatorActivity, Qt::QueuedConnection);
+    QMetaObject::invokeMethod(s, &SafetyMonitorService::onControlTick, Qt::QueuedConnection);
   }
 }
 

@@ -68,7 +68,7 @@ endif()
 # Multimedia + MultimediaQuick：QVideoSink / QML VideoOutput 官方显示路径（替代自研 VideoRenderer）
 # 部分 Qt 6.8 发行版 / aqt 镜像仅有 libQt6MultimediaQuick.so + 头文件，但缺少 Qt6MultimediaQuickConfig.cmake
 # （只带 Qt6MultimediaQuickPrivate）。此时用 IMPORTED 目标补齐，行为与官方包一致。
-find_package(Qt6 REQUIRED COMPONENTS Core Network Gui Quick Qml Multimedia)
+find_package(Qt6 REQUIRED COMPONENTS Core Network Gui Quick Qml Multimedia Concurrent)
 find_package(Qt6 QUIET COMPONENTS MultimediaQuick)
 if(NOT TARGET Qt6::MultimediaQuick)
     get_filename_component(_QT6_PREFIX "${Qt6_DIR}/../../.." ABSOLUTE)
@@ -256,6 +256,8 @@ set(SOURCES
     src/ui/VideoFramePresentWorker.cpp
     src/media/ClientVideoDiagCache.cpp
     src/media/VideoFrameFingerprintCache.cpp
+    src/core/BlackBoxService.cpp
+    src/core/TimeSyncService.cpp
 
     # Legacy network/media (kept as WebRTCChannel internals)
     src/webrtcclient.cpp
@@ -300,8 +302,9 @@ set(SOURCES
     src/infrastructure/controlloopticker.cpp
     # API 限流器（Phase2 Task 9）
     src/infrastructure/network/ratelimiter.cpp
-    src/infrastructure/network/WebRTCChannel.cpp
-    src/infrastructure/network/UDPChannel.cpp
+    src/infrastructure/network/TransportAggregator.cpp
+    src/adapters/network/WebRTCChannel.cpp
+    src/adapters/network/UDPChannel.cpp
     src/infrastructure/network/AdaptiveBitrate.cpp
     src/infrastructure/network/FECEncoder.cpp
 
@@ -311,7 +314,7 @@ set(SOURCES
     src/infrastructure/media/MediaPipeline.cpp
     # Hardware input
     src/infrastructure/hardware/InputSampler.cpp
-    src/infrastructure/hardware/KeyboardMouseInput.cpp
+    src/adapters/hardware/KeyboardMouseInput.cpp
 
     # ── Application Service Layer ────────────────────────────────────────────
     src/services/sessionmanager.cpp
@@ -349,6 +352,8 @@ set(HEADERS
     src/media/ClientVideoDiagCache.h
     src/media/CpuVideoRgba8888Frame.h
     src/media/VideoFrameEvidenceDiag.h
+    src/core/BlackBoxService.h
+    src/core/TimeSyncService.h
     src/webrtcclient.h
     src/webrtcstreammanager.h
     src/mqttcontroller.h
@@ -393,8 +398,9 @@ set(HEADERS
     src/infrastructure/controlloopticker.h
     # API 限流器（Phase2 Task 9）
     src/infrastructure/network/ratelimiter.h
-    src/infrastructure/network/WebRTCChannel.h
-    src/infrastructure/network/UDPChannel.h
+    src/infrastructure/network/TransportAggregator.h
+    src/adapters/network/WebRTCChannel.h
+    src/adapters/network/UDPChannel.h
     src/infrastructure/network/AdaptiveBitrate.h
     src/infrastructure/network/FECEncoder.h
 
@@ -404,7 +410,7 @@ set(HEADERS
     src/infrastructure/media/MediaPipeline.h
     src/infrastructure/hardware/IInputDevice.h
     src/infrastructure/hardware/InputSampler.h
-    src/infrastructure/hardware/KeyboardMouseInput.h
+    src/adapters/hardware/KeyboardMouseInput.h
 
     src/services/sessionmanager.h
     src/services/httpnetworkhelpers.h
@@ -427,7 +433,7 @@ set(HEADERS
 if(ENABLE_FFMPEG)
     list(APPEND SOURCES
         src/h264decoder.cpp
-        src/infrastructure/media/FFmpegSoftDecoder.cpp
+        src/adapters/media/FFmpegSoftDecoder.cpp
         src/media/ClientMediaBudget.cpp
         src/media/RtpPacketSpscQueue.cpp
         src/media/RtpStreamClockContext.cpp
@@ -442,7 +448,7 @@ if(ENABLE_FFMPEG)
     )
     list(APPEND HEADERS
         src/h264decoder.h
-        src/infrastructure/media/FFmpegSoftDecoder.h
+        src/adapters/media/FFmpegSoftDecoder.h
         src/media/ClientMediaBudget.h
         src/media/RtpIngressTypes.h
         src/media/RtpPacketSpscQueue.h
@@ -459,20 +465,20 @@ if(ENABLE_FFMPEG)
 endif()
 
 if(ENABLE_FFMPEG AND ENABLE_EGL_DMABUF AND ENABLE_QT6_ShaderTools)
-    list(APPEND SOURCES src/ui/Nv12DmaBufQsg.cpp)
-    list(APPEND HEADERS src/ui/Nv12DmaBufQsg.h)
+    list(APPEND SOURCES src/adapters/media/Nv12DmaBufQsg.cpp)
+    list(APPEND HEADERS src/adapters/media/Nv12DmaBufQsg.h)
 endif()
 
 # Optional: VAAPI decoder
 if(ENABLE_VAAPI)
-    list(APPEND SOURCES src/infrastructure/media/VAAPIDecoder.cpp)
-    list(APPEND HEADERS src/infrastructure/media/VAAPIDecoder.h)
+    list(APPEND SOURCES src/adapters/media/VAAPIDecoder.cpp)
+    list(APPEND HEADERS src/adapters/media/VAAPIDecoder.h)
 endif()
 
 # Optional: NVDEC decoder
 if(ENABLE_NVDEC)
-    list(APPEND SOURCES src/infrastructure/media/NvdecDecoder.cpp)
-    list(APPEND HEADERS src/infrastructure/media/NvdecDecoder.h)
+    list(APPEND SOURCES src/adapters/media/NvdecDecoder.cpp)
+    list(APPEND HEADERS src/adapters/media/NvdecDecoder.h)
 endif()
 
 # ── Executable ────────────────────────────────────────────────────────────────
@@ -483,7 +489,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/utils
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
     ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/infrastructure/media/gpu
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/adapters
     ${CMAKE_CURRENT_SOURCE_DIR}/src/services
     ${CMAKE_CURRENT_SOURCE_DIR}/src/presentation
     ${CMAKE_CURRENT_SOURCE_DIR}/../backend/src/protocol
@@ -499,7 +505,7 @@ target_link_libraries(${PROJECT_NAME} PUBLIC sml::sml)
 # ── Link Qt (required) ────────────────────────────────────────────────────────
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core Qt6::Quick Qt6::Network Qt6::Qml Qt6::Gui
-    Qt6::Multimedia Qt6::MultimediaQuick
+    Qt6::Multimedia Qt6::MultimediaQuick Qt6::Concurrent
 )
 target_compile_options(${PROJECT_NAME} PRIVATE -Wno-effc++)
 
@@ -618,8 +624,11 @@ endif()
 
 # ── Link MQTT ────────────────────────────────────────────────────────────────
 if(ENABLE_MQTT_PAHO)
-    target_link_libraries(${PROJECT_NAME} PRIVATE paho-mqttpp3)
+    # Paho MQTT C++ 通常依赖 C 库 (paho-mqtt3as)
+    target_link_libraries(${PROJECT_NAME} PRIVATE paho-mqttpp3 paho-mqtt3as)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ENABLE_MQTT_PAHO)
+    # Paho MQTT C++ 依赖异常处理；尽管核心禁用了异常，但 Paho 接口必需启用
+    target_compile_options(${PROJECT_NAME} PRIVATE -fexceptions)
 endif()
 
 # ── Realtime scheduling (Linux) ───────────────────────────────────────────────
@@ -1036,9 +1045,10 @@ if(ENABLE_QT6_Test)
             add_executable(test_mqtt_paho_broker_smoke
                 tests/integration/test_mqtt_paho_broker_smoke.cpp
             )
+            target_compile_options(test_mqtt_paho_broker_smoke PRIVATE -fexceptions)
             target_include_directories(test_mqtt_paho_broker_smoke PRIVATE ${_TEST_INCLUDES})
             target_compile_definitions(test_mqtt_paho_broker_smoke PRIVATE ENABLE_MQTT_PAHO)
-            target_link_libraries(test_mqtt_paho_broker_smoke PRIVATE Qt6::Core Qt6::Test paho-mqttpp3)
+            target_link_libraries(test_mqtt_paho_broker_smoke PRIVATE Qt6::Core Qt6::Test paho-mqttpp3 paho-mqtt3as)
             if(UNIX AND NOT APPLE)
                 target_link_libraries(test_mqtt_paho_broker_smoke PRIVATE pthread)
             endif()

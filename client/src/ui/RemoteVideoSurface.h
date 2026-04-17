@@ -28,8 +28,11 @@ enum class RemotePresentMode : uint8_t { CpuTexture = 0, Nv12DmaBuf = 1 };
 class RemoteVideoSurface : public QQuickItem {
   Q_OBJECT
   QML_ELEMENT
-  /** 0=拉伸填满 1=PreserveAspectCrop（与 VideoOutput.PreserveAspectCrop 行为对齐） */
-  Q_PROPERTY(int fillMode READ fillMode WRITE setFillMode NOTIFY fillModeChanged)
+ public:
+  enum FillMode { Stretch = 0, PreserveAspectCrop = 1, PreserveAspectFit = 2 };
+  Q_ENUM(FillMode)
+  /** 对应 VideoOutput.fillMode 行为 */
+  Q_PROPERTY(FillMode fillMode READ fillMode WRITE setFillMode NOTIFY fillModeChanged)
   /**
    * QML 侧设置面板标题（如「主视图」「左视图」），用于 [VideoBind]/[DPR]/PNG 落盘与日志对齐 stream。
    */
@@ -38,8 +41,8 @@ class RemoteVideoSurface : public QQuickItem {
  public:
   explicit RemoteVideoSurface(QQuickItem *parent = nullptr);
 
-  int fillMode() const { return m_fillMode; }
-  void setFillMode(int mode);
+  FillMode fillMode() const { return static_cast<FillMode>(m_fillMode); }
+  void setFillMode(FillMode mode);
 
   QString panelLabel() const { return m_panelLabel; }
   void setPanelLabel(const QString &label);
@@ -70,6 +73,9 @@ class RemoteVideoSurface : public QQuickItem {
   /** C++ 主路径：已满足 RGBA8888+stride 契约（与 applyDmaBufFrame 隔离；非 QML slot） */
   void applyCpuRgba8888Frame(CpuVideoRgba8888Frame cpuFrame, quint64 frameId,
                              const QString &streamTag = QString());
+
+  /** v4 新增：极速路径。由解码线程直接调用，绕过主线程事件循环中的 QImage 拷贝/信号分发。 */
+  void pushFrameDirect(QImage image, quint64 frameId, const QString &streamTag);
 
  protected:
   QSGNode *updatePaintNode(QSGNode *oldNode, UpdatePaintNodeData *data) override;

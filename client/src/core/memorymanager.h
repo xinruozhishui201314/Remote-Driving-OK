@@ -18,12 +18,14 @@
 template <typename T, std::size_t PoolSize = 64>
 class ObjectPool {
  public:
-  ObjectPool() {
+  ObjectPool() : m_storage(), m_top(PoolSize) {
+    for (std::size_t i = 0; i < PoolSize; ++i) {
+      m_freeNodes[i].store(nullptr);
+    }
     m_storage.resize(PoolSize);
     for (std::size_t i = 0; i < PoolSize; ++i) {
       m_freeNodes[i].store(&m_storage[i]);
     }
-    m_top.store(PoolSize);
   }
 
   // 获取对象（O(1)，无锁原子操作）

@@ -110,6 +110,8 @@ class SafetyMonitorService : public QObject {
   void safetyStatusChanged(bool allOk);
   void emergencyActiveChanged();
   void allSystemsGoChanged(bool ok);
+  void operatorActivityReported();
+  void controlTickReported();
 
   public slots:
   /** 订阅 EventBus 异常 */
@@ -117,6 +119,7 @@ class SafetyMonitorService : public QObject {
   /** VehicleControlService::pingSafety 使用 QMetaObject::invokeMethod 排队调用；必须为 slot
    *（Qt 文档：invokable 仅限 slot / Q_INVOKABLE / signal）。 */
   void onOperatorActivity();
+  void onControlTick();
 
  private:
   void triggerEmergencyStop(const QString& reason);
@@ -140,6 +143,7 @@ class SafetyMonitorService : public QObject {
 
   // Operator / Deadman
   std::atomic<int64_t> m_lastOperatorActivityMs{0};
+  std::atomic<int64_t> m_lastControlTickMs{0};
   std::atomic<bool> m_deadmanActive{false};
 
   // UI 监控（由独立安全线程检查）

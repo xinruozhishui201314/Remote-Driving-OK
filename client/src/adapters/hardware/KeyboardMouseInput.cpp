@@ -27,6 +27,15 @@ IInputDevice::InputState KeyboardMouseInput::poll() {
   return m_state;
 }
 
+void KeyboardMouseInput::syncState(const InputState& state) {
+  QMutexLocker lock(&m_mutex);
+  // 同步 modal 状态
+  m_state.gear = state.gear;
+  m_state.handbrake = state.handbrake;
+  m_state.emergencyStop = state.emergencyStop;
+  qDebug() << "[Client][KeyboardMouseInput] state synced from service: gear=" << state.gear;
+}
+
 IInputDevice::DeviceCapabilities KeyboardMouseInput::capabilities() const {
   return {false, false, false, false, 2, 10, "KeyboardMouseInput"};
 }
@@ -42,6 +51,12 @@ void KeyboardMouseInput::onKeyPressed(int qtKey) {
   if (qtKey == Qt::Key_Space) {
     m_state.handbrake = true;
   }
+  
+  // 档位控制：1=P, 2=R, 3=N, 4=D
+  if (qtKey == Qt::Key_1) m_state.gear = 2;      // P
+  else if (qtKey == Qt::Key_2) m_state.gear = -1; // R
+  else if (qtKey == Qt::Key_3) m_state.gear = 0;  // N
+  else if (qtKey == Qt::Key_4) m_state.gear = 1;  // D
 }
 
 void KeyboardMouseInput::onKeyReleased(int qtKey) {

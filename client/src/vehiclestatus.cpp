@@ -150,6 +150,15 @@ void VehicleStatus::setRemoteControlEnabled(bool enabled) {
   }
 }
 
+void VehicleStatus::setStreamingReady(bool ready) {
+  if (m_streamingReady != ready) {
+    m_streamingReady = ready;
+    qInfo() << "[Client][VehicleStatus] streamingReady 变更 →" << ready
+            << "（来自车端 status.streaming_ready）";
+    emit streamingReadyChanged(m_streamingReady);
+  }
+}
+
 void VehicleStatus::setDrivingMode(const QString &mode) {
   QString m = mode.trimmed();
   if (m.isEmpty())
@@ -425,6 +434,17 @@ void VehicleStatus::updateStatus(const QJsonObject &status) {
         changedFields << QString("rc_enabled:%1").arg(newRemoteControlEnabled ? "1" : "0");
     }
   }
+
+  if (status.contains("streaming_ready")) {
+    bool newStreamingReady = status["streaming_ready"].toBool();
+    if (m_streamingReady != newStreamingReady) {
+      setStreamingReady(newStreamingReady);
+      hasChanges = true;
+      if (shouldLog)
+        changedFields << QString("streaming_ready:%1").arg(newStreamingReady ? "1" : "0");
+    }
+  }
+
   if (status.contains("driving_mode")) {
     QString newDrivingMode = status["driving_mode"].toString().trimmed();
     if (newDrivingMode.isEmpty())

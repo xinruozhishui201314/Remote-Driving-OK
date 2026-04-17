@@ -74,6 +74,52 @@ check_lint() {
         fi
     fi
 
+    # 1.1c QML 语法与类型检查 (qmllint)
+    if [ -f "${PROJECT_ROOT}/scripts/verify-qml-lint.sh" ]; then
+        echo -n "QML 语法与类型检查..."
+        if bash "${PROJECT_ROOT}/scripts/verify-qml-lint.sh" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+            PASSED=$((PASSED + 1))
+        else
+            echo -e "${RED}✗${NC} 运行 scripts/verify-qml-lint.sh 查看详情"
+            FAILED=$((FAILED + 1))
+        fi
+    fi
+
+    # 1.1d Harbor/Docker 镜像端口契约探测脚本自测（无网络；根因类 EOF/push 失败的门禁）
+    if [ -f "${PROJECT_ROOT}/scripts/verify-registry-docker-port-contract.sh" ]; then
+        echo -n "Registry Docker 端口契约脚本自测..."
+        if bash "${PROJECT_ROOT}/scripts/verify-registry-docker-port-contract.sh" --selftest >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+            PASSED=$((PASSED + 1))
+        else
+            echo -e "${RED}✗${NC} 运行 scripts/verify-registry-docker-port-contract.sh --selftest 查看详情"
+            FAILED=$((FAILED + 1))
+        fi
+    fi
+
+    # 1.1e Python 语法检查 (carla-bridge)
+    echo -n "Python 语法检查 (carla-bridge)..."
+    if python3 -m py_compile "${PROJECT_ROOT}/carla-bridge/carla_bridge.py" >/dev/null 2>&1; then
+        echo -e "${GREEN}✓${NC}"
+        PASSED=$((PASSED + 1))
+    else
+        echo -e "${RED}✗${NC}"
+        echo -e "${RED}发现 Python 语法错误：${NC}"
+        python3 -m py_compile "${PROJECT_ROOT}/carla-bridge/carla_bridge.py" 2>&1 | head -n 5
+        FAILED=$((FAILED + 1))
+    fi
+    if [ -f "${PROJECT_ROOT}/scripts/docker-push-with-registry-probe.sh" ]; then
+        echo -n "docker-push-with-registry-probe 自测..."
+        if bash "${PROJECT_ROOT}/scripts/docker-push-with-registry-probe.sh" --selftest >/dev/null 2>&1; then
+            echo -e "${GREEN}✓${NC}"
+            PASSED=$((PASSED + 1))
+        else
+            echo -e "${RED}✗${NC} 运行 scripts/docker-push-with-registry-probe.sh --selftest 查看详情"
+            FAILED=$((FAILED + 1))
+        fi
+    fi
+
     # 1.2 检查 Clang-Format (如果 .clang-format 存在)
     if [ -f "${PROJECT_ROOT}/.clang-format" ]; then
         echo -n "检查代码格式... "

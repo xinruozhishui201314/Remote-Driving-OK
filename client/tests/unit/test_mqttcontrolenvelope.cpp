@@ -34,9 +34,10 @@ void TestMqttControlEnvelope::prepareForSend_adds_vin_timestamp_seq() {
   in[QStringLiteral("type")] = QStringLiteral("gear");
   in[QStringLiteral("value")] = 1;
   uint32_t seq = 10;
-  const auto r = prepareForSend(in, QStringLiteral("VIN99"), 12345LL, seq);
+  const auto r = prepareForSend(in, QStringLiteral("VIN99"), QStringLiteral("SESS123"), 12345LL, seq);
   QVERIFY(r.ok);
   QCOMPARE(r.cmd.value(QStringLiteral("vin")).toString(), QStringLiteral("VIN99"));
+  QCOMPARE(r.cmd.value(QStringLiteral("sessionId")).toString(), QStringLiteral("SESS123"));
   QCOMPARE(r.cmd.value(QStringLiteral("timestampMs")).toVariant().toLongLong(), 12345LL);
   QCOMPARE(r.cmd.value(QStringLiteral("schemaVersion")).toString(), QStringLiteral("1.2.0"));
   QCOMPARE(r.cmd.value(QStringLiteral("seq")).toInt(), 11);
@@ -47,7 +48,7 @@ void TestMqttControlEnvelope::prepareForSend_rejects_empty_vin() {
   QJsonObject in;
   in[QStringLiteral("type")] = QStringLiteral("x");
   uint32_t seq = 0;
-  const auto r = prepareForSend(in, QString(), 1LL, seq);
+  const auto r = prepareForSend(in, QString(), QString(), 1LL, seq);
   QVERIFY(!r.ok);
 }
 
@@ -56,7 +57,7 @@ void TestMqttControlEnvelope::prepareForSend_preserves_existing_seq_no_extra_inc
   in[QStringLiteral("vin")] = QStringLiteral("V1");
   in[QStringLiteral("seq")] = 99;
   uint32_t seq = 5;
-  const auto r = prepareForSend(in, QString(), 1LL, seq);
+  const auto r = prepareForSend(in, QString(), QString(), 1LL, seq);
   QVERIFY(r.ok);
   QCOMPARE(r.cmd.value(QStringLiteral("seq")).toInt(), 99);
   QCOMPARE(seq, 5u);

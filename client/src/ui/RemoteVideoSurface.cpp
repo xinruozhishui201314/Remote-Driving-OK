@@ -1,6 +1,6 @@
 #include "RemoteVideoSurface.h"
 
-#include "Nv12DmaBufQsg.h"
+#include <adapters/media/Nv12DmaBufQsg.h>
 
 #include "core/eventbus.h"
 #include "core/metricscollector.h"
@@ -209,10 +209,10 @@ RemoteVideoSurface::RemoteVideoSurface(QQuickItem *parent) : QQuickItem(parent) 
   setAntialiasing(false);
 }
 
-void RemoteVideoSurface::setFillMode(int mode) {
-  if (m_fillMode == mode)
+void RemoteVideoSurface::setFillMode(FillMode mode) {
+  if (m_fillMode == static_cast<int>(mode))
     return;
-  m_fillMode = mode;
+  m_fillMode = static_cast<int>(mode);
   emit fillModeChanged();
   update();
 }
@@ -349,6 +349,24 @@ void RemoteVideoSurface::applyCpuRgba8888Frame(CpuVideoRgba8888Frame cpuFrame, q
   commitCpuTextureFrame(std::move(im), frameId, streamTag);
 }
 
+void RemoteVideoSurface::pushFrameDirect(QImage image, quint64 frameId,
+                                         const QString &streamTag) {
+  {
+    QMutexLocker lock(&m_mutex);
+    if (!streamTag.isEmpty())
+      m_streamTag = streamTag;
+    m_presentMode = RemotePresentMode::CpuTexture;
+    m_dmaDisplay.reset();
+    m_frame = std::move(image);
+    m_lastFrameId = frameId;
+    m_hasPendingFrame = true;
+    m_lastSize = m_frame.size();
+  }
+  // 注意：虽然数据已更新，但仍需在主线程触发 repaint。
+  // QMetaObject::invokeMethod 确保在主线程执行 update()，这比信号槽传递 QImage 快得多。
+  QMetaObject::invokeMethod(this, "update", Qt::QueuedConnection);
+}
+
 QRectF RemoteVideoSurface::mapSourceSizeToRect(const QSize &sourceSize) const {
   const QRectF br = boundingRect();
   if (!br.isValid() || br.width() <= 0 || br.height() <= 0)
@@ -359,12 +377,13 @@ QRectF RemoteVideoSurface::mapSourceSizeToRect(const QSize &sourceSize) const {
   if (iw <= 0 || ih <= 0)
     return br;
 
-  if (m_fillMode == 0) {
+  if (m_fillMode == 0) { // Stretch
     return br;
   }
   const qreal sx = br.width() / iw;
   const qreal sy = br.height() / ih;
-  const qreal scale = qMax(sx, sy);
+  // m_fillMode == 1 (Crop) → qMax; m_fillMode == 2 (Fit) → qMin
+  const qreal scale = (m_fillMode == 1) ? qMax(sx, sy) : qMin(sx, sy);
   const qreal dw = iw * scale;
   const qreal dh = ih * scale;
   const qreal x = br.x() + (br.width() - dw) * 0.5;

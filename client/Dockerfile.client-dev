@@ -75,9 +75,13 @@ RUN apt-get update \
         libva-dev \
         libva-drm2 \
         libdrm-dev \
+        libxkbcommon-dev \
         python3-pip \
         curl \
         unzip \
+        flatbuffers-compiler \
+        libflatbuffers-dev \
+        libssl-dev \
     && rm -rf /var/lib/apt/lists/* \
     && fc-cache -fv
 
@@ -85,15 +89,32 @@ RUN apt-get update \
 ARG AQT_BASE=
 ARG QT_DESKTOP_VERSION=6.8.0
 ARG QT_DESKTOP_ARCH=linux_gcc_64
+
+# 从源码构建并安装 paho.mqtt.c 和 paho.mqtt.cpp
+COPY deps/paho.mqtt.cpp /tmp/paho.mqtt.cpp
+RUN set -eux; \
+    mkdir -p /tmp/paho.mqtt.cpp/externals/paho.mqtt.c/build; \
+    cd /tmp/paho.mqtt.cpp/externals/paho.mqtt.c/build; \
+    cmake .. -DPAHO_WITH_SSL=ON -DPAHO_BUILD_STATIC=OFF -DPAHO_BUILD_SHARED=ON -DCMAKE_BUILD_TYPE=Release; \
+    make -j$(nproc); \
+    make install; \
+    mkdir -p /tmp/paho.mqtt.cpp/build; \
+    cd /tmp/paho.mqtt.cpp/build; \
+    cmake .. -DPAHO_WITH_SSL=ON -DPAHO_BUILD_SHARED=ON -DPAHO_BUILD_STATIC=OFF -DPAHO_BUILD_SAMPLES=OFF -DCMAKE_BUILD_TYPE=Release; \
+    make -j$(nproc); \
+    make install; \
+    ldconfig; \
+    rm -rf /tmp/paho.mqtt.cpp
+
 RUN set -eux; \
     if [ -n "${AQT_BASE}" ]; then \
         aqt install-qt -b "${AQT_BASE}" -O /opt/Qt \
             linux desktop "${QT_DESKTOP_VERSION}" "${QT_DESKTOP_ARCH}" \
-            -m qtshadertools -m qtmultimedia; \
+            -m qtshadertools -m qtmultimedia -m qtwebsockets -m qtquickcontrols2; \
     else \
         aqt install-qt -O /opt/Qt \
             linux desktop "${QT_DESKTOP_VERSION}" "${QT_DESKTOP_ARCH}" \
-            -m qtshadertools -m qtmultimedia; \
+            -m qtshadertools -m qtmultimedia -m qtwebsockets -m qtquickcontrols2; \
     fi; \
     test -x "/opt/Qt/${QT_DESKTOP_VERSION}/gcc_64/bin/qsb"; \
     echo "✓ qsb + Qt Multimedia -> /opt/Qt/${QT_DESKTOP_VERSION}/gcc_64"; \

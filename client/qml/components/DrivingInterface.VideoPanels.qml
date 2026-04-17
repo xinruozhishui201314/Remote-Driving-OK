@@ -218,7 +218,7 @@ Rectangle {
                     id: videoOutSide
                     anchors.fill: parent
                     z: 5
-                    fillMode: 1
+                    fillMode: RemoteVideoSurface.PreserveAspectCrop
                     panelLabel: drivingVideoPanelRoot.title
                     Component.onCompleted: drivingVideoPanelRoot.rebindSidePanelVideoOutput()
                     onWidthChanged: {

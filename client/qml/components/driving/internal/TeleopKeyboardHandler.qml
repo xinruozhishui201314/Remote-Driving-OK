@@ -56,7 +56,7 @@ Item {
         if (++_unhandledKeyLogCount === 1 || _unhandledKeyLogCount % 30 === 0)
             console.log("[Client][UI][Teleop][KEY][unhandled] key=" + event.key
                         + " text=" + (event.text ? JSON.stringify(event.text) : "")
-                        + "（WASD:W/S 车速 A/← 左转 → 右转；D=前进档非右转；已节流 count=" + _unhandledKeyLogCount + "）")
+                        + "（WASD:W/S 车速 A/D 转向；1-4: P/R/N/D 档；已节流 count=" + _unhandledKeyLogCount + "）")
     }
 
     // ── 游戏模式按键状态 ──
@@ -85,27 +85,27 @@ Item {
         var handled = false
         switch (event.key) {
         // 档位控制 (点按)
-        case Qt.Key_P:
-        case Qt.Key_N:
-        case Qt.Key_R:
-        case Qt.Key_D:
+        case Qt.Key_1:
+        case Qt.Key_2:
+        case Qt.Key_3:
+        case Qt.Key_4:
             handled = true
             if (!_remoteTeleopOk()) {
                 _logTeleopBlocked("远驾未接管：忽略档位键（请先点「远驾接管」并等车端确认）")
                 break
             }
-            if (event.key === Qt.Key_P) {
+            if (event.key === Qt.Key_1) {
                 teleop.currentGear = "P"
                 _logKey("DOWN", "GEAR_P")
-            } else if (event.key === Qt.Key_N) {
-                teleop.currentGear = "N"
-                _logKey("DOWN", "GEAR_N")
-            } else if (event.key === Qt.Key_R) {
+            } else if (event.key === Qt.Key_2) {
                 teleop.currentGear = "R"
                 _logKey("DOWN", "GEAR_R")
+            } else if (event.key === Qt.Key_3) {
+                teleop.currentGear = "N"
+                _logKey("DOWN", "GEAR_N")
             } else {
                 teleop.currentGear = "D"
-                _logKey("DOWN", "GEAR_D (Reminder: This is FORWARD GEAR, not RIGHT TURN)")
+                _logKey("DOWN", "GEAR_D")
             }
             break
 
@@ -162,6 +162,9 @@ Item {
             if (!_keyUp) {
                 _keyUp = true
                 _logKey("DOWN", event.key === Qt.Key_W ? "W_ACCEL" : "ARROW_UP_ACCEL")
+                
+                // [Fix] 立即增加一个步长，确保“点按”也能有效增加速度
+                teleop.targetSpeed = Math.min(100, teleop.targetSpeed + (_speedStep * 0.02))
             }
             break
         case Qt.Key_S:
@@ -174,6 +177,9 @@ Item {
             if (!_keyDown) {
                 _keyDown = true
                 _logKey("DOWN", event.key === Qt.Key_S ? "S_BRAKE" : "ARROW_DOWN_BRAKE")
+                
+                // [Fix] 立即减少一个步长，确保“点按”也能有效减少速度
+                teleop.targetSpeed = Math.max(0, teleop.targetSpeed - (_speedStep * 0.02))
             }
             break
         case Qt.Key_A:
@@ -188,7 +194,7 @@ Item {
                 _logKey("DOWN", event.key === Qt.Key_A ? "A_LEFT" : "ARROW_LEFT")
             }
             break
-        // 注意：Qt.Key_D 仅用于前进档（见上），右转只用方向键 →
+        case Qt.Key_D:
         case Qt.Key_Right:
             handled = true
             if (!_remoteTeleopOk()) {
@@ -197,7 +203,7 @@ Item {
             }
             if (!_keyRight) {
                 _keyRight = true
-                _logKey("DOWN", "ARROW_RIGHT")
+                _logKey("DOWN", event.key === Qt.Key_D ? "D_RIGHT" : "ARROW_RIGHT")
             }
             break
         }
@@ -258,11 +264,21 @@ Item {
             }
             root._syncKeyboardLatchFlags()
             gameControlTimer.telemetryTick++
+            
+            // ★ 核心修复：定时上报操作员活跃度，解决长按按键时由于 isAutoRepeat 过滤导致的 Deadman 超时，
+            // 且与控制环 pingSafety 脱钩，确保 watchdog uiActive 逻辑正确。
+            var sm = (facade && facade.appServices) ? facade.appServices.safetyMonitor : null
+            if (sm && typeof sm.notifyOperatorActivity === "function") {
+                if (gameControlTimer.telemetryTick % 25 === 0) // 500ms 一次活跃度上报
+                    sm.notifyOperatorActivity()
+            }
+
             var dt = interval / 1000.0
             var changed = false
 
             // 1. 处理目标车速 (W/S)
             var oldSpd = teleop.targetSpeed
+            // [Fix] 即使按键已松开，如果目标速度仍 > 0.1，也要维持控制循环以发送维持指令
             if (_keyUp) {
                 teleop.targetSpeed = Math.min(100, teleop.targetSpeed + _speedStep * dt)
                 changed = true
@@ -294,7 +310,7 @@ Item {
             }
 
             if (root._trace && (gameControlTimer.telemetryTick % 10 === 0)) {
-                if (changed || Math.abs(currentSteer) > 0.001) {
+                if (changed || Math.abs(currentSteer) > 0.001 || teleop.targetSpeed > 0.1) {
                      console.log("[Client][UI][Teleop][CALC] tick=" + gameControlTimer.telemetryTick 
                                  + " steer=" + oldSteer.toFixed(3) + "->" + currentSteer.toFixed(3)
                                  + " speed=" + oldSpd.toFixed(1) + "->" + teleop.targetSpeed.toFixed(1)
@@ -303,46 +319,48 @@ Item {
                 }
             }
 
-            if (changed) {
-                teleop.steeringAngle = currentSteer * 100.0
+            // [SystemicFix] 发送逻辑：
+            // 只要在运行，就更新 steeringAngle（确保自动回正生效）
+            teleop.steeringAngle = currentSteer * 100.0
 
-                // 发送控制指令 (模拟滑块操作)
-                var vc = (facade && facade.appServices) ? facade.appServices.vehicleControl : null
-                if (vc) {
-                    // 同步发送：转向 (normalized), 目标速度指令
-                    // 约定：减至 0 后触发物理刹车 (给 0.5 刹车量以确保停止并防止溜坡)
-                    var physicalBrake = (teleop.targetSpeed <= 0.01) ? 0.5 : 0.0
-                    vc.sendDriveCommand(currentSteer, 0, physicalBrake) // 这里不给手动油门，依靠 Bridge 的速度 PID
-                    
-                    // ★ 改进：即使只在转向，也定期发送 speed 指令确保车端 PID 存活且目标速一致
-                    if (_keyUp || _keyDown || (gameControlTimer.telemetryTick % 25 === 0 && teleop.targetSpeed > 0.1)) {
-                        vc.sendUiCommand("speed", { value: teleop.targetSpeed })
+            var vc = (facade && facade.appServices) ? facade.appServices.vehicleControl : null
+            if (vc) {
+                // [Crucial] 即使 changed 为 false，只要目标速 > 0，也要确保 sendDriveCommand 被调用
+                // 以便 C++ Worker 维持最新的 InputState (尤其是 physicalBrake 状态)
+                // 约定：减至 0.1 以下后触发物理刹车 (给 0.5 刹车量以确保停止并防止溜坡)，与 Bridge PID 阈值对齐
+                var physicalBrake = (teleop.targetSpeed < 0.1) ? 0.5 : 0.0
+                
+                // 策略：有变化立即发，无变化则每 100ms (5 ticks) 重发一次确保状态一致性
+                if (changed || gameControlTimer.telemetryTick % 5 === 0) {
+                    if (root._trace && !changed) {
+                        console.log("[Client][UI][Teleop][SYNC] 周期性同步 drive 指令: spd=" + teleop.targetSpeed.toFixed(1))
                     }
+                    vc.sendDriveCommand(currentSteer, 0, physicalBrake)
+                }
+                
+                // 目标速度同步：按键按下时高频发，松开后每 500ms (25 ticks) 发一次心跳
+                if (_keyUp || _keyDown || (gameControlTimer.telemetryTick % 25 === 0 && teleop.targetSpeed > 0.1)) {
+                    if (root._trace && !_keyUp && !_keyDown) {
+                        console.log("[Client][UI][Teleop][SYNC] 周期性同步 speed 指令: target=" + teleop.targetSpeed.toFixed(1))
+                    }
+                    vc.sendUiCommand("speed", { value: teleop.targetSpeed })
+                }
 
-                    // ★ 增加空档误操作提醒
-                    if (teleop.currentGear === "N" && (teleop.targetSpeed > 0.1 || Math.abs(currentSteer) > 0.1)) {
-                        if (gameControlTimer.telemetryTick % 100 === 1) {
-                            console.warn("[Client][UI][Teleop] ⚠ 当前处于空档(N)，车辆无法行驶。按 D 键切换至前进档。")
-                        }
+                // ★ 增加空档误操作提醒
+                if (teleop.currentGear === "N" && (teleop.targetSpeed > 0.1 || Math.abs(currentSteer) > 0.1)) {
+                    if (gameControlTimer.telemetryTick % 100 === 1) {
+                        console.warn("[Client][UI][Teleop] ⚠ 当前处于空档(N)，车辆无法行驶。按 D 键切换至前进档。")
                     }
-                    if (root._trace && gameControlTimer.telemetryTick % 25 === 0) {
-                        var rep = (facade.appServices && facade.appServices.vehicleStatus)
-                                ? facade.appServices.vehicleStatus.speed : -1
-                        console.log("[Client][UI][Teleop][TICK] targetSpd=" + teleop.targetSpeed.toFixed(1)
-                                    + " reportedSpd=" + rep
-                                    + " steerNorm=" + currentSteer.toFixed(3)
-                                    + " keys=W" + (_keyUp ? "1" : "0") + "S" + (_keyDown ? "1" : "0")
-                                    + "A" + (_keyLeft ? "1" : "0") + "→" + (_keyRight ? "1" : "0"))
-                    }
-                } else if (root._trace && changed && gameControlTimer.telemetryTick % 50 === 0) {
-                    console.warn("[Client][UI][Teleop][TICK] changed but vehicleControl=null（无法 sendDriveCommand）")
                 }
             }
 
-            // 如果所有按键都松开且转向已归零，停止定时器
-            if (!_keyUp && !_keyDown && !_keyLeft && !_keyRight && Math.abs(currentSteer) < 0.001) {
+            // 如果所有按键都松开、转向已归零、且目标速度已归零，停止定时器
+            if (!_keyUp && !_keyDown && !_keyLeft && !_keyRight 
+                && Math.abs(currentSteer) < 0.001 
+                && teleop.targetSpeed < 0.1) {
+                
                 if (root._trace && gameControlTimer.running)
-                    console.log("[Client][UI][Teleop][TIMER] gameControlTimer stop (keys released, steer ~0)")
+                    console.log("[Client][UI][Teleop][TIMER] gameControlTimer stop (keys released, steer ~0, speed ~0)")
                 gameControlTimer.stop()
                 root._syncKeyboardLatchFlags()
             }

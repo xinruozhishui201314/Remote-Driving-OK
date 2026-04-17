@@ -129,6 +129,16 @@ if [ "${TELEOP_GPU_OPTIONAL:-0}" != "1" ] && [ "$DO_CLIENT" -eq 1 ]; then
     : "${TELEOP_REQUIRE_HW_GL:=1}"
 fi
 
+# 检查 Docker 是否注册了 nvidia runtime（用于 CARLA 仿真，docker-compose.carla.yml 依赖此名称）
+# 若未注册且未设 CARLA_NO_GPU=1，自动降级为 nogpu 模式并给出警告
+if [ "${SKIP_CARLA:-0}" != "1" ] && [ "${CARLA_NO_GPU:-0}" != "1" ]; then
+    if ! docker info 2>/dev/null | grep -i "Runtimes:" | grep -qi "nvidia"; then
+        echo -e "${YELLOW}警告: Docker 未注册 nvidia runtime，CARLA 容器将降级为无 GPU 模式 (CARLA_NO_GPU=1)${NC}"
+        echo -e "      提示: 若需 GPU 仿真，请运行: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+        export CARLA_NO_GPU=1
+    fi
+fi
+
 # 与 start-all-nodes.sh 一致：dev backend 宿主机 8081；CARLA 为第四文件（可选 nogpu 覆盖）
 dc_main() {
   local nvidia=()
@@ -678,7 +688,7 @@ ensure_client_mosquitto_pub() {
     fi
     # 现成镜像未预装时，在容器内运行时安装一次（不重建镜像）
     echo -e "${YELLOW}容器内未检测到 mosquitto_pub，正在安装 mosquitto-clients...${NC}"
-    if dc_main exec -T -u root client-dev bash -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends mosquitto-clients && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+    if dc_main exec -T -u root client-dev bash -c 'sed -i "s@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list && sed -i "s/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g" /etc/apt/sources.list && apt-get update -qq && apt-get install -y -qq --no-install-recommends mosquitto-clients && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
         if dc_main exec -T client-dev bash -c 'command -v mosquitto_pub >/dev/null 2>&1' 2>/dev/null; then
             echo -e "${GREEN}✓${NC} mosquitto_pub 已安装并可用"
             return 0
@@ -698,7 +708,7 @@ ensure_client_libgl_mesa_dev() {
     fi
     echo -e "${YELLOW}容器内未检测到 GL/gl.h，正在安装 libgl1-mesa-dev...${NC}"
     if dc_main exec -T -u root client-dev bash -c \
-        'apt-get update -qq && apt-get install -y -qq --no-install-recommends libgl1-mesa-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        'sed -i "s@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list && sed -i "s/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g" /etc/apt/sources.list && apt-get update -qq && apt-get install -y -qq --no-install-recommends libgl1-mesa-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
         if dc_main exec -T client-dev bash -c 'test -f /usr/include/GL/gl.h' 2>/dev/null; then
             echo -e "${GREEN}✓${NC} libgl1-mesa-dev 已安装，GL/gl.h 可用"
             return 0
@@ -718,7 +728,7 @@ ensure_client_mesa_utils() {
     fi
     echo -e "${YELLOW}容器内未检测到 glxinfo（mesa-utils），正在以 root 安装 mesa-utils...${NC}"
     if dc_main exec -T -u root client-dev bash -c \
-        'apt-get update -qq && apt-get install -y -qq --no-install-recommends mesa-utils && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        'sed -i "s@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list && sed -i "s/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g" /etc/apt/sources.list && apt-get update -qq && apt-get install -y -qq --no-install-recommends mesa-utils && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
         if dc_main exec -T client-dev bash -c 'command -v glxinfo >/dev/null 2>&1' 2>/dev/null; then
             echo -e "${GREEN}✓${NC} mesa-utils 已安装，glxinfo 可用"
             return 0
@@ -1395,6 +1405,65 @@ verify_client_container_health() {
     return 0
 }
 
+# ---------- 确保 client-dev 内已安装 FlatBuffers（用于协议解析）----------
+ensure_client_flatbuffers() {
+    if dc_main exec -T client-dev bash -c 'command -v flatc >/dev/null 2>&1 && test -f /usr/include/flatbuffers/flatbuffers.h' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} FlatBuffers 已安装（flatc + headers）"
+        return 0
+    fi
+    echo -e "${YELLOW}容器内未检测到 FlatBuffers，正在安装 flatbuffers-compiler libflatbuffers-dev...${NC}"
+    if dc_main exec -T -u root client-dev bash -c \
+        'apt-get update -qq && apt-get install -y -qq --no-install-recommends flatbuffers-compiler libflatbuffers-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        if dc_main exec -T client-dev bash -c 'command -v flatc >/dev/null 2>&1' 2>/dev/null; then
+            echo -e "${GREEN}✓${NC} FlatBuffers 安装成功"
+            return 0
+        fi
+    fi
+    echo -e "${RED}✗${NC} FlatBuffers 安装失败，客户端编译将失败"
+    echo ""
+    return 1
+}
+
+# ---------- 确保 client-dev 内已安装 Paho MQTT C++（用于 MQTT 通信）----------
+ensure_client_paho_mqtt() {
+    # 检查是否已安装到 /usr/local 或 /usr
+    if dc_main exec -T client-dev bash -c 'test -f /usr/local/include/mqtt/async_client.h || test -f /usr/include/mqtt/async_client.h' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC} Paho MQTT C++ 已安装"
+        return 0
+    fi
+    
+    echo -e "${YELLOW}容器内未检测到 Paho MQTT C++，将尝试从 deps/ 源码构建安装（耗时较长）...${NC}"
+    if dc_main exec -T -u root client-dev bash -c "
+        set -e
+        # 安装编译依赖
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends libssl-dev cmake build-essential
+        
+        # 创建临时构建目录（避免宿主挂载的 read-only 限制）
+        rm -rf /tmp/paho-c-build /tmp/paho-cpp-build
+        mkdir -p /tmp/paho-c-build /tmp/paho-cpp-build
+        
+        # 1. 构建 paho.mqtt.c
+        cd /tmp/paho-c-build
+        cmake /workspace/deps/paho.mqtt.cpp/externals/paho.mqtt.c \
+            -DPAHO_WITH_SSL=ON -DPAHO_BUILD_STATIC=OFF -DPAHO_BUILD_SHARED=ON -DCMAKE_BUILD_TYPE=Release
+        make -j$(nproc) install
+        
+        # 2. 构建 paho.mqtt.cpp
+        cd /tmp/paho-cpp-build
+        cmake /workspace/deps/paho.mqtt.cpp \
+            -DPAHO_WITH_SSL=ON -DPAHO_BUILD_SHARED=ON -DPAHO_BUILD_STATIC=OFF -DPAHO_BUILD_SAMPLES=OFF -DCMAKE_BUILD_TYPE=Release
+        make -j$(nproc) install
+        
+        ldconfig
+        echo '✓ Paho MQTT C++ 构建安装完成'
+    " 2>&1; then
+        echo -e "${GREEN}✓ Paho MQTT C++ 安装成功${NC}"
+        return 0
+    fi
+    echo -e "${RED}✗${NC} Paho MQTT C++ 自动安装失败，MQTT 功能将受限"
+    return 0 # 允许继续，CMakeLists 只是 WARNING
+}
+
 # ---------- 确保 client-dev 内已安装 Qt6 Multimedia + MultimediaQuick（CMake find_package 必需）----------
 # 检测 Qt6MultimediaConfig.cmake；缺失时在容器内用 aqt 安装 qtmultimedia（与 ensure_qsb 相同 aqt 流程）
 ensure_qt_multimedia_in_container() {
@@ -1421,11 +1490,11 @@ ensure_qt_multimedia_in_container() {
         AQT_ARCH='${AQT_ARCH}'
 
         if ! command -v pip3 &>/dev/null; then
-            apt-get update -qq
+            sed -i 's@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list && sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && apt-get update -qq
             apt-get install -y --no-install-recommends python3-pip 2>&1 | tail -1
             rm -rf /var/lib/apt/lists/partial
         fi
-        apt-get update -qq
+        sed -i 's@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list && sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && apt-get update -qq
         apt-get install -y --no-install-recommends python3-dev build-essential 2>&1 | tail -1
         rm -rf /var/lib/apt/lists/partial
 
@@ -1437,8 +1506,9 @@ ensure_qt_multimedia_in_container() {
             aqt list-qt linux desktop --modules \"\$QT_VER\" linux_gcc_64 2>&1 || true
         fi
 
-        echo '安装 qtmultimedia 模块（Multimedia + MultimediaQuick）...'
-        aqt install-qt -O /opt/Qt linux desktop \"\$QT_VER\" \"\$AQT_ARCH\" -m qtmultimedia 2>&1 | tail -8
+        echo '安装 qtmultimedia 模块（Multimedia + MultimediaQuick）以及 WebSockets, QuickControls2...'
+        aqt install-qt -O /opt/Qt linux desktop \"\$QT_VER\" \"\$AQT_ARCH\" \
+            -m qtmultimedia -m qtwebsockets -m qtquickcontrols2 2>&1 | tail -8
 
         pip3 uninstall -y aqtinstall pyzstd brotli py7zr pybcj psutil 2>/dev/null || true
 
@@ -1474,11 +1544,11 @@ ensure_qsb_in_container() {
 
         # 安装 pip + 编译工具（pyzstd 是 C 扩展，pip install aqtinstall 依赖它，缺少 python3-dev + build-essential 会导致 wheel 构建失败）
         if ! command -v pip3 &>/dev/null; then
-            apt-get update -qq
+            sed -i 's@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list && sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && apt-get update -qq
             apt-get install -y --no-install-recommends python3-pip 2>&1 | tail -1
             rm -rf /var/lib/apt/lists/partial
         fi
-        apt-get update -qq
+        sed -i 's@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g' /etc/apt/sources.list && sed -i 's/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list && apt-get update -qq
         apt-get install -y --no-install-recommends python3-dev build-essential 2>&1 | tail -1
         rm -rf /var/lib/apt/lists/partial
 
@@ -1487,10 +1557,10 @@ ensure_qsb_in_container() {
 
         # 通过 aqt 追加安装 qtshadertools 模块（含 qsb 工具）
         # 关键参数：linux desktop + linux_gcc_64（不是 gcc_64）+ -m qtshadertools
-        echo '安装 qtshadertools 模块（包含 qsb）...'
+        echo '安装 qtshadertools, qtwebsockets, qtquickcontrols2 模块...'
         aqt install-qt -O /opt/Qt \
             linux desktop 6.8.0 linux_gcc_64 \
-            -m qtshadertools 2>&1 | tail -3
+            -m qtshadertools -m qtwebsockets -m qtquickcontrols2 2>&1 | tail -3
 
         # 清理 aqt 及 pip（节省镜像层空间）
         pip3 uninstall -y aqtinstall pyzstd brotli py7zr pybcj psutil 2>/dev/null || true
@@ -1512,13 +1582,13 @@ ensure_qsb_in_container() {
 
 # ---------- 确保 client-dev 内有 libxkbcommon-dev（Qt6Gui 依赖 XKB::XKB CMake 目标）----------
 ensure_client_libxkbcommon_dev() {
-    if dc_main exec -T client-dev bash -c 'test -f /usr/include/xkbcommon/xkbcommon.h' 2>/dev/null; then
+    if dc_main exec -T client-dev bash -c 'pkg-config --exists libxkbcommon' 2>/dev/null; then
         echo -e "${GREEN}✓${NC} libxkbcommon-dev 已存在（XKB::XKB CMake 目标可用）"
         return 0
     fi
-    echo -e "${YELLOW}容器内未检测到 libxkbcommon-dev，正在安装...${NC}"
+    echo -e "${YELLOW}容器内未检测到 libxkbcommon-dev (或缺失 .pc 文件)，正在安装...${NC}"
     if dc_main exec -T -u root client-dev bash -c \
-        'apt-get update -qq && apt-get install -y -qq --no-install-recommends libxkbcommon-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        'sed -i "s@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list && sed -i "s/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g" /etc/apt/sources.list && apt-get update -qq && apt-get install -y -qq --no-install-recommends libxkbcommon-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
         if dc_main exec -T client-dev bash -c 'test -f /usr/include/xkbcommon/xkbcommon.h' 2>/dev/null; then
             echo -e "${GREEN}✓${NC} libxkbcommon-dev 已安装，XKB::XKB CMake 目标可用"
             return 0
@@ -1538,7 +1608,7 @@ ensure_client_hw_decode_deps() {
     fi
     echo -e "${YELLOW}容器内未检测到硬件解码依赖，正在安装 libva-dev libdrm-dev...${NC}"
     if dc_main exec -T -u root client-dev bash -c \
-        'apt-get update -qq && apt-get install -y -qq --no-install-recommends libva-dev libdrm-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        'sed -i "s@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list && sed -i "s/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g" /etc/apt/sources.list && apt-get update -qq && apt-get install -y -qq --no-install-recommends libva-dev libdrm-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
         if dc_main exec -T client-dev bash -c 'pkg-config --exists libva libva-drm libdrm' 2>/dev/null; then
             echo -e "${GREEN}✓${NC} 硬件解码依赖已安装"
             return 0
@@ -1565,7 +1635,7 @@ ensure_client_libpulse() {
     fi
     echo -e "${YELLOW}容器内未检测到 libpulse（libpulse.so.0），正在安装 libpulse0 libpulse-dev...${NC}"
     if dc_main exec -T -u root client-dev bash -c \
-        'apt-get update -qq && apt-get install -y -qq --no-install-recommends libpulse0 libpulse-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
+        'sed -i "s@//.*archive.ubuntu.com@//mirrors.tuna.tsinghua.edu.cn@g" /etc/apt/sources.list && sed -i "s/security.ubuntu.com/mirrors.tuna.tsinghua.edu.cn/g" /etc/apt/sources.list && apt-get update -qq && apt-get install -y -qq --no-install-recommends libpulse0 libpulse-dev && rm -rf /var/lib/apt/lists/*' 2>/dev/null; then
         if dc_main exec -T client-dev bash -c '
             for f in /lib/x86_64-linux-gnu/libpulse.so.0 /usr/lib/x86_64-linux-gnu/libpulse.so.0 \
                      /lib/aarch64-linux-gnu/libpulse.so.0 /usr/lib/aarch64-linux-gnu/libpulse.so.0; do
@@ -1607,7 +1677,9 @@ ensure_client_built() {
         BT="${TELEOP_CLIENT_CMAKE_BUILD_TYPE:-Debug}"
         mkdir -p /tmp/client-build && cd /tmp/client-build
         echo "配置 CMake..."
-        cmake /workspace/client -DCMAKE_PREFIX_PATH=/opt/Qt/6.8.0/gcc_64:/opt/libdatachannel -DCMAKE_BUILD_TYPE="${BT}"
+        cmake /workspace/client \
+            -DCMAKE_PREFIX_PATH="/opt/Qt/6.8.0/gcc_64;/opt/libdatachannel;/usr/local;/usr" \
+            -DCMAKE_BUILD_TYPE="${BT}"
         echo "编译客户端 (make -j${JOBS})..."
         make -j"${JOBS}"
         if [ ! -x ./RemoteDrivingClient ]; then
@@ -1869,11 +1941,18 @@ if [ "$DO_VERIFY" -eq 1 ] || [ "$DO_CLIENT" -eq 1 ]; then
     ensure_client_libxkbcommon_dev
     ensure_client_libpulse
     ensure_client_hw_decode_deps
+    ensure_client_flatbuffers
+    ensure_client_paho_mqtt
     ensure_qt_multimedia_in_container
     ensure_qsb_in_container
     
     # 强制编译客户端（如果设置了 no-build，则跳过编译，客户端启动时自动编译）
     if [ "$DO_BUILD" -eq 1 ]; then
+        # 在编译前运行 QML 静态检查，避免带病上线
+        bash "$SCRIPT_DIR/verify-qml-lint.sh" || {
+            echo -e "${RED}❌ QML 静态检查失败，请修复上述错误后再编译。${NC}"
+            exit 1
+        }
         ensure_client_built  # 编译失败会直接退出（set -e）
     else
         echo -e "${YELLOW}跳过客户端编译步骤（no-build 模式），客户端将在启动时自动编译${NC}"

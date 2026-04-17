@@ -53,6 +53,13 @@ class IInputDevice : public QObject {
   virtual void shutdown() = 0;
   virtual DeviceType type() const = 0;
   virtual InputState poll() = 0;
+
+  /**
+   * 同步状态到硬件设备（如 UI 修改了档位，需通知设备以防下次 poll 时被旧状态覆盖）。
+   * 2025/2026 规范：用于解决 UI 指令与硬件采样冲突的根因修复。
+   */
+  virtual void syncState(const InputState& /*state*/) {}
+
   virtual void setForceFeedback(const ForceFeedbackEffect& effect) = 0;
   virtual DeviceCapabilities capabilities() const = 0;
 

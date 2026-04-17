@@ -112,7 +112,7 @@ Rectangle {
                         facade.appServices.mqttController.requestStreamStart()
                         var wsm = facade.appServices.webrtcStreamManager
                         if (wsm && wsm.scheduleConnectFourStreamsWhenZlmReady !== undefined) {
-                            wsm.scheduleConnectFourStreamsWhenZlmReady(lw || "", 1000, 45000)
+                            wsm.scheduleConnectFourStreamsWhenZlmReady(lw || "", 1000, 60000)
                             console.log("[Client][UI][Connect] 环节: 已启动 ZLM 四路就绪轮询 → connectFourStreams")
                         } else {
                             console.error("[Client][UI][Connect] webrtcStreamManager.scheduleConnectFourStreamsWhenZlmReady 不可用，回退 connectFourStreams")
@@ -210,6 +210,12 @@ Rectangle {
                         else ssmRc.fireByName("STOP_SESSION")
                     }
                     console.log("[Client][UI][RemoteControl] 发送 enable=" + newState + "（等待车端 status / MQTT 确认）")
+                    
+                    // ★ 核心修复：点击按钮后强制让 DrivingInterface 重新获得焦点，解决键盘控车因焦点丢失失效的问题
+                    if (facade) {
+                        facade.forceActiveFocus()
+                        console.log("[Client][UI][RemoteControl] 已强制 DrivingInterface 获得 activeFocus")
+                    }
                 }
             }
             
@@ -478,7 +484,7 @@ Rectangle {
                     var wsm2 = facade.appServices.webrtcStreamManager
                     console.warn("[Client][StreamE2E][QML_MQTT_CONNECTED] pendingConnectVideo→ZlmReady poll lastWhepUrl_len=" + String(lw2 || "").length)
                     if (wsm2 && wsm2.scheduleConnectFourStreamsWhenZlmReady !== undefined)
-                        wsm2.scheduleConnectFourStreamsWhenZlmReady(lw2 || "", 1000, 45000)
+                        wsm2.scheduleConnectFourStreamsWhenZlmReady(lw2 || "", 1000, 60000)
                     else if (wsm2)
                         wsm2.connectFourStreams(lw2 || "")
                 }

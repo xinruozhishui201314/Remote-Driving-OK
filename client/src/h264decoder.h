@@ -62,8 +62,16 @@ class H264Decoder : public QObject {
    */
   void releaseFrame(quint64 frameId);
 
+  /** v4 新增：标记槽位为「读取中」，防止解码线程回收 */
+  void markFrameReading(quint64 frameId);
+
   /** 诊断：获取当前帧池积压比例（0.0-1.0）；>0.5 表明主线程排队严重 */
   double poolPressure() const;
+
+  /** v4 新增：设置主线程排队延迟（ms），用于解码侧背压决策 */
+  void setMainThreadLag(int64_t lagMs) {
+    m_mainThreadLagMs.store(lagMs, std::memory_order_release);
+  }
 
   /**
    * WebRTC 硬解路径（VAAPI/NVDEC）：NV12→RGBA 完成后由此入口与软解共用帧池 / frameReady / 证据链。
@@ -270,6 +278,9 @@ class H264Decoder : public QObject {
   /** v4 新增：解码器跳帧策略审计 */
   int m_lastSkipFrame = -1;
   int m_lastSkipLoopFilter = -1;
+  std::atomic<int64_t> m_mainThreadLagMs{0};
+
+  int findIdleSlot() const;
 
   // ★ 诊断标签：用于区分四路解码器的日志（streamTag = cam_front/rear/left/right）
   QString m_streamTag;

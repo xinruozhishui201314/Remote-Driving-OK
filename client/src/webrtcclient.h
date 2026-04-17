@@ -93,6 +93,10 @@ class WebRtcClient : public QObject {
    * 否则为内部占位 sink。Qt 6 中 VideoOutput.videoSink 在 QML 侧只读，不可再赋值绑定。
    */
   Q_PROPERTY(QVideoSink *videoSink READ videoSink NOTIFY videoSinkChanged)
+  /**
+   * 绑定高性能呈现表面。支持 QML 声明式赋值：videoSurface: remoteSurface
+   */
+  Q_PROPERTY(QObject *videoSurface READ videoSurface WRITE setVideoSurface NOTIFY videoSurfaceChanged)
 
   Q_PROPERTY(bool videoFrozen READ videoFrozen NOTIFY videoFrozenChanged)
 
@@ -133,6 +137,10 @@ class WebRtcClient : public QObject {
 
   /** 诊断：已呈现帧像素尺寸（RemoteVideoSurface 或 QVideoSink::videoSize），无效则空 */
   Q_INVOKABLE QSize diagnosticPresentSize() const;
+
+  /** 获取/设置当前绑定的 RemoteVideoSurface */
+  QObject *videoSurface() const { return m_boundRemoteSurface.data(); }
+  void setVideoSurface(QObject *surface);
 
   /** 诊断：取回并清零上一秒累积的呈现统计（仅主线程调用；无 FFmpeg/WebRTC 时恒为零） */
   WebRtcPresentSecondStats drainPresentSecondStats();
@@ -182,6 +190,7 @@ class WebRtcClient : public QObject {
 
  signals:
   void videoSinkChanged();
+  void videoSurfaceChanged();
   void streamUrlChanged(const QString &url);
   void connectionStatusChanged(bool connected);
   /** libdatachannel：控制用 DataChannel 打开/关闭（供 MqttController 选路与 UI 提示） */
@@ -213,6 +222,7 @@ class WebRtcClient : public QObject {
   void onDecoderDecodeIntegrityAlert(const QString &code, const QString &detail,
                                      bool mitigationApplied, const QString &healthContractLine);
   void onPresentWorkerDeliveredFrame(QImage image, quint64 frameId);
+  void onPresentWorkerDirectPushDone(int width, int height, quint64 frameId);
   void onDecoderDmaBufFrameReady(SharedDmaBufFrame handle, quint64 frameId);
   /** 连接就绪后主动请求 H.264 单 slice，降低多路条状花屏概率（DataChannel 未开则短延迟重试） */
   void trySendProactiveEncoderDisplayContractHint();

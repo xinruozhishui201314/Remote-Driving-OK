@@ -8,6 +8,9 @@
 #       SKIP_VERIFY_CLIENT_SOURCE_MAP=1 跳过 client 单测名与 CLIENT_UNIT_TEST_SOURCE_MAP.md 一致性校验
 #       SKIP_VERIFY_CONTRACT_ARTIFACTS=0 时运行 ./scripts/verify-contract-artifacts.sh（默认 1：由 contract-ci 负责，避免本脚本强依赖 pip 拉包）
 #       SKIP_VERIFY_CARLA_WITH_CLIENT=0 启用客户端同步启动 CARLA 验证（默认 1 跳过，需 CARLA 镜像）
+#       SKIP_VERIFY_REGISTRY_DOCKER_PORT_SELFTEST=1 跳过 scripts/verify-registry-docker-port-contract.sh --selftest
+#       VERIFY_REGISTRY_DOCKER_PORT=1 且 REGISTRY_PROBE_HOST=<IP或域名> 时对 Harbor 做 443/80 契约探测（内网实验室）
+#       内网 Harbor 仅 HTTP:80 时推送：./scripts/docker-push-with-registry-probe.sh 192.168.2.10/proj/img:tag（先探测再自动 tag 为 :80 并 push）
 # 与 verify-add-vehicle-e2e 一致：三文件 compose（含 dev，Backend 宿主机 8081）。
 # Backend dev 首次/重建后需在容器内 CMake 编译，默认可等待较久：
 #   BACKEND_HEALTH_MAX_WAIT_SEC=1200 BACKEND_HEALTH_POLL_SEC=3
@@ -144,6 +147,45 @@ else
   log_skip "SKIP_VERIFY_CLIENT_SOURCE_MAP=1"
 fi
 
+# 0b1. Docker 镜像「无端口→默认 https:443」与仅 HTTP:80 的 Harbor 冲突类根因：脚本自测（无网络）
+if [ "${SKIP_VERIFY_REGISTRY_DOCKER_PORT_SELFTEST:-0}" != "1" ]; then
+  log_section "0b1/6 Registry Docker 端口契约（--selftest）"
+  if bash "${SCRIPT_DIR}/verify-registry-docker-port-contract.sh" --selftest 2>&1; then
+    log_ok "verify-registry-docker-port-contract.sh 自测通过"
+  else
+    log_fail "verify-registry-docker-port-contract.sh --selftest 失败"
+    FAILED=1
+  fi
+  if [ -f "${SCRIPT_DIR}/docker-push-with-registry-probe.sh" ]; then
+    if bash "${SCRIPT_DIR}/docker-push-with-registry-probe.sh" --selftest 2>&1; then
+      log_ok "docker-push-with-registry-probe.sh 自测通过"
+    else
+      log_fail "docker-push-with-registry-probe.sh --selftest 失败"
+      FAILED=1
+    fi
+  fi
+else
+  log_section "0b1/6 Registry Docker 端口契约（自测）"
+  log_skip "SKIP_VERIFY_REGISTRY_DOCKER_PORT_SELFTEST=1"
+fi
+
+# 0b2. 可选：对实际 Registry 探测 HTTPS:443 与 HTTP:/v2/（需 VERIFY_REGISTRY_DOCKER_PORT=1 与 REGISTRY_PROBE_HOST）
+if [ "${VERIFY_REGISTRY_DOCKER_PORT:-0}" = "1" ] && [ -n "${REGISTRY_PROBE_HOST:-}" ]; then
+  log_section "0b2/6 Registry Docker 端口契约（探测 REGISTRY_PROBE_HOST=${REGISTRY_PROBE_HOST}）"
+  _rp_out="$(mktemp)"
+  if bash "${SCRIPT_DIR}/verify-registry-docker-port-contract.sh" >"$_rp_out" 2>&1; then
+    cat "$_rp_out"
+    rm -f "$_rp_out"
+    log_ok "Registry 端口契约探测通过"
+  else
+    _rp_ec=$?
+    cat "$_rp_out"
+    rm -f "$_rp_out"
+    log_fail "verify-registry-docker-port-contract.sh 探测失败（exit ${_rp_ec}）：无端口的 ${REGISTRY_PROBE_HOST}/... 可能与 Docker 默认 443 不一致，见输出中 [ROOT_CAUSE]/[FIX]"
+    FAILED=1
+  fi
+fi
+
 if [ "${SKIP_VERIFY_CONTRACT_ARTIFACTS:-1}" != "1" ]; then
   log_section "0c/6 契约真源静态校验（verify-contract-artifacts.sh）"
   if bash "${SCRIPT_DIR}/verify-contract-artifacts.sh" 2>&1; then
@@ -218,6 +260,14 @@ if bash "${SCRIPT_DIR}/verify-driving-layout.sh" 2>&1; then
   log_ok "UI 布局验证通过"
 else
   log_fail "UI 布局验证失败"
+  FAILED=1
+fi
+
+log_section "2a1/6 QML 语法与类型检查 (verify-qml-lint.sh)"
+if bash "${SCRIPT_DIR}/verify-qml-lint.sh" 2>&1; then
+  log_ok "QML 语法静态检查通过"
+else
+  log_fail "QML 语法静态检查失败"
   FAILED=1
 fi
 

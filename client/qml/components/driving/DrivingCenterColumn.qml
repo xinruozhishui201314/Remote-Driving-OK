@@ -256,7 +256,7 @@ ColumnLayout {
                     id: frontVideoOut
                     anchors.fill: parent
                     z: 10
-                    fillMode: 1
+                    fillMode: RemoteVideoSurface.PreserveAspectCrop
                     panelLabel: "主视图"
                     Component.onCompleted: mainCameraView.rebindMainCameraVideoSink()
                     onWidthChanged: {
@@ -1430,10 +1430,14 @@ ColumnLayout {
                                         return
                                     }
                                     newSpeed = Math.max(0.0, Math.min(100.0, newSpeed))
-                                    facade.teleop.targetSpeed = newSpeed
-                                    text = facade.teleop.targetSpeed.toFixed(1)
                                     
-                                    console.log("[Client][UI][Speed] 新目标速度: " + facade.teleop.targetSpeed.toFixed(1) + " km/h")
+                                    // [SystemicFix] 仅在变化超过 0.05 时才更新，且只有在焦点消失后同步，消除 Binding Loop 抖动
+                                    if (Math.abs(facade.teleop.targetSpeed - newSpeed) > 0.05) {
+                                        facade.teleop.targetSpeed = newSpeed
+                                        console.log("[Client][UI][Speed] 新目标速度: " + facade.teleop.targetSpeed.toFixed(1) + " km/h")
+                                    }
+                                    
+                                    text = facade.teleop.targetSpeed.toFixed(1)
                                     
                                     if (facade.teleop.targetSpeed > 0.0) {
                                         facade.teleop.emergencyStopPressed = false
@@ -1456,16 +1460,8 @@ ColumnLayout {
                                     console.log("[Client][UI][Speed] ========================================")
                                 }
                                 
-                                onTextChanged: {
-                                    var num = parseFloat(text)
-                                    if (!isNaN(num)) {
-                                        facade.teleop.targetSpeed = Math.max(0.0, Math.min(100.0, num))
-                                        if (facade.teleop.targetSpeed > 0.0 && facade.teleop.emergencyStopPressed) {
-                                            facade.teleop.emergencyStopPressed = false
-                                            console.log("[Client][UI][Speed] [实时更新] 目标速度非0，急停按钮状态已重置")
-                                        }
-                                    }
-                                }
+                                // [Fix] 彻底移除 onTextChanged 以解决与键盘调速定时器的 Binding Loop 冲突
+                                // 目标速度的实时显示通过 text 属性的绑定实现
                                 }
                             }
                         }

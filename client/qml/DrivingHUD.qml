@@ -24,11 +24,11 @@ Item {
 
     function rebindHudVideoOutput() {
         if (_prevHudVideoBindClient && _prevHudVideoBindClient !== videoStreamClient) {
-            _prevHudVideoBindClient.bindVideoSurface(null)
+            _prevHudVideoBindClient.videoSurface = null
             _prevHudVideoBindClient = null
         }
         if (videoStreamClient && hudVideoOut) {
-            videoStreamClient.bindVideoSurface(hudVideoOut)
+            videoStreamClient.videoSurface = hudVideoOut
             _prevHudVideoBindClient = videoStreamClient
         }
     }
@@ -68,7 +68,7 @@ Item {
     RemoteVideoSurface {
         id: hudVideoOut
         anchors.fill: parent
-        fillMode: 1
+        fillMode: RemoteVideoSurface.PreserveAspectCrop
         panelLabel: "DrivingHUD"
         Component.onCompleted: root.rebindHudVideoOutput()
     }
@@ -274,6 +274,88 @@ Item {
             font.pixelSize: 20
             font.bold: true
             font.family: root.chineseFont
+        }
+    }
+
+    // ★ 架构级安全增强：输入链路静默检测（Watchdog）
+    // 解决：UI 键盘有操作（由 SafetyMonitor 捕获）但控制环数据持续为 0（采样器链路断开或焦点丢失）
+    Rectangle {
+        id: inputSilentOverlay
+        anchors.fill: parent
+        color: Qt.rgba(0.8, 0.3, 0.3, 0.9) // 醒目但透明的警告色
+        z: 10000 // 位于视频层之上
+        visible: (appServices.vehicleStatus.drivingMode === "远驾") && 
+                 (appServices.vehicleControl ? appServices.vehicleControl.inputLinkSilent : false)
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            spacing: 30
+            
+            Rectangle {
+                width: 100; height: 100; radius: 50
+                color: "white"
+                Layout.alignment: Qt.AlignHCenter
+                Text {
+                    anchors.centerIn: parent
+                    text: "⌨!"
+                    font.pixelSize: 50
+                    color: "#D32F2F"
+                }
+            }
+
+            Column {
+                Layout.alignment: Qt.AlignHCenter
+                spacing: 12
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "输入链路无响应"
+                    color: "white"
+                    font.pixelSize: 36
+                    font.bold: true
+                    font.family: root.chineseFont
+                }
+                Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: "检测到键盘操作未生效。请点击下方按钮恢复焦点，或检查网络与外设。"
+                    color: "#EEEEEE"
+                    font.pixelSize: 20
+                    font.family: root.chineseFont
+                }
+            }
+
+            Rectangle {
+                id: resumeFocusBtn
+                Layout.preferredWidth: 260
+                Layout.preferredHeight: 60
+                radius: 30
+                color: "white"
+                Layout.alignment: Qt.AlignHCenter
+                
+                Text {
+                    anchors.centerIn: parent
+                    text: "点击恢复控制焦点"
+                    color: "#D32F2F"
+                    font.pixelSize: 22
+                    font.bold: true
+                    font.family: root.chineseFont
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        root.forceActiveFocus()
+                        if (appServices && appServices.safetyMonitor && typeof appServices.safetyMonitor.notifyOperatorActivity === "function")
+                            appServices.safetyMonitor.notifyOperatorActivity()
+                        console.log("[Client][UI][Watchdog] 用户点击恢复焦点")
+                    }
+                }
+
+                SequentialAnimation on scale {
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 1.05; duration: 600; easing.type: Easing.InOutQuad }
+                    NumberAnimation { from: 1.05; to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
+                }
+            }
         }
     }
 

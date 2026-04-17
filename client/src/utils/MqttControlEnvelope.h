@@ -23,7 +23,7 @@ struct PrepareResult {
 
 /** 与 MqttController::sendControlCommand 一致：补 vin / timestampMs / seq，并校验 vin 非空。 */
 PrepareResult prepareForSend(const QJsonObject& command, const QString& currentVin,
-                             qint64 timestampMs, uint32_t& seqCounter);
+                             const QString& sessionId, qint64 timestampMs, uint32_t& seqCounter);
 
 QJsonObject buildSteering(double angle, qint64 timestampMs);
 QJsonObject buildThrottle(double throttle, qint64 timestampMs);

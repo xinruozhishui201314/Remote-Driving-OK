@@ -40,6 +40,8 @@ class VehicleStatus : public QObject {
   /** 可选：网络抖动（ms） */
   Q_PROPERTY(double networkJitterMs READ networkJitterMs NOTIFY networkJitterMsChanged)
   Q_PROPERTY(bool remoteControlEnabled READ remoteControlEnabled NOTIFY remoteControlEnabledChanged)
+  /** 车端视频推流是否真正就绪（由 carla-bridge 完成 spawn_cameras_and_start_pushers 后上报） */
+  Q_PROPERTY(bool streamingReady READ streamingReady NOTIFY streamingReadyChanged)
   Q_PROPERTY(QString drivingMode READ drivingMode NOTIFY drivingModeChanged)
   Q_PROPERTY(bool sweepActive READ sweepActive NOTIFY sweepActiveChanged)
   Q_PROPERTY(bool brakeActive READ brakeActive NOTIFY brakeActiveChanged)
@@ -69,6 +71,7 @@ class VehicleStatus : public QObject {
   double networkBandwidthKbps() const { return m_networkBandwidthKbps; }
   double networkJitterMs() const { return m_networkJitterMs; }
   bool remoteControlEnabled() const { return m_remoteControlEnabled; }
+  bool streamingReady() const { return m_streamingReady; }
   QString drivingMode() const { return m_drivingMode; }
   bool sweepActive() const { return m_sweepActive; }
   bool brakeActive() const { return m_brakeActive; }
@@ -94,6 +97,7 @@ class VehicleStatus : public QObject {
   void setNetworkBandwidthKbps(double kbps);
   void setNetworkJitterMs(double jitterMs);
   void setRemoteControlEnabled(bool enabled);
+  void setStreamingReady(bool ready);
   void setDrivingMode(const QString &mode);
   void setSweepActive(bool active);
   void setBrakeActive(bool active);
@@ -120,6 +124,7 @@ class VehicleStatus : public QObject {
   void networkBandwidthKbpsChanged(double kbps);
   void networkJitterMsChanged(double jitterMs);
   void remoteControlEnabledChanged(bool enabled);
+  void streamingReadyChanged(bool ready);
   void drivingModeChanged(const QString &mode);
   void sweepActiveChanged(bool active);
   void brakeActiveChanged(bool active);
@@ -145,6 +150,7 @@ class VehicleStatus : public QObject {
   double m_networkBandwidthKbps = 0.0;
   double m_networkJitterMs = 0.0;
   bool m_remoteControlEnabled = false;
+  bool m_streamingReady = false;
   QString m_drivingMode = "自驾";
   bool m_sweepActive = false;
   bool m_brakeActive = false;

@@ -5,7 +5,7 @@
 #include <QProcess>
 
 #ifdef ENABLE_VAAPI
-#include "VAAPIDecoder.h"
+#include <adapters/media/VAAPIDecoder.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <va/va.h>
@@ -13,11 +13,11 @@
 #endif
 
 #ifdef ENABLE_NVDEC
-#include "NvdecDecoder.h"
+#include <adapters/media/NvdecDecoder.h>
 #endif
 
 #ifdef ENABLE_FFMPEG
-#include "FFmpegSoftDecoder.h"
+#include <adapters/media/FFmpegSoftDecoder.h>
 #endif
 
 /**

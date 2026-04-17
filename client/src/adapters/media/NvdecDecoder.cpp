@@ -109,7 +109,15 @@ bool NvdecDecoder::initialize(const DecoderConfig& config) {
     m_impl->codecCtx->extradata_size = sz;
   }
 
-  const int openRet = avcodec_open2(m_impl->codecCtx, m_impl->codec, nullptr);
+  AVDictionary* opts = nullptr;
+  // 针对 NVIDIA CUVID 解码器的低延迟调优
+  av_dict_set(&opts, "low_delay", "1", 0);
+  av_dict_set(&opts, "delay", "0", 0);
+  av_dict_set(&opts, "threads", "1", 0);
+
+  const int openRet = avcodec_open2(m_impl->codecCtx, m_impl->codec, &opts);
+  av_dict_free(&opts);
+
   if (openRet < 0) {
     char errbuf[AV_ERROR_MAX_STRING_SIZE];
     av_strerror(openRet, errbuf, sizeof(errbuf));
@@ -143,6 +151,25 @@ void NvdecDecoder::shutdown() {
   av_buffer_unref(&m_impl->hwDeviceCtx);
   m_impl->initialized = false;
   qInfo() << "[Client][NvdecDecoder] shutdown";
+}
+
+bool NvdecDecoder::reconfigure(const DecoderConfig& config) {
+  if (!m_impl->initialized || !m_impl->codecCtx)
+    return false;
+
+  if (m_impl->codecCtx->width == config.width && m_impl->codecCtx->height == config.height) {
+    return true;
+  }
+
+  qInfo() << "[Client][HW-E2E][NVDEC][RECONF] dynamic resolution switch:"
+          << m_impl->codecCtx->width << "x" << m_impl->codecCtx->height << " -> " << config.width
+          << "x" << config.height;
+
+  avcodec_flush_buffers(m_impl->codecCtx);
+  m_impl->codecCtx->width = config.width;
+  m_impl->codecCtx->height = config.height;
+
+  return true;
 }
 
 DecodeResult NvdecDecoder::submitPacket(const uint8_t* data, size_t size, int64_t pts,

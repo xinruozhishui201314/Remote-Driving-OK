@@ -151,6 +151,16 @@ void MqttController::setCurrentVin(const QString &vin) {
   bumpControlChannelState();
 }
 
+void MqttController::setSessionId(const QString &id) {
+  {
+    std::lock_guard<std::mutex> lock(m_stateMutex);
+    if (m_sessionId == id) return;
+    m_sessionId = id;
+  }
+  qDebug() << "MQTT Controller: Session ID set to" << id.left(12);
+  emit sessionIdChanged(id);
+}
+
 void MqttController::connectToBroker() {
   if (m_isConnected) {
     qDebug() << "[CLIENT][MQTT][CHAIN] phase=SKIP already_connected url=" << m_brokerUrl;
@@ -346,10 +356,12 @@ void MqttController::sendLightCommand(const QString &lightType, bool active) {
 
 void MqttController::sendControlCommand(const QJsonObject &command) {
   QString vin;
+  QString sessionId;
   bool connected;
   {
     std::lock_guard<std::mutex> lock(m_stateMutex);
     vin = m_currentVin;
+    sessionId = m_sessionId;
     connected = m_isConnected;
   }
 
@@ -363,7 +375,7 @@ void MqttController::sendControlCommand(const QJsonObject &command) {
   }
 
   uint32_t seq = m_seq.fetch_add(1);
-  const auto prep = MqttControlEnvelope::prepareForSend(command, vin,
+  const auto prep = MqttControlEnvelope::prepareForSend(command, vin, sessionId,
                                                         QDateTime::currentMSecsSinceEpoch(), seq);
   if (!prep.ok) {
     return;
@@ -480,7 +492,22 @@ void MqttController::requestStreamStart() {
     emit errorOccurred(QStringLiteral("请先选择车辆后再连接视频（start_stream 需带 VIN）"));
     return;
   }
+
+  if (m_startStreamRequestedVin == m_currentVin) {
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (now - m_lastStartStreamTime < 15000) {
+      qInfo().noquote() << "[CLIENT][Control] [SKIP] 15s 内已为 VIN" << m_currentVin
+                       << "发送过 start_stream，忽略重复请求；如需重试请等待或点击 Stop";
+      return;
+    } else {
+      qInfo().noquote() << "[CLIENT][Control] [RETRY] 超过 15s 未就绪，允许重发 start_stream vin="
+                       << m_currentVin;
+    }
+  }
+
   sendControlCommand(MqttControlEnvelope::buildStartStream(QDateTime::currentMSecsSinceEpoch()));
+  m_startStreamRequestedVin = m_currentVin;
+  m_lastStartStreamTime = QDateTime::currentMSecsSinceEpoch();
   qInfo() << "[CLIENT][MQTT] start_stream 已提交（MQTT QoS1）；等待车端推流注册到 ZLM（通常数秒至数十秒）";
 }
 
@@ -494,6 +521,7 @@ void MqttController::requestStreamStop() {
     return;
   }
   sendControlCommand(MqttControlEnvelope::buildStopStream(QDateTime::currentMSecsSinceEpoch()));
+  m_startStreamRequestedVin.clear();
   qDebug() << "[CLIENT][MQTT] 已请求车端/仿真停止推流 stop_stream vin=" << m_currentVin;
 }
 
@@ -706,6 +734,7 @@ void MqttController::onConnected() {
         }
       }
 
+#ifndef ENABLE_MQTT_PAHO
       if (shouldLogMqttInboundMessage(s_mqttSubInboundSeq)) {
         qDebug() << "[MQTT] [mosquitto_sub] 收到消息，主题:" << topic << "大小:" << payload.size()
                  << "bytes";
@@ -714,6 +743,7 @@ void MqttController::onConnected() {
           qDebug() << "[GEAR] [MQTT] [mosquitto_sub] 消息包含档位信息";
         }
       }
+#endif
 
       // 调用消息处理函数
       onMessageReceived(topic.toUtf8(), payload.toUtf8());
@@ -775,6 +805,7 @@ void MqttController::onDisconnected() {
   qWarning().noquote() << "[CLIENT][MQTT][CHAIN] phase=BROKER_SESSION_DOWN vin=" << m_currentVin
                      << " url=" << m_brokerUrl << " → updateConnectionStatus(false)+scheduleReconnect";
   m_brokerConnectInFlight = false;
+  m_startStreamRequestedVin.clear();
   updateConnectionStatus(false);
   scheduleReconnect();
 }
@@ -834,6 +865,10 @@ void MqttController::onMessageReceived(const QByteArray &topic, const QByteArray
 
   if (error.error == QJsonParseError::NoError) {
     QJsonObject status = doc.object();
+
+    if (shouldLogMqttInboundMessage(s_mqttSubInboundSeq)) {
+        qDebug() << "[MQTT] 收到消息，主题:" << topic << "大小:" << payload.size() << "bytes";
+    }
 
     bool isAckMessage =
         status.contains("type") && status["type"].toString() == "remote_control_ack";

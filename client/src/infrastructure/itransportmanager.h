@@ -58,8 +58,11 @@ struct ChannelStats {
 // ─── 包元数据 ─────────────────────────────────────────────────────────────────
 struct PacketMetadata {
   int64_t receiveTimestampMs = 0;
+  int64_t captureTimestampUs = 0;  // 原始采集时间戳（µs）
   uint32_t sequenceNumber = 0;
   TransportChannel channel = TransportChannel::TELEMETRY;
+  uint8_t frameType = 0;  // 0=Unknown, 1=I, 2=P, 3=B
+  bool dropHint = false;
 };
 
 // ─── 连接结果 ─────────────────────────────────────────────────────────────────

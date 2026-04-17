@@ -39,12 +39,18 @@ bool FFmpegSoftDecoder::initialize(const DecoderConfig& config) {
   // Low-latency flags
   m_ctx->flags |= AV_CODEC_FLAG_LOW_DELAY;
   m_ctx->flags2 |= AV_CODEC_FLAG2_FAST;
-  
-  // 修复：配置线程以平衡 latency 和 throughput
-  m_ctx->thread_count = 2;
-  m_ctx->thread_type = FF_THREAD_FRAME;
 
-  if (avcodec_open2(m_ctx, m_codec, nullptr) < 0) {
+  // 修复：配置线程以平衡 latency 和 throughput
+  m_ctx->thread_count = 1;  // 软件解码设为1线程以消除多线程同步导致的延迟开销
+  m_ctx->thread_type = FF_THREAD_SLICE; // SLICE 级并行比 FRAME 级并行延迟更低
+
+  AVDictionary* opts = nullptr;
+  av_dict_set(&opts, "tune", "zerolatency", 0);
+  av_dict_set(&opts, "flags", "low_delay", 0);
+
+  const int openRet = avcodec_open2(m_ctx, m_codec, &opts);
+  av_dict_free(&opts);
+  if (openRet < 0) {
     qWarning() << "[Client][FFmpegSoftDecoder] avcodec_open2 failed";
     if (m_ctx->extradata) {
       av_free(m_ctx->extradata);
@@ -82,6 +88,24 @@ void FFmpegSoftDecoder::shutdown() {
     m_ctx = nullptr;
   }
   m_initialized = false;
+}
+
+bool FFmpegSoftDecoder::reconfigure(const DecoderConfig& config) {
+  if (!m_initialized || !m_ctx)
+    return false;
+
+  if (m_ctx->width == config.width && m_ctx->height == config.height) {
+    return true;
+  }
+
+  qInfo() << "[Client][FFmpegSoftDecoder][RECONF] dynamic resolution switch:" << m_ctx->width
+          << "x" << m_ctx->height << " -> " << config.width << "x" << config.height;
+
+  avcodec_flush_buffers(m_ctx);
+  m_ctx->width = config.width;
+  m_ctx->height = config.height;
+
+  return true;
 }
 
 DecodeResult FFmpegSoftDecoder::submitPacket(const uint8_t* data, size_t size, int64_t pts,

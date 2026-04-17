@@ -18,12 +18,17 @@
 #include "core/pluginmanager.h"
 #include "core/systemstatemachine.h"
 #include "core/tracing.h"
+#include "core/BlackBoxService.h"
+#include "core/TimeSyncService.h"
+#include "core/memorymanager.h"
 #include "infrastructure/controlloopticker.h"
 #include "infrastructure/mqtttransportadapter.h"
+#include <infrastructure/network/TransportAggregator.h>
+#include <adapters/network/WebRTCChannel.h>
 #include "mqttcontroller.h"
 #include "nodehealthchecker.h"
-#include "infrastructure/hardware/InputSampler.h"
-#include "infrastructure/hardware/KeyboardMouseInput.h"
+#include <infrastructure/hardware/InputSampler.h>
+#include <adapters/hardware/KeyboardMouseInput.h>
 #include "services/degradationmanager.h"
 #include "services/safetymonitorservice.h"
 #include "services/sessionmanager.h"
@@ -266,7 +271,7 @@ int main(int argc, char *argv[]) {
 
   // UI 线程心跳定时器：由主线程向安全线程「报平安」
   auto uiHeartbeatTimer = std::make_unique<QTimer>(&app);
-  uiHeartbeatTimer->setInterval(50); // 50ms 频率报平安，宽放至 200ms 触发急停
+  uiHeartbeatTimer->setInterval(50); // 50ms 频率报平安，宽放至 500ms 触发急停
   QObject::connect(uiHeartbeatTimer.get(), &QTimer::timeout, &app, [sm = safetyMonitor.get()]() {
     sm->noteUiHeartbeat();
   });
@@ -277,8 +282,26 @@ int main(int argc, char *argv[]) {
   vehicleControl->setSafetyMonitor(safetyMonitor.get());
   // ────────────────────────────────────────────────────────────────────────
   auto degradationManager = std::make_unique<DegradationManager>(systemStateMachine.get(), &app);
-  MqttTransportAdapter mqttTransportAdapter(mqttController.get());
-  (void)mqttTransportAdapter;
+  
+  // ─── 黑匣子与高精度同步 ───────────────────────────────────────────
+  BlackBoxService::instance().start();
+
+  // ─── 传输层聚合与双链路冗余 ───────────────────────────────────────────
+  auto transportAggregator = std::make_unique<TransportAggregator>(&app);
+  
+  auto webrtcChannel = new WebRTCChannel(transportAggregator.get());
+  webrtcChannel->injectInstances(webrtcStreamManager.get(), webrtcStreamManager->frontClient());
+  auto mqttAdapter = new MqttTransportAdapter(mqttController.get(), transportAggregator.get());
+  
+  transportAggregator->addTransport(QStringLiteral("WebRTC"), webrtcChannel, true);
+  transportAggregator->addTransport(QStringLiteral("MQTT"), mqttAdapter, false);
+  
+  TransportConfig tcfg;
+  transportAggregator->initialize(tcfg);
+  
+  vehicleControl->setTransport(transportAggregator.get());
+  // ────────────────────────────────────────────────────────────────────────
+  
   ControlLoopTicker controlLoopTicker;
   if (QProcessEnvironment::systemEnvironment().value(
           QStringLiteral("CLIENT_ENABLE_CONTROL_TICKER")) == QStringLiteral("1")) {
@@ -291,6 +314,10 @@ int main(int argc, char *argv[]) {
                    [vs = vehicleStatus.get(), wsm = webrtcStreamManager.get()]() {
                      vs->setVideoConnected(wsm->anyConnected());
                    });
+  // ★ 传输反馈：将车端 streaming_ready 同步至视频管理器，实现「车端就绪后立即尝试拉流」
+  QObject::connect(vehicleStatus.get(), &VehicleStatus::streamingReadyChanged,
+                   webrtcStreamManager.get(), &WebRtcStreamManager::setStreamingReady);
+  
   vehicleStatus->setVideoConnected(webrtcStreamManager->anyConnected());
   QObject::connect(mqttController.get(), &MqttController::mqttBrokerConnectionChanged,
                    vehicleStatus.get(), &VehicleStatus::setMqttConnected);
@@ -438,6 +465,7 @@ int main(int argc, char *argv[]) {
       &eventBus, systemStateMachine.get(), teleopSession.get(), vehicleControl.get(),
       safetyMonitor.get(), networkQuality.get(), degradationManager.get(), &Tracing::instance(),
       chineseFont, &videoIntegrityBannerBridge);
+  engine.rootContext()->setContextProperty(QStringLiteral("rd_keyboardInput"), hidDevice.get());
   ClientApp::logQmlRootContextRdSnapshot(engine.rootContext());
 
   QUrl url = ClientApp::resolveQmlMainUrl(&engine);

@@ -24,6 +24,11 @@ Item {
     readonly property bool forwardMode: currentGear !== "R"
     property real vehicleSpeed: 35
     property real targetSpeed: 0.0
+    onTargetSpeedChanged: {
+        if (targetSpeed > 0.1 || targetSpeed === 0) {
+            console.log("[Client][UI][Teleop][State] targetSpeed changed to: " + targetSpeed.toFixed(1))
+        }
+    }
     /** W/S 按住时为 true：目标车速不同步车端，避免与键盘抢写 */
     property bool keyboardSpeedAdjustActive: false
     /** A/←/→ 按住时为 true：转向角不同步车端，避免与键盘抢写 */

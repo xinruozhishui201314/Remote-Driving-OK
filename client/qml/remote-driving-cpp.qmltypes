@@ -121,180 +121,50 @@ Module {
         Method { name: "forceRefreshToken" }
     }
     Component {
-        file: "mqttcontroller.h"
-        name: "MqttController"
+        file: "faultmanager.h"
+        name: "FaultManager"
         accessSemantics: "reference"
         prototype: "QObject"
-        exports: ["RemoteDriving/MqttController 1.0"]
+        exports: ["RemoteDriving/FaultManager 1.0"]
+        isCreatable: false
+        isSingleton: true
         exportMetaObjectRevisions: [256]
         Property {
-            name: "brokerUrl"
-            type: "QString"
-            read: "brokerUrl"
-            write: "setBrokerUrl"
-            notify: "brokerUrlChanged"
+            name: "activeCodes"
+            type: "QStringList"
+            read: "activeCodes"
+            notify: "activeCodesChanged"
             index: 0
+            isReadonly: true
         }
         Property {
-            name: "clientId"
-            type: "QString"
-            read: "clientId"
-            write: "setClientId"
-            notify: "clientIdChanged"
+            name: "hasFaults"
+            type: "bool"
+            read: "hasFaults"
+            notify: "activeCodesChanged"
             index: 1
-        }
-        Property {
-            name: "controlTopic"
-            type: "QString"
-            read: "controlTopic"
-            write: "setControlTopic"
-            notify: "controlTopicChanged"
-            index: 2
-        }
-        Property {
-            name: "statusTopic"
-            type: "QString"
-            read: "statusTopic"
-            write: "setStatusTopic"
-            notify: "statusTopicChanged"
-            index: 3
-        }
-        Property {
-            name: "isConnected"
-            type: "bool"
-            read: "isConnected"
-            notify: "connectionStatusChanged"
-            index: 4
             isReadonly: true
         }
-        Property {
-            name: "mqttBrokerConnected"
-            type: "bool"
-            read: "mqttBrokerConnected"
-            notify: "mqttBrokerConnectionChanged"
-            index: 5
-            isReadonly: true
-        }
-        Property {
-            name: "controlChannelReady"
-            type: "bool"
-            read: "controlChannelReady"
-            notify: "controlChannelReadyChanged"
-            index: 6
-            isReadonly: true
-        }
+        Signal { name: "activeCodesChanged" }
         Signal {
-            name: "brokerUrlChanged"
-            Parameter { name: "url"; type: "QString" }
-        }
-        Signal {
-            name: "clientIdChanged"
-            Parameter { name: "id"; type: "QString" }
-        }
-        Signal {
-            name: "controlTopicChanged"
-            Parameter { name: "topic"; type: "QString" }
-        }
-        Signal {
-            name: "statusTopicChanged"
-            Parameter { name: "topic"; type: "QString" }
-        }
-        Signal {
-            name: "connectionStatusChanged"
-            Parameter { name: "connected"; type: "bool" }
-        }
-        Signal {
-            name: "mqttBrokerConnectionChanged"
-            Parameter { name: "connected"; type: "bool" }
-        }
-        Signal {
-            name: "controlChannelReadyChanged"
-        }
-        Signal {
-            name: "mqttConnectResolved"
-            Parameter { name: "succeeded"; type: "bool" }
-            Parameter { name: "detail"; type: "QString" }
-        }
-        Signal {
-            name: "statusReceived"
-            Parameter { name: "status"; type: "QJsonObject" }
-        }
-        Signal {
-            name: "errorOccurred"
-            Parameter { name: "error"; type: "QString" }
-        }
-        Method { name: "connectToBroker" }
-        Method { name: "disconnectFromBroker" }
-        Method {
-            name: "sendSteeringCommand"
-            Parameter { name: "angle"; type: "double" }
+            name: "faultReported"
+            Parameter { name: "code"; type: "QString" }
         }
         Method {
-            name: "sendThrottleCommand"
-            Parameter { name: "throttle"; type: "double" }
+            name: "onErrorReported"
+            Parameter { name: "error"; type: "ErrorRegistry::Error" }
+            Parameter { name: "errorId"; type: "int" }
         }
         Method {
-            name: "sendBrakeCommand"
-            Parameter { name: "brake"; type: "double" }
+            name: "getFaultInfo"
+            type: "QVariantMap"
+            Parameter { name: "code"; type: "QString" }
         }
         Method {
-            name: "sendGearCommand"
-            Parameter { name: "gear"; type: "int" }
+            name: "clearFault"
+            Parameter { name: "code"; type: "QString" }
         }
-        Method {
-            name: "sendSweepCommand"
-            Parameter { name: "sweepType"; type: "QString" }
-            Parameter { name: "active"; type: "bool" }
-        }
-        Method {
-            name: "sendLightCommand"
-            Parameter { name: "lightType"; type: "QString" }
-            Parameter { name: "active"; type: "bool" }
-        }
-        Method {
-            name: "sendControlCommand"
-            Parameter { name: "command"; type: "QJsonObject" }
-        }
-        Method {
-            name: "sendDriveCommand"
-            Parameter { name: "steering"; type: "double" }
-            Parameter { name: "throttle"; type: "double" }
-            Parameter { name: "brake"; type: "double" }
-            Parameter { name: "gear"; type: "int" }
-        }
-        Method {
-            name: "sendDriveCommand"
-            isCloned: true
-            Parameter { name: "steering"; type: "double" }
-            Parameter { name: "throttle"; type: "double" }
-            Parameter { name: "brake"; type: "double" }
-        }
-        Method {
-            name: "sendSpeedCommand"
-            Parameter { name: "speed"; type: "double" }
-        }
-        Method {
-            name: "sendEmergencyStopCommand"
-            Parameter { name: "enable"; type: "bool" }
-        }
-        Method { name: "requestStreamStart" }
-        Method { name: "requestStreamStop" }
-        Method {
-            name: "requestRemoteControl"
-            Parameter { name: "enable"; type: "bool" }
-        }
-        Method { name: "onConnected" }
-        Method { name: "onDisconnected" }
-        Method {
-            name: "onMessageReceived"
-            Parameter { name: "topic"; type: "QByteArray" }
-            Parameter { name: "payload"; type: "QByteArray" }
-        }
-        Method {
-            name: "onError"
-            Parameter { name: "error"; type: "QString" }
-        }
-        Method { name: "onReconnectTimer" }
+        Method { name: "clearAll" }
     }
     Component {
         file: "RemoteVideoSurface.h"
@@ -305,9 +175,13 @@ Module {
         prototype: "QQuickItem"
         exports: ["RemoteDriving/RemoteVideoSurface 1.0"]
         exportMetaObjectRevisions: [256]
+        Enum {
+            name: "FillMode"
+            values: ["Stretch", "PreserveAspectCrop", "PreserveAspectFit"]
+        }
         Property {
             name: "fillMode"
-            type: "int"
+            type: "FillMode"
             read: "fillMode"
             write: "setFillMode"
             notify: "fillModeChanged"
@@ -324,9 +198,32 @@ Module {
         Signal { name: "fillModeChanged" }
         Signal { name: "panelLabelChanged" }
         Signal { name: "frameGeometryChanged" }
+        Signal {
+            name: "dmaBufSceneGraphFailed"
+            Parameter { name: "reason"; type: "QString" }
+        }
         Method {
             name: "applyFrame"
             Parameter { name: "image"; type: "QImage" }
+            Parameter { name: "frameId"; type: "qulonglong" }
+            Parameter { name: "streamTag"; type: "QString" }
+        }
+        Method {
+            name: "applyFrame"
+            isCloned: true
+            Parameter { name: "image"; type: "QImage" }
+            Parameter { name: "frameId"; type: "qulonglong" }
+        }
+        Method {
+            name: "applyDmaBufFrame"
+            Parameter { name: "handle"; type: "SharedDmaBufFrame" }
+            Parameter { name: "frameId"; type: "qulonglong" }
+            Parameter { name: "streamTag"; type: "QString" }
+        }
+        Method {
+            name: "applyDmaBufFrame"
+            isCloned: true
+            Parameter { name: "handle"; type: "SharedDmaBufFrame" }
             Parameter { name: "frameId"; type: "qulonglong" }
         }
     }
@@ -575,11 +472,35 @@ Module {
             isReadonly: true
         }
         Property {
+            name: "networkPacketLossPercent"
+            type: "double"
+            read: "networkPacketLossPercent"
+            notify: "networkPacketLossPercentChanged"
+            index: 12
+            isReadonly: true
+        }
+        Property {
+            name: "networkBandwidthKbps"
+            type: "double"
+            read: "networkBandwidthKbps"
+            notify: "networkBandwidthKbpsChanged"
+            index: 13
+            isReadonly: true
+        }
+        Property {
+            name: "networkJitterMs"
+            type: "double"
+            read: "networkJitterMs"
+            notify: "networkJitterMsChanged"
+            index: 14
+            isReadonly: true
+        }
+        Property {
             name: "remoteControlEnabled"
             type: "bool"
             read: "remoteControlEnabled"
             notify: "remoteControlEnabledChanged"
-            index: 12
+            index: 15
             isReadonly: true
         }
         Property {
@@ -587,7 +508,7 @@ Module {
             type: "QString"
             read: "drivingMode"
             notify: "drivingModeChanged"
-            index: 13
+            index: 16
             isReadonly: true
         }
         Property {
@@ -595,7 +516,7 @@ Module {
             type: "bool"
             read: "sweepActive"
             notify: "sweepActiveChanged"
-            index: 14
+            index: 17
             isReadonly: true
         }
         Property {
@@ -603,7 +524,7 @@ Module {
             type: "bool"
             read: "brakeActive"
             notify: "brakeActiveChanged"
-            index: 15
+            index: 18
             isReadonly: true
         }
         Property {
@@ -611,7 +532,7 @@ Module {
             type: "double"
             read: "waterTankLevel"
             notify: "waterTankLevelChanged"
-            index: 16
+            index: 19
             isReadonly: true
         }
         Property {
@@ -619,7 +540,7 @@ Module {
             type: "double"
             read: "trashBinLevel"
             notify: "trashBinLevelChanged"
-            index: 17
+            index: 20
             isReadonly: true
         }
         Property {
@@ -627,7 +548,7 @@ Module {
             type: "int"
             read: "cleaningCurrent"
             notify: "cleaningCurrentChanged"
-            index: 18
+            index: 21
             isReadonly: true
         }
         Property {
@@ -635,7 +556,15 @@ Module {
             type: "int"
             read: "cleaningTotal"
             notify: "cleaningTotalChanged"
-            index: 19
+            index: 22
+            isReadonly: true
+        }
+        Property {
+            name: "lastStatusTimestamp"
+            type: "qlonglong"
+            read: "lastStatusTimestamp"
+            notify: "lastStatusTimestampChanged"
+            index: 23
             isReadonly: true
         }
         Signal {
@@ -684,6 +613,18 @@ Module {
             Parameter { name: "rtt"; type: "double" }
         }
         Signal {
+            name: "networkPacketLossPercentChanged"
+            Parameter { name: "percent"; type: "double" }
+        }
+        Signal {
+            name: "networkBandwidthKbpsChanged"
+            Parameter { name: "kbps"; type: "double" }
+        }
+        Signal {
+            name: "networkJitterMsChanged"
+            Parameter { name: "jitterMs"; type: "double" }
+        }
+        Signal {
             name: "remoteControlEnabledChanged"
             Parameter { name: "enabled"; type: "bool" }
         }
@@ -714,6 +655,10 @@ Module {
         Signal {
             name: "cleaningTotalChanged"
             Parameter { name: "total"; type: "int" }
+        }
+        Signal {
+            name: "lastStatusTimestampChanged"
+            Parameter { name: "timestamp"; type: "qlonglong" }
         }
         Method {
             name: "setSpeed"
@@ -758,6 +703,18 @@ Module {
         Method {
             name: "setNetworkRtt"
             Parameter { name: "rtt"; type: "double" }
+        }
+        Method {
+            name: "setNetworkPacketLossPercent"
+            Parameter { name: "percent"; type: "double" }
+        }
+        Method {
+            name: "setNetworkBandwidthKbps"
+            Parameter { name: "kbps"; type: "double" }
+        }
+        Method {
+            name: "setNetworkJitterMs"
+            Parameter { name: "jitterMs"; type: "double" }
         }
         Method {
             name: "setRemoteControlEnabled"
@@ -836,7 +793,25 @@ Module {
             index: 3
             isReadonly: true
         }
+        Property {
+            name: "videoSurface"
+            type: "QObject"
+            isPointer: true
+            read: "videoSurface"
+            write: "setVideoSurface"
+            notify: "videoSurfaceChanged"
+            index: 4
+        }
+        Property {
+            name: "videoFrozen"
+            type: "bool"
+            read: "videoFrozen"
+            notify: "videoFrozenChanged"
+            index: 5
+            isReadonly: true
+        }
         Signal { name: "videoSinkChanged" }
+        Signal { name: "videoSurfaceChanged" }
         Signal {
             name: "streamUrlChanged"
             Parameter { name: "url"; type: "QString" }
@@ -844,6 +819,10 @@ Module {
         Signal {
             name: "connectionStatusChanged"
             Parameter { name: "connected"; type: "bool" }
+        }
+        Signal {
+            name: "dataChannelOpenChanged"
+            Parameter { name: "open"; type: "bool" }
         }
         Signal {
             name: "statusTextChanged"
@@ -865,6 +844,19 @@ Module {
             Parameter { name: "stream"; type: "QString" }
             Parameter { name: "peerStateEnum"; type: "int" }
         }
+        Signal {
+            name: "clientEncoderHintSent"
+            Parameter { name: "jsonPayload"; type: "QJsonObject" }
+        }
+        Signal {
+            name: "videoPresentationDegraded"
+            Parameter { name: "stream"; type: "QString" }
+            Parameter { name: "reason"; type: "QString" }
+        }
+        Signal {
+            name: "videoFrozenChanged"
+            Parameter { name: "frozen"; type: "bool" }
+        }
         Method {
             name: "connectToStream"
             Parameter { name: "serverUrl"; type: "QString" }
@@ -872,13 +864,24 @@ Module {
             Parameter { name: "stream"; type: "QString" }
         }
         Method { name: "disconnect" }
+        Method { name: "isDataChannelOpen"; type: "bool" }
+        Method {
+            name: "trySendDataChannelMessage"
+            type: "bool"
+            Parameter { name: "data"; type: "QByteArray" }
+        }
         Method {
             name: "sendDataChannelMessage"
+            Parameter { name: "data"; type: "QByteArray" }
+        }
+        Method {
+            name: "sendRtcp"
             Parameter { name: "data"; type: "QByteArray" }
         }
         Method { name: "receiverCountVideoFrameReady"; type: "int" }
         Method { name: "videoFrameReadySignalMeta"; type: "QString" }
         Method { name: "forceRefresh" }
+        Method { name: "videoFrozen"; type: "bool" }
         Method {
             name: "onSdpAnswerReceived"
             Parameter { name: "reply"; type: "QNetworkReply"; isPointer: true }
@@ -889,15 +892,32 @@ Module {
             Parameter { name: "frameId"; type: "qulonglong" }
         }
         Method {
+            name: "onRemoteSurfaceDmaBufSceneGraphFailed"
+            Parameter { name: "reason"; type: "QString" }
+        }
+        Method {
             name: "onIngressDrainFinished"
             Parameter { name: "morePending"; type: "bool" }
         }
         Method { name: "onDecoderKeyframeSuggested" }
         Method {
+            name: "onDecoderDecodeIntegrityAlert"
+            Parameter { name: "code"; type: "QString" }
+            Parameter { name: "detail"; type: "QString" }
+            Parameter { name: "mitigationApplied"; type: "bool" }
+            Parameter { name: "healthContractLine"; type: "QString" }
+        }
+        Method {
             name: "onPresentWorkerDeliveredFrame"
             Parameter { name: "image"; type: "QImage" }
             Parameter { name: "frameId"; type: "qulonglong" }
         }
+        Method {
+            name: "onDecoderDmaBufFrameReady"
+            Parameter { name: "handle"; type: "SharedDmaBufFrame" }
+            Parameter { name: "frameId"; type: "qulonglong" }
+        }
+        Method { name: "trySendProactiveEncoderDisplayContractHint" }
         Method {
             name: "bindVideoOutput"
             Parameter { name: "videoOutputItem"; type: "QObject"; isPointer: true }
@@ -912,10 +932,7 @@ Module {
         Method { name: "bindVideoOutputLifetimeInvocationCount"; type: "int" }
         Method { name: "bindVideoSurfaceInvocationCount"; type: "int" }
         Method { name: "bindVideoSurfaceLifetimeInvocationCount"; type: "int" }
-        Method {
-            name: "presentBackend"
-            type: "int"
-        }
+        Method { name: "presentBackend"; type: "int" }
         Method { name: "diagnosticPresentSize"; type: "QSize" }
         Method { name: "drainDecoderFrameReadyEmitDiagCount"; type: "int" }
         Method { name: "drainIngressTryPushFailDiagCount"; type: "int" }

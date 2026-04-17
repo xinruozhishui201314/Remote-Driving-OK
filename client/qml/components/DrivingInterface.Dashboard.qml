@@ -446,7 +446,11 @@ Rectangle {
                                         return
                                     }
                                     newSpeed = Math.max(0.0, Math.min(100.0, newSpeed))
-                                    targetSpeed = newSpeed
+                                    
+                                    // [Fix] 仅在变化超过 0.05 时更新，并消除 onTextChanged 导致的 Binding Loop
+                                    if (Math.abs(targetSpeed - newSpeed) > 0.05) {
+                                        targetSpeed = newSpeed
+                                    }
                                     text = targetSpeed.toFixed(1)
                                     
                                     if (targetSpeed > 0.0) {
@@ -462,16 +466,8 @@ Rectangle {
                                     sendControlCommand("speed", { value: targetSpeed })
                                 }
                                 
-                                onTextChanged: {
-                                    var num = parseFloat(text)
-                                    if (!isNaN(num)) {
-                                        targetSpeed = Math.max(0.0, Math.min(100.0, num))
-                                        if (targetSpeed > 0.0 && emergencyStopPressed) {
-                                            emergencyStopPressed = false
-                                        }
-                                    }
+                                // [Fix] 移除 onTextChanged 以防止与键盘定时器冲突导致的输入抖动
                                 }
-                            }
                         }
                     }
                 }

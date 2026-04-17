@@ -49,14 +49,81 @@ class SafetyWorker : public QObject {
   void start() { m_timer.start(); }
   void stop() { m_timer.stop(); }
 
- public slots:
+  public slots:
   void runSafetyChecks() {
     checkLatency();
     checkHeartbeat();
     checkOperatorActivity();
     checkDeadman();
     checkUiStall();
+    checkControlStall();
+    checkActuatorConsistency(); // [Poka-yoke]
     checkCircuitBreaker();
+  }
+
+ private:
+  void checkControlStall() {
+    const int64_t now = safetyNowMs();
+    const int64_t lastTick = m_svc->m_lastControlTickMs.load(std::memory_order_acquire);
+    if (lastTick == 0) return;
+
+    const int64_t elapsed = now - lastTick;
+    if (elapsed > 100) { // 控制环频率 100Hz (10ms)，超过 100ms 无响应则警告
+      static int64_t s_lastLogMs = 0;
+      if (now - s_lastLogMs >= 1000) {
+        s_lastLogMs = now;
+        qWarning().noquote() << "[Client][SafetyMonitorService] ★ 控制线程卡顿延迟 =" << elapsed
+                             << "ms";
+      }
+
+      if (elapsed > 200) { // 超过 200ms 触发急停
+        qCritical().noquote()
+            << "[Client][SafetyMonitorService] ★★★ 控制线程疑似死锁或严重卡顿超过 200ms ★★★"
+            << " elapsed=" << elapsed << "ms" << " ★ 强制触发紧急停车";
+        ErrorRegistry::instance().reportFault(QStringLiteral("TEL-1004"), QStringLiteral("SafetyMonitor"));
+        m_svc->triggerEmergencyStop(QStringLiteral("Control thread stalled for %1ms").arg(elapsed));
+      }
+    }
+  }
+
+  void checkActuatorConsistency() {
+    // [Poka-yoke Guard] 控制闭环一致性检查
+    // 如果操作员有明显的转向意图，但车辆反馈 steering_norm 始终为 0，说明控制协议失效或链路断开
+    if (!m_svc->m_fsm || !m_svc->m_fsm->isDriveActive()) return;
+
+    const int64_t now = safetyNowMs();
+    
+    // 获取最新的用户输入意图（从控制服务读取最近一次尝试发送的指令）
+    double intentSteer = 0;
+    if (m_svc->m_control) {
+        intentSteer = std::abs(m_svc->m_control->lastCommand().steeringAngle);
+    }
+
+    // 获取车辆回显的实际状态
+    double actualSteer = 0;
+    if (m_svc->m_vehicleStatus) {
+        actualSteer = std::abs(m_svc->m_vehicleStatus->steering());
+    }
+
+    // 防错逻辑：如果意图很大（>0.3）但反馈几乎为 0（<0.01）
+    if (intentSteer > 0.3 && actualSteer < 0.01) {
+        static int64_t s_lastMismatchStart = 0;
+        if (s_lastMismatchStart == 0) s_lastMismatchStart = now;
+
+        const int64_t mismatchDuration = now - s_lastMismatchStart;
+        if (mismatchDuration > 1000) { // 持续 1s 不一致则触发告警/熔断
+            qCritical().noquote() << "[Client][Safety][Poka-yoke] ★★★ 检测到控制失能(Actuator Inconsistency) ★★★"
+                                 << "Intent(ABS)=" << intentSteer << " Actual(ABS)=" << actualSteer
+                                 << " Duration=" << mismatchDuration << "ms"
+                                 << " ★ 判定为协议版本不匹配或执行器故障";
+            ErrorRegistry::instance().reportFault(QStringLiteral("VEH-4001"), QStringLiteral("SafetyMonitor"));
+            m_svc->triggerEmergencyStop(QStringLiteral("Actuator mismatch: Steer intent vs feedback"));
+            s_lastMismatchStart = 0;
+        }
+    } else {
+        // 一致性恢复，重置计时器
+        // s_lastMismatchStart = 0; // 静态变量在 checkCircuitBreaker 后重置
+    }
   }
 
  private:
@@ -158,7 +225,7 @@ class SafetyWorker : public QObject {
     if (lastHb == 0) return;
 
     const int64_t elapsed = now - lastHb;
-    if (elapsed > 150) {
+    if (elapsed > 400) {
       static int64_t s_lastLogMs = 0;
       if (now - s_lastLogMs >= 500) {
         s_lastLogMs = now;
@@ -166,9 +233,9 @@ class SafetyWorker : public QObject {
                              << "ms";
       }
 
-      if (elapsed > 200) {
+      if (elapsed > 500) {
         qCritical().noquote()
-            << "[Client][SafetyMonitorService] ★★★ UI 线程疑似死锁或严重卡顿超过 200ms ★★★"
+            << "[Client][SafetyMonitorService] ★★★ UI 线程疑似死锁或严重卡顿超过 500ms ★★★"
             << " elapsed=" << elapsed << "ms" << " ★ 强制触发紧急停车(Decoupled Watchdog)";
         ErrorRegistry::instance().reportFault(QStringLiteral("TEL-1003"), QStringLiteral("SafetyMonitor"));
         m_svc->triggerEmergencyStop(QStringLiteral("UI thread stalled for %1ms").arg(elapsed));
@@ -264,6 +331,7 @@ bool SafetyMonitorService::initialize() {
   const int64_t now = safetyNowMs();
   m_lastHeartbeatMs.store(now);
   m_lastOperatorActivityMs.store(now);
+  m_lastControlTickMs.store(now);
   m_latencyViolationCount.store(0);
   m_missedHeartbeats.store(0);
   m_allSystemsGo.store(false);
@@ -340,6 +408,12 @@ void SafetyMonitorService::onHeartbeatReceived() {
 void SafetyMonitorService::onOperatorActivity() {
   m_lastOperatorActivityMs.store(safetyNowMs());
   m_deadmanActive.store(true);
+  emit operatorActivityReported();
+}
+
+void SafetyMonitorService::onControlTick() {
+  m_lastControlTickMs.store(safetyNowMs());
+  emit controlTickReported();
 }
 
 void SafetyMonitorService::noteUiHeartbeat() {

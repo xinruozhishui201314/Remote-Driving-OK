@@ -84,6 +84,14 @@ validate_docker_gpu() {
     die "docker run --gpus all 失败（exit=${ec}）。请安装并配置 nvidia-container-toolkit，并重启 Docker；见 https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/"
   fi
   log "[$0] OK docker run --rm --gpus all busybox:latest true"
+
+  # 额外检查 nvidia runtime 是否注册（CARLA 仿真器 docker-compose.carla.yml 强依赖此名称）
+  if ! docker info 2>/dev/null | grep -i "Runtimes:" | grep -qi "nvidia"; then
+    log "[$0] WARN Docker 未注册 nvidia runtime (仅发现: $(docker info 2>/dev/null | grep -i "Runtimes:" | sed 's/.*Runtimes://'))"
+    log "[$0]      这不影响客户端 GPU，但会导致 CARLA 容器启动失败。修复: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+  else
+    log "[$0] OK Docker 已注册 nvidia runtime"
+  fi
 }
 
 pick_nvidia_compose_file() {

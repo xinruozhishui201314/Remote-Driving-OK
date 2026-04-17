@@ -1,5 +1,5 @@
 #pragma once
-#include "../itransportmanager.h"
+#include <infrastructure/itransportmanager.h>
 
 #include <QMap>
 #include <QTimer>

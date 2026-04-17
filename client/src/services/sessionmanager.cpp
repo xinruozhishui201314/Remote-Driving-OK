@@ -109,6 +109,8 @@ void SessionManager::onLogout() {
       QMetaObject::invokeMethod(m_vehicleControl, "stop");
     if (m_vehicleControl)
       QMetaObject::invokeMethod(m_vehicleControl, "clearSessionCredentials");
+    if (m_mqtt)
+      m_mqtt->setSessionId(QString());
     qInfo().noquote() << "[Client][Session] onLogout → disconnectAll 四路 WebRTC";
     {
       if (m_webrtc)
@@ -157,6 +159,8 @@ void SessionManager::onVinSelected(const QString &vin) {
         QMetaObject::invokeMethod(m_vehicleControl, "stop");
       if (m_vehicleControl)
         QMetaObject::invokeMethod(m_vehicleControl, "clearSessionCredentials");
+      if (m_mqtt)
+        m_mqtt->setSessionId(QString());
       if (m_webrtc) {
         {
           m_webrtc->setCurrentVin(QString());
@@ -172,12 +176,12 @@ void SessionManager::onVinSelected(const QString &vin) {
         qInfo().noquote() << QStringLiteral(
             "[Client][StreamE2E][VIN_SELECTED] invoking setCurrentVin+connectFourStreams() no "
             "explicit whep");
-        m_webrtc->setCurrentVin(vin);
-        m_webrtc->connectFourStreams();
-      }  
-    }
-  }  
-}
+                m_webrtc->setCurrentVin(vin);
+                m_webrtc->scheduleConnectFourStreamsWhenZlmReady(QString(), 1000, 60000); // 1s 轮询，最高等待 60s
+              }  
+            }
+          }  
+        }
 
 void SessionManager::onSessionCreated(const QString &sessionVin, const QString &sessionId,
                                       const QString &whipUrl, const QString &whepUrl,
@@ -205,6 +209,9 @@ void SessionManager::onSessionCreated(const QString &sessionVin, const QString &
                  << " 不一致（理论上不应发生：过期响应应在 VehicleManager 已丢弃）";
     }
     if (m_vehicleControl && m_auth) {
+      if (m_mqtt) {
+        m_mqtt->setSessionId(sessionId);
+      }
       QMetaObject::invokeMethod(m_vehicleControl, "setSessionCredentials",
                                 Q_ARG(QString, sessionVin), Q_ARG(QString, sessionId),
                                 Q_ARG(QString, m_auth->authToken()));
@@ -241,10 +248,10 @@ void SessionManager::onSessionCreated(const QString &sessionVin, const QString &
       {
         qInfo().noquote() << QStringLiteral(
                                  "[Client][StreamE2E][SESSION_CREATED] invoking "
-                                 "setCurrentVin+connectFourStreams(whep) whepLen=")
+                                 "setCurrentVin+scheduleConnectFourStreamsWhenZlmReady(whep) whepLen=")
                           << whepUrl.size();
         m_webrtc->setCurrentVin(sessionVin);
-        m_webrtc->connectFourStreams(whepUrl);
+        m_webrtc->scheduleConnectFourStreamsWhenZlmReady(whepUrl, 1000, 60000); // 1s 轮询，最高等待 60s
       }  
     }
   }  

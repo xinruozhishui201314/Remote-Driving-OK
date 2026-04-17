@@ -1,8 +1,8 @@
 #include "WebRTCChannel.h"
 
-#include "../../utils/WebRtcTransportDispatch.h"
-#include "../../webrtcclient.h"
-#include "../../webrtcstreammanager.h"
+#include <utils/WebRtcTransportDispatch.h>
+#include <webrtcclient.h>
+#include <webrtcstreammanager.h>
 
 #include <QDebug>
 #include <QProcessEnvironment>
@@ -13,14 +13,20 @@ WebRTCChannel::~WebRTCChannel() { shutdown(); }
 
 bool WebRTCChannel::initialize(const TransportConfig& config) {
   m_config = config;
-  m_streamManager = std::make_unique<WebRtcStreamManager>();
-  m_primaryClient = std::make_unique<WebRtcClient>();
-
-  connect(m_primaryClient.get(), &WebRtcClient::connectionStatusChanged, this,
-          &WebRTCChannel::onPrimaryConnectionChanged);
-
+  // 核心修复：不再内部创建实例，由外部 injectInstances 注入或手动 check
   qInfo() << "[Client][WebRTCChannel] initialized";
   return true;
+}
+
+void WebRTCChannel::injectInstances(WebRtcStreamManager* wsm, WebRtcClient* primary) {
+  m_streamManager = wsm;
+  m_primaryClient = primary;
+
+  if (m_primaryClient) {
+    connect(m_primaryClient, &WebRtcClient::connectionStatusChanged, this,
+            &WebRTCChannel::onPrimaryConnectionChanged, Qt::UniqueConnection);
+  }
+  qInfo() << "[Client][WebRTCChannel] instances injected wsm=" << (void*)wsm << " primary=" << (void*)primary;
 }
 
 void WebRTCChannel::shutdown() {
@@ -68,7 +74,7 @@ void WebRTCChannel::disconnect() {
 SendResult WebRTCChannel::send(TransportChannel channel, const uint8_t* data, size_t len,
                                SendFlags /*flags*/) {
   return WebRtcTransportDispatch::sendPayload(
-      channel, static_cast<bool>(m_primaryClient.get()),
+      channel, static_cast<bool>(m_primaryClient),
       [this](const QByteArray& payload) {
         return m_primaryClient && m_primaryClient->trySendDataChannelMessage(payload);
       },
@@ -107,8 +113,31 @@ void WebRTCChannel::onVideoFrameReceived(const QByteArray& frame, uint32_t camer
   if (it != m_receivers.constEnd() && it.value()) {
     PacketMetadata meta;
     meta.channel = ch;
-    it.value()(reinterpret_cast<const uint8_t*>(frame.constData()),
-               static_cast<size_t>(frame.size()), meta);
+    meta.receiveTimestampMs = QDateTime::currentMSecsSinceEpoch();
+
+    const uint8_t* data = reinterpret_cast<const uint8_t*>(frame.constData());
+    size_t size = static_cast<size_t>(frame.size());
+
+    // ─── 自定义扩展头解析 (2025/2026 规范) ───
+    // Header Format (24 bytes): 
+    //   [0-3]   Magic: 0xDE 0xAD 0xBE 0xEF
+    //   [4-11]  CaptureTimestamp (us, Big-Endian)
+    //   [12]    FrameType (1=I, 2=P, 3=B)
+    //   [13]    DropHint (0=Normal, 1=DropSuggested)
+    //   [14-23] Reserved
+    if (size >= 24 && data[0] == 0xDE && data[1] == 0xAD && data[2] == 0xBE && data[3] == 0xEF) {
+      uint64_t ts = 0;
+      for (int i = 0; i < 8; ++i) ts = (ts << 8) | data[4 + i];
+      meta.captureTimestampUs = static_cast<int64_t>(ts);
+      meta.frameType = data[12];
+      meta.dropHint = (data[13] != 0);
+      
+      // 剥离 Header 传递给下游解码器
+      data += 24;
+      size -= 24;
+    }
+
+    it.value()(data, size, meta);
   }
   m_stats[ch].bytesReceived += frame.size();
   m_stats[ch].packetsReceived++;

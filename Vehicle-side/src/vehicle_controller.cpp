@@ -152,6 +152,13 @@ void VehicleController::processCommand(double steering, double throttle, double 
             LOG_CTRL_TRACE("Security check passed: seq={}, ts={}", seq, timestampMs);
         }
 
+        // ==================== 状态更新与生存期重置 ====================
+        m_lastValidCmdTime = std::chrono::steady_clock::now();
+        if (m_state == SafetyState::SURVIVAL) {
+            LOG_SAFE_INFO("Network recovered. Exiting SURVIVAL mode.");
+        }
+        m_state = SafetyState::ACTIVE;
+
         // ==================== 网络质量降级处理 ====================
         double effectiveThrottle = throttle;
         if (m_networkRtt > 300.0) {
@@ -185,6 +192,9 @@ void VehicleController::processCommand(double steering, double throttle, double 
         m_currentCommand.steering = std::clamp(steering, -1.0, 1.0);
         m_currentCommand.throttle = std::clamp(effectiveThrottle, 0.0, 1.0);
         m_currentCommand.brake = std::clamp(brake, 0.0, 1.0);
+
+        // 备份最后一次合法指令用于插值
+        m_lastValidCommand = m_currentCommand;
 
         // 档位值：-1=R, 0=N, 1=D, 2=P
         if (gear == -1 || gear == 0 || gear == 1 || gear == 2) {
@@ -277,6 +287,25 @@ void VehicleController::watchdogTick(int timeoutMs)
     LOG_CTRL_TRACE("Watchdog tick: elapsed={}ms, timeout={}ms, state={}",
                    elapsedMs, timeoutMs, static_cast<int>(m_state));
 
+    // ==================== 生存期/插值逻辑 (Smoothing) ====================
+    // 策略：150ms-500ms 之间进入 SURVIVAL 模式，执行指令平滑衰减
+    const int64_t survivalThresholdMs = 150; 
+    
+    if (elapsedMs > survivalThresholdMs && elapsedMs <= timeoutMs && 
+        m_state != SafetyState::SAFE_STOP && m_state != SafetyState::IDLE) {
+        
+        if (m_state != SafetyState::SURVIVAL) {
+            LOG_SAFE_WARN("Network jitter detected (elapsed={}ms). Entering SURVIVAL mode.", elapsedMs);
+            m_state = SafetyState::SURVIVAL;
+        }
+        
+        // 执行插值算法
+        applyInterpolatedControlLocked(elapsedMs - survivalThresholdMs, timeoutMs - survivalThresholdMs);
+        
+        LOG_EXIT_WITH_VALUE("survival_interpolating");
+        return;
+    }
+
     // Pre-timeout warning (0.8x threshold)
     if (elapsedMs > timeoutMs * 0.8 && m_state != SafetyState::SAFE_STOP) {
         LOG_SAFE_WARN("Watchdog approaching timeout! Elapsed={}ms (threshold={}ms, warning at 80%)",
@@ -290,6 +319,8 @@ void VehicleController::watchdogTick(int timeoutMs)
             elapsedMs, timeoutMs);
 
         m_state = SafetyState::SAFE_STOP;
+        m_remoteControlEnabled = false; // 超时自动释放
+        m_activeSessionId.clear();      // 清除会话锁
 
         // Ensure Safe Stop is applied only once
         if (m_state == SafetyState::SAFE_STOP) {
@@ -312,6 +343,45 @@ void VehicleController::watchdogTick(int timeoutMs)
     }
 
     LOG_EXIT_WITH_VALUE("ok");
+}
+
+void VehicleController::applyInterpolatedControlLocked(int64_t survivalElapsedMs, int64_t survivalWindowMs)
+{
+    if (survivalWindowMs <= 0) return;
+
+    // 计算生存进度 (0.0 -> 1.0)
+    double progress = std::clamp(static_cast<double>(survivalElapsedMs) / survivalWindowMs, 0.0, 1.0);
+
+    // 1. 油门线性衰减至 0
+    m_currentCommand.throttle = m_lastValidCommand.throttle * (1.0 - progress);
+
+    // 2. 方向盘：前 50% 时间保持，后 50% 线性回正
+    if (progress < 0.5) {
+        m_currentCommand.steering = m_lastValidCommand.steering;
+    } else {
+        double steeringProgress = (progress - 0.5) * 2.0;
+        m_currentCommand.steering = m_lastValidCommand.steering * (1.0 - steeringProgress);
+    }
+
+    // 3. 刹车：平滑增加压力（如果原先没刹车，则从 0 增加到 0.3 作为保护）
+    double baseBrake = m_lastValidCommand.brake;
+    double targetBrake = std::max(baseBrake, 0.3);
+    m_currentCommand.brake = baseBrake + (targetBrake - baseBrake) * progress;
+
+    LOG_CTRL_TRACE("SURVIVAL_INTERPOLATION: progress={:.2f}, steer={:.2f}, throttle={:.2f}, brake={:.2f}",
+                   progress, m_currentCommand.steering, m_currentCommand.throttle, m_currentCommand.brake);
+
+    // 应用到硬件
+    try {
+        applySteering(m_currentCommand.steering);
+        applyThrottle(m_currentCommand.throttle);
+        applyBrake(m_currentCommand.brake);
+        // 档位保持不变
+    } catch (...) {}
+
+#ifdef ENABLE_CARLA
+    applyControlToCarla();
+#endif
 }
 
 void VehicleController::emergencyStop()
@@ -356,24 +426,42 @@ void VehicleController::emergencyStop()
     }
 }
 
-void VehicleController::setRemoteControlEnabled(bool enabled)
+void VehicleController::setRemoteControlEnabled(bool enabled, const std::string& sessionId)
 {
     LOG_ENTRY();
     std::lock_guard<std::mutex> lock(m_mutex);
 
     bool oldValue = m_remoteControlEnabled;
-    m_remoteControlEnabled = enabled;
-
-    // 使用 AUDIT 级别记录关键操作变更
+    
     if (enabled) {
-        LOG_CTRL_INFO("REMOTE_CONTROL ENABLED by system");
-        LOG_CTRL_INFO("Vehicle is now accepting remote control commands");
+        // 尝试开启远驾：检查是否已有活跃会话
+        if (!m_activeSessionId.empty() && m_activeSessionId != sessionId) {
+            LOG_CTRL_ERROR("Cannot enable remote control: active session {} exists (requested by {})", 
+                          m_activeSessionId, sessionId);
+            return;
+        }
+        m_activeSessionId = sessionId;
+        m_remoteControlEnabled = true;
+        LOG_CTRL_INFO("REMOTE_CONTROL ENABLED by system (session: {})", sessionId);
     } else {
+        // 尝试关闭远驾：检查 sessionId 是否匹配
+        if (!m_activeSessionId.empty() && !sessionId.empty() && m_activeSessionId != sessionId) {
+            LOG_CTRL_WARN("Ignoring disable request from mismatching session: {} (active: {})", 
+                          sessionId, m_activeSessionId);
+            return;
+        }
+        m_remoteControlEnabled = false;
+        m_activeSessionId.clear();
         LOG_CTRL_INFO("REMOTE_CONTROL DISABLED by system");
-        LOG_CTRL_INFO("Vehicle will ignore remote control commands (autonomous mode)");
     }
 
     LOG_EXIT_WITH_VALUE("enabled={}, changed={}", enabled, (oldValue != enabled));
+}
+
+std::string VehicleController::getActiveSessionId() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_activeSessionId;
 }
 
 bool VehicleController::isRemoteControlEnabled() const
@@ -590,8 +678,12 @@ void VehicleController::applyControlToCarla()
 
         vehicle->ApplyControl(control);
 
-        LOG_LATENCY("CARLA Control sent: steer={:.2f}, throttle={:.2f}, brake={:.2f}, gear={}",
-                   control.steer, control.throttle, control.brake, control.gear);
+        // ==================== T5: 硬件执行埋点 (Latency Model) ====================
+        auto t5_now = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        
+        LOG_LATENCY("E2E_LATENCY_REPORT: vin={}, seq={}, T1_Client_Capture={}, T5_Hardware_Apply={}, Total_E2E={}ms",
+                   "TODO_VIN", m_lastSeq, m_lastCmdTimestamp, t5_now, (t5_now - m_lastCmdTimestamp));
 
     } catch (const std::exception& e) {
         LOG_CARLA_ERROR_WITH_CODE(CARLA_APPLY_CONTROL_FAILED,

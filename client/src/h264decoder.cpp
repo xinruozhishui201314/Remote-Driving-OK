@@ -2236,22 +2236,22 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
       // 隔行元数据明确时：在 YUV→RGBA 前做简易去隔行/场重复（CLIENT_VIDEO_INTERLACED_POLICY）
       // ── ★ 5-WHY 加固：建立解码减速反馈（Backpressure） ────────────────────────
       const double pressure = poolPressure();
-      if (pressure > 0.5) {
+      const int64_t mainLag = m_mainThreadLagMs.load(std::memory_order_acquire);
+      if (pressure > 0.5 || mainLag > 50) {
         static QHash<QString, int> s_pressureLog;
         if (++s_pressureLog[m_streamTag] <= 5 || (s_pressureLog[m_streamTag] % 100 == 0)) {
           qWarning().noquote() << QStringLiteral(
-                                      "[H264][%1][Backpressure] ★ 帧池积压严重 pressure=%2 "
-                                      "busySlots=%3 ★ 主线程卡顿，解码器将主动丢弃非关键帧以减轻 CPU "
-                                      "负担")
+                                      "[H264][%1][Backpressure] ★ 帧池积压/主线程延迟 pressure=%2 "
+                                      "mainLag=%3ms busySlots=%4 ★ 主线程卡顿，解码器将主动丢弃非关键帧")
                                       .arg(m_streamTag)
                                       .arg(pressure, 0, 'f', 2)
+                                      .arg(mainLag)
                                       .arg(static_cast<int>(pressure * kFramePoolSize));
         }
 
         // 积压严重时，仅保留关键帧（IDR）的呈现，丢弃 P 帧的 RGBA 转换和 emit
-        // 注意：不能停止 avcodec_send_packet，否则参考链会断；只能停止昂贵的 sws_scale 和信号投递。
         const bool isKey = (frame->key_frame || (frame->pict_type == AV_PICTURE_TYPE_I));
-        if (!isKey && pressure > 0.7) {
+        if (!isKey && (pressure > 0.7 || mainLag > 100)) {
           m_droppedPFrameCount++;
           m_statsQualityDropInWindow++;
           continue;  // 丢弃 P 帧转换
@@ -2357,29 +2357,42 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
         }
       }
 
-      // ── 3槽帧缓冲池（CPU-only 性能优化）──────────────────────────────────────
-      // 单帧缓冲方案下：emit frameReady() 后主线程持有 QImage（refcount=2），
-      // 解码线程下一帧 detach() 触发 8MB COW 堆分配（4路×30fps = 960MB/s 额外开销）。
-      //
-      // 3槽轮转：解码线程写 pool[i]，主线程最多持有 1~2 个槽，
-      // pool[(i+2)%3] 返回时通常 refcount==1，detach() 为 no-op → 零分配。
-      //
-      // ★ v4: 槽位生命周期审计
+      // ── 查找空闲槽位（解决 CRITICAL_RACE） ──────────────────────────────────
+      int targetIdx = -1;
       {
-          SlotAudit& audit = m_slotAudit[m_framePoolIdx];
-          SlotStatus prevStatus = audit.status.exchange(SlotStatus::Decoding, std::memory_order_acq_rel);
-          if (prevStatus == SlotStatus::Queued) {
-              qCritical() << "[H264][" << m_streamTag << "][MemoryPool][CRITICAL_RACE] ★ 槽位状态异常！"
-                          << " pool_idx=" << m_framePoolIdx << " status_was=Queued"
-                          << " lastFid=" << audit.lastFid.load() << " lastAcquireMs=" << audit.lastAcquireMs.load()
-                          << " ★ 说明主线程队列中仍持有此槽位，解码器强行写入可能导致花屏/条状";
+          // 查找一个 Idle 的槽位。从 m_framePoolIdx 开始轮询，增加搜索范围。
+          for (int i = 0; i < kFramePoolSize; ++i) {
+              int idx = (m_framePoolIdx + i) % kFramePoolSize;
+              if (m_slotAudit[idx].status.load(std::memory_order_acquire) == SlotStatus::Idle) {
+                  targetIdx = idx;
+                  break;
+              }
           }
+      }
+
+      if (targetIdx == -1) {
+          // 帧池全满：说明主线程积压极其严重（60 帧 = 2秒 @ 30fps）
+          static std::atomic<int> s_poolFullLog{0};
+          if (s_poolFullLog.fetch_add(1, std::memory_order_relaxed) < 10) {
+              qCritical() << "[H264][" << m_streamTag << "][MemoryPool] ★ 帧池耗尽！主线程阻塞严重。"
+                          << " 丢弃本帧并建议 IDR。poolSize=" << kFramePoolSize;
+          }
+          emitKeyframeSuggestThrottled("pool_full_backpressure");
+          av_frame_free(&frame);
+          return;
+      }
+
+      // 更新指针到下一个，确保下次从不同位置开始搜
+      m_framePoolIdx = (targetIdx + 1) % kFramePoolSize;
+
+      {
+          SlotAudit& audit = m_slotAudit[targetIdx];
+          audit.status.store(SlotStatus::Decoding, std::memory_order_release);
           audit.lastFid.store(m_frameIdCounter + 1, std::memory_order_release);
           audit.lastAcquireMs.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_release);
       }
 
-      QImage &dstFrame = m_framePool[m_framePoolIdx];
-      m_framePoolIdx = (m_framePoolIdx + 1) % kFramePoolSize;
+      QImage &dstFrame = m_framePool[targetIdx];
 
       if (dstFrame.width() != w || dstFrame.height() != h ||
           dstFrame.format() != QImage::Format_RGBA8888) {
@@ -2650,7 +2663,7 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
         qInfo() << "[H264][" << m_streamTag << "] ★★★ emitDecoded 输出帧 ★★★ #" << m_framesEmitted
                 << " frameId=" << m_frameIdCounter << " lifecycleId=" << m_currentLifecycleId.load()
                 << " w=" << w << " h=" << h
-                << " pool_slot=" << ((m_framePoolIdx + kFramePoolSize - 1) % kFramePoolSize)
+                << " pool_slot=" << targetIdx
                 << " rtpSeq=" << m_lastRtpSeq << " codecOpen=" << m_codecOpen
                 << " colorConvertDoneMs=" << colorConvertDoneTime
                 << " ★ 对比 onVideoFrameFromDecoder frameId=" << m_frameIdCounter
@@ -2683,10 +2696,9 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
         // ★ 记录 emit 时刻：主线程收到时与 QDateTime::currentMSecsSinceEpoch() 差值 = 事件队列延迟
         m_lastFrameReadyEmitWallMs.store(static_cast<int64_t>(QDateTime::currentMSecsSinceEpoch()),
                                          std::memory_order_release);
-        // dstFrame 来自 3槽池：主线程通过 QueuedConnection 接收时 refcount=2（池槽+事件副本）；
+        // dstFrame 来自多槽池：主线程通过 QueuedConnection 接收时 refcount=2（池槽+事件副本）；
         // 解码线程下次使用该槽时 detach() 见 refcount>1 则新分配（安全），无并发写。
-        int lastSlotIdx = (m_framePoolIdx + kFramePoolSize - 1) % kFramePoolSize;
-        m_slotAudit[lastSlotIdx].status.store(SlotStatus::Queued, std::memory_order_release);
+        m_slotAudit[targetIdx].status.store(SlotStatus::Queued, std::memory_order_release);
         emit frameReady(dstFrame, m_frameIdCounter);
         m_diagFrameReadyEmitAccum.fetch_add(1, std::memory_order_relaxed);
         // ★★★ 如果此日志不出现但 emitDecoded 日志出现 → QueuedConnection 失效 ★★★
@@ -2732,8 +2744,25 @@ void H264Decoder::ingestHardwareRgbaFrame(QImage&& rgba, const QString& hwBacken
     return;
   }
 
-  QImage& slot = m_framePool[m_framePoolIdx];
-  m_framePoolIdx = (m_framePoolIdx + 1) % kFramePoolSize;
+  const int targetIdx = findIdleSlot();
+  if (targetIdx == -1) {
+    static std::atomic<int> s_hwPoolFull{0};
+    if (s_hwPoolFull.fetch_add(1, std::memory_order_relaxed) < 10) {
+      qCritical() << "[H264][" << m_streamTag << "][MemoryPool][HW] ★ 帧池耗尽！丢弃硬解 RGBA 帧。"
+                  << " poolSize=" << kFramePoolSize;
+    }
+    return;
+  }
+
+  m_framePoolIdx = (targetIdx + 1) % kFramePoolSize;
+  {
+      SlotAudit& audit = m_slotAudit[targetIdx];
+      audit.status.store(SlotStatus::Decoding, std::memory_order_release);
+      audit.lastFid.store(m_frameIdCounter + 1, std::memory_order_release);
+      audit.lastAcquireMs.store(QDateTime::currentMSecsSinceEpoch(), std::memory_order_release);
+  }
+
+  QImage& slot = m_framePool[targetIdx];
   slot = std::move(rgba);
 
   if (slot.bytesPerLine() < w * 4) {
@@ -2771,6 +2800,7 @@ void H264Decoder::ingestHardwareRgbaFrame(QImage&& rgba, const QString& hwBacken
   {
     m_lastFrameReadyEmitWallMs.store(static_cast<int64_t>(QDateTime::currentMSecsSinceEpoch()),
                                      std::memory_order_release);
+    m_slotAudit[targetIdx].status.store(SlotStatus::Queued, std::memory_order_release);
     emit frameReady(slot, m_frameIdCounter);
     m_diagFrameReadyEmitAccum.fetch_add(1, std::memory_order_relaxed);
     if (m_framesEmitted <= 8) {
@@ -2843,6 +2873,16 @@ void H264Decoder::ingestHardwareDmaBufFrame(VideoFrame&& vf, const QString& hwBa
   }
 }
 
+int H264Decoder::findIdleSlot() const {
+  for (int i = 0; i < kFramePoolSize; ++i) {
+    int idx = (m_framePoolIdx + i) % kFramePoolSize;
+    if (m_slotAudit[idx].status.load(std::memory_order_acquire) == SlotStatus::Idle) {
+      return idx;
+    }
+  }
+  return -1;
+}
+
 int H264Decoder::takeAndResetFrameReadyEmitDiagCount() {
   return m_diagFrameReadyEmitAccum.exchange(0, std::memory_order_acq_rel);
 }
@@ -2907,6 +2947,19 @@ void H264Decoder::releaseFrame(quint64 frameId) {
       if (prev == SlotStatus::Queued || prev == SlotStatus::Reading) {
         // 正常释放
       }
+      return;
+    }
+  }
+}
+
+void H264Decoder::markFrameReading(quint64 frameId) {
+  if (frameId == 0)
+    return;
+  for (int i = 0; i < kFramePoolSize; ++i) {
+    if (m_slotAudit[i].lastFid.load(std::memory_order_acquire) == frameId) {
+      SlotStatus expected = SlotStatus::Queued;
+      m_slotAudit[i].status.compare_exchange_strong(expected, SlotStatus::Reading,
+                                                   std::memory_order_acq_rel);
       return;
     }
   }

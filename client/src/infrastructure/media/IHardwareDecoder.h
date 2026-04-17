@@ -71,6 +71,11 @@ struct VideoFrame {
   quint64 frameId = 0;  // 端到端帧序列号（解码 → WebRtcClient → QVideoSink / QML）
   quint64 lifecycleId = 0;
 
+  // ── v4 新增：自定义扩展头信息 ──────────────────────────────────────
+  enum class FrameType { UNKNOWN = 0, I_FRAME, P_FRAME, B_FRAME };
+  FrameType frameType = FrameType::UNKNOWN;
+  bool dropHint = false;  // 丢帧提示（网络拥塞或解码压力过大）
+
   PlaneInfo planes[3] = {};  // Y, U, V 或 RGB（CPU_MEMORY 路径）
   DmaBufInfo dmaBuf;         // DMA_BUF 路径的描述符
 
@@ -170,6 +175,12 @@ class IHardwareDecoder {
 
   virtual bool initialize(const DecoderConfig& config) = 0;
   virtual void shutdown() = 0;
+
+  /**
+   * 运行时重配置（动态分辨率/码率切换）。
+   * 实现应尽量避免重新初始化上下文，优先使用 FFmpeg 内部重排。
+   */
+  virtual bool reconfigure(const DecoderConfig& config) = 0;
 
   virtual DecodeResult submitPacket(const uint8_t* data, size_t size, int64_t pts, int64_t dts) = 0;
   virtual DecodeResult receiveFrame(VideoFrame& frame) = 0;

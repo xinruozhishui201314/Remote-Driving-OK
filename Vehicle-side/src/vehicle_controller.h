@@ -22,6 +22,7 @@ public:
         IDLE,      ///< 无会话 / 未准备
         ARMED,     ///< 已有会话但尚未进入正常控制
         ACTIVE,    ///< 正常控制
+        SURVIVAL,  ///< 生存模式（网络短暂抖动，执行插值）
         SAFE_STOP  ///< 安全停车（看门狗/故障触发）
     };
 
@@ -61,8 +62,9 @@ public:
     double getNetworkQuality() const;
 
     // 远驾接管状态管理
-    void setRemoteControlEnabled(bool enabled);
+    void setRemoteControlEnabled(bool enabled, const std::string& sessionId = "");
     bool isRemoteControlEnabled() const;
+    std::string getActiveSessionId() const;
     
     // 驾驶模式管理（遥控、自驾、远驾）
     enum class DrivingMode {
@@ -86,9 +88,11 @@ public:
 private:
     mutable std::mutex m_mutex;
     ControlCommand m_currentCommand;
+    ControlCommand m_lastValidCommand;    // 存储最后一次合法的控制指令，用于插值
     SafetyState m_state{SafetyState::IDLE};
     std::chrono::steady_clock::time_point m_lastValidCmdTime{};
     bool m_remoteControlEnabled = false;  // 远驾接管状态
+    std::string m_activeSessionId;        // 当前持有控制权的 sessionId
     DrivingMode m_drivingMode = DrivingMode::AUTONOMOUS;  // 驾驶模式（默认自驾）
     bool m_sweepActive = false;  // 清扫状态
     
@@ -102,6 +106,7 @@ private:
 #endif
 
     void applySafeStopLocked();  // 需要在已持有锁前提下调用
+    void applyInterpolatedControlLocked(int64_t elapsedMs, int64_t survivalWindowMs); // 生存模式下的插值逻辑
     
     // 实际车辆控制接口（需要根据实际硬件实现）
     void applySteering(double angle);

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "media/DmaBufFrameHandle.h"
+#include <media/DmaBufFrameHandle.h>
 
 #include <QRectF>
 #include <QString>

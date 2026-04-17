@@ -435,6 +435,8 @@
 # - 新增功能必须配套日志记录（关键入口、成功/失败分支、关键参数），
 #   使用统一前缀便于精准定位：[Backend][...]、[Client][Auth]、
 #   [Client][车辆列表]、[Client][UI] 等；详见 docs/FEATURE_ADD_CHECKLIST.md。
+# - [Client] 修改 C++ 侧 QML_ELEMENT 或其属性类型（Q_PROPERTY/Q_ENUM）时，
+#   必须全局搜索所有 QML 调用点以确保兼容性（CMake 无法捕捉 QML 运行时类型错误）。
 #
 # Production-oriented preference order:
 # correctness > stability > observability > maintainability > performance > elegance
