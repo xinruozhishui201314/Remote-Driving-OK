@@ -71,6 +71,10 @@ services:
       - "2000-2002:2000-2002"
     networks:
       - teleop-network
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     deploy:
       resources:
         reservations:

@@ -213,6 +213,8 @@ int main(int argc, char *argv[]) {
   auto webrtcStreamManager = std::make_unique<WebRtcStreamManager>(&app);
   webrtcStreamManager->setVehicleManager(vehicleManager.get());
   auto mqttController = std::make_unique<MqttController>(&app);
+  QObject::connect(mqttController.get(), &MqttController::remoteControlRequested,
+                   vehicleStatus.get(), &VehicleStatus::setLocalIntentRemoteControl);
   QString mqttBrokerEnv = QProcessEnvironment::systemEnvironment().value("MQTT_BROKER_URL");
   if (!mqttBrokerEnv.isEmpty()) {
     mqttController->setBrokerUrl(mqttBrokerEnv);

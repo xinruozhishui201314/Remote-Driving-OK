@@ -375,8 +375,22 @@ void MqttController::sendControlCommand(const QJsonObject &command) {
   }
 
   uint32_t seq = m_seq.fetch_add(1);
+  if (seq > 1000000000) {
+    qCritical().noquote() << "★★★ [关键证据][取证] m_seq 变量检测到污染！ value=" << seq
+                         << "即将发送的指令 type=" << command.value(QStringLiteral("type")).toString();
+  }
+
   const auto prep = MqttControlEnvelope::prepareForSend(command, vin, sessionId,
                                                         QDateTime::currentMSecsSinceEpoch(), seq);
+  
+  if (prep.cmd.value(QStringLiteral("seq")).toVariant().toLongLong() > 1000000000) {
+      qCritical().noquote() << "★★★ [关键证据][取证] 发送包 seq 异常！"
+                           << " final_seq=" << prep.cmd.value(QStringLiteral("seq")).toVariant().toLongLong()
+                           << " input_command_had_seq=" << command.contains(QStringLiteral("seq"))
+                           << " input_command_seq=" << command.value(QStringLiteral("seq")).toVariant().toLongLong()
+                           << " fetch_add_seq=" << seq
+                           << " type=" << prep.cmd.value(QStringLiteral("type")).toString();
+  }
   if (!prep.ok) {
     return;
   }
@@ -564,6 +578,7 @@ void MqttController::requestRemoteControl(bool enable) {
   }
   sendControlCommand(
       MqttControlEnvelope::buildRemoteControl(enable, QDateTime::currentMSecsSinceEpoch()));
+  emit remoteControlRequested(enable);
   qDebug() << "[REMOTE_CONTROL][SEND] <<< 已调用 sendControlCommand(remote_control) topic="
            << m_controlTopic << " 请确认车端收到";
 }

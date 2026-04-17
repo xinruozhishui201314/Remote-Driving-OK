@@ -2,6 +2,10 @@
 # 在 carlasim/carla 容器内：按需安装 Bridge 依赖，再启动 CARLA 服务，最后运行 CARLA Bridge。
 # 直接使用 carlasim/carla:latest，无需构建自定义镜像；挂载 carla-src 后优先使用其 PythonAPI。
 echo "[entrypoint] ========== 入口脚本启动 $(date -Iseconds 2>/dev/null || date) =========="
+
+# 提升文件描述符限制，防止 CARLA 仿真相机较多时报 Bad file descriptor
+ulimit -n 65535 || true
+
 set -e
 
 CARLA_MAP="${CARLA_MAP:-}"
@@ -190,6 +194,8 @@ fi
 echo "[entrypoint] CARLA 启动参数: UE_MAP=$UE_MAP RENDER_OPTS='$RENDER_OPTS' DISPLAY='$DISPLAY'"
 
 # ── 启动 CARLA ────────────────────────────────────────────────────────────────
+# 警告：CARLA 拒绝以 root 身份运行，必须切换回 carla 用户
+# 但 ulimit -n 已在脚本开头由 root 执行，容器内所有进程将继承该限制
 CARLA_EXEC="su -s /bin/bash $CARLA_USER -c \"export DISPLAY='$DISPLAY'; cd $CARLA_ROOT && bash CarlaUE4.sh $UE_MAP $RENDER_OPTS -nosound\""
 eval "$CARLA_EXEC" &
 CARLA_PID=$!

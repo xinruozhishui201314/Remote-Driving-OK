@@ -59,6 +59,7 @@
 
 #if defined(ENABLE_WEBRTC_LIBDATACHANNEL) && defined(ENABLE_FFMPEG)
 namespace {
+static QMutex s_diagMtx;
 /**
  * Track::onMessage 二进制内容分类（RFC 3550 RTP vs RTCP），便于与 H264Decoder 侧丢弃日志对照。
  * 全量日志：CLIENT_WEBRTC_PACKET_CLASSIFY_TRACE=1
@@ -66,7 +67,11 @@ namespace {
 void logWebRtcIngressPacketClassify(const QString &stream, const uint8_t *p, size_t len,
                                     quint64 lifecycleId) {
   static QHash<QString, int> s_perStreamCount;
-  const int cn = ++s_perStreamCount[stream];
+  int cn = 0;
+  {
+      QMutexLocker lk(&s_diagMtx);
+      cn = ++s_perStreamCount[stream];
+  }
   const bool trace = qEnvironmentVariableIntValue("CLIENT_WEBRTC_PACKET_CLASSIFY_TRACE") != 0;
 
   if (len < 2) {
@@ -1498,11 +1503,18 @@ void WebRtcClient::disconnect() {
 }
 
 void WebRtcClient::teardownMediaPipeline() {
+  qInfo() << "[Client][WebRTC] teardownMediaPipeline: start stream=" << m_stream;
 #ifdef ENABLE_WEBRTC_LIBDATACHANNEL
 #if defined(ENABLE_FFMPEG)
   m_decodePipelineActive.store(false, std::memory_order_release);
   stopPresentPipeline();
 #endif
+  if (m_videoTrack) {
+      m_videoTrack->onMessage(nullptr);
+      m_videoTrack->onOpen(nullptr);
+      m_videoTrack->onClosed(nullptr);
+      m_videoTrack->onError(nullptr);
+  }
   m_videoTrack.reset();
   m_audioTrack.reset();
 #if defined(ENABLE_FFMPEG)
@@ -1748,15 +1760,27 @@ void maybeTeleopVideoSnapshotPostDecode(const QString &stream, const QImage &ima
   static QHash<QString, qint64> s_lastMs;
   const qint64 now = QDateTime::currentMSecsSinceEpoch();
   const qint64 intervalMs = static_cast<qint64>(teleopSnapshotIntervalSecClient()) * 1000;
-  const qint64 prev = s_lastMs.value(stream, std::numeric_limits<qint64>::min() / 4);
+  qint64 prev = 0;
+  {
+      QMutexLocker lk(&s_diagMtx);
+      prev = s_lastMs.value(stream, std::numeric_limits<qint64>::min() / 4);
+  }
   if (now - prev < intervalMs)
     return;
-  s_lastMs.insert(stream, now);
+  {
+      QMutexLocker lk(&s_diagMtx);
+      s_lastMs.insert(stream, now);
+  }
 
   const QString dir = teleopLogRootDirClient() + QStringLiteral("/video_debug/post_decode");
   if (!QDir().mkpath(dir)) {
     static QHash<QString, int> s_mkfail;
-    if (++s_mkfail[stream] <= 2)
+    int mkfailCount = 0;
+    {
+        QMutexLocker lk(&s_diagMtx);
+        mkfailCount = ++s_mkfail[stream];
+    }
+    if (mkfailCount <= 2)
       qWarning() << "[Client][VideoDebug] post_decode mkpath failed dir=" << dir;
     return;
   }
@@ -1773,13 +1797,22 @@ void maybeTeleopVideoSnapshotPostDecode(const QString &stream, const QImage &ima
   (void)QtConcurrent::run([toSave, path, stream, frameId]() {
     if (!toSave.save(path, "PNG")) {
       static QHash<QString, int> s_fail;
-      if (++s_fail[stream] <= 3)
+      int failCount = 0;
+      {
+          QMutexLocker lk(&s_diagMtx);
+          failCount = ++s_fail[stream];
+      }
+      if (failCount <= 3)
         qWarning() << "[Client][VideoDebug] post_decode save failed stream=" << stream << " path=" << path;
       return;
     }
     static QHash<QString, int> s_ok;
-    const int n = ++s_ok[stream];
-    if (n <= 2 || (n % 30) == 0)
+    int okCount = 0;
+    {
+        QMutexLocker lk(&s_diagMtx);
+        okCount = ++s_ok[stream];
+    }
+    if (okCount <= 2 || (okCount % 30) == 0)
       qInfo() << "[Client][VideoDebug] post_decode snapshot stream=" << stream << " path=" << path;
   });
 }
@@ -2036,19 +2069,24 @@ void WebRtcClient::setupVideoDecoder() {
         if (len >= 4) {
             rtpSeq = (static_cast<uint16_t>(p[2]) << 8) | static_cast<uint16_t>(p[3]);
             static QHash<QString, uint16_t> s_lastSeqMap;
-            uint16_t last = s_lastSeqMap.value(m_stream, 0);
-            if (last != 0) {
-                uint16_t diff = rtpSeq - last;
-                if (diff > 1 && diff < 32768) {
-                    qWarning() << "[Client][WebRTC][SeqGap] ★ 检测到 RTP 序列跳变！ stream=" << m_stream 
-                               << " last=" << last << " cur=" << rtpSeq << " gap=" << (diff - 1)
-                               << " ★ 若无 NACK 补回，此处即为 FrameHole 根源";
-                } else if (diff > 32768) {
-                    qInfo() << "[Client][WebRTC][SeqRetro] ★ 收到旧包/重传包？ stream=" << m_stream
-                            << " last=" << last << " cur=" << rtpSeq << " (diff=" << (int16_t)diff << ")";
+            static QMutex s_lastSeqMtx;
+            uint16_t last = 0;
+            {
+                QMutexLocker lk(&s_lastSeqMtx);
+                last = s_lastSeqMap.value(m_stream, 0);
+                if (last != 0) {
+                    uint16_t diff = rtpSeq - last;
+                    if (diff > 1 && diff < 32768) {
+                        qWarning() << "[Client][WebRTC][SeqGap] ★ 检测到 RTP 序列跳变！ stream=" << m_stream 
+                                   << " last=" << last << " cur=" << rtpSeq << " gap=" << (diff - 1)
+                                   << " ★ 若无 NACK 补回，此处即为 FrameHole 根源";
+                    } else if (diff > 32768) {
+                        qInfo() << "[Client][WebRTC][SeqRetro] ★ 收到旧包/重传包？ stream=" << m_stream
+                                << " last=" << last << " cur=" << rtpSeq << " (diff=" << (int16_t)diff << ")";
+                    }
                 }
+                s_lastSeqMap[m_stream] = rtpSeq;
             }
-            s_lastSeqMap[m_stream] = rtpSeq;
         }
 
         const bool logEveryFrontRtp =
@@ -2063,7 +2101,7 @@ void WebRtcClient::setupVideoDecoder() {
                   << " seq=" << logSeq << " stream=" << m_stream << " lifecycleId=" << lifecycleId
                   << " pktSize=" << static_cast<qsizetype>(bin.size())
                   << " rtpArrival=" << rtpArrivalTime << " frameGapFromLast=" << frameGap << "ms"
-                  << " ringPackets=" << m_rtpIngressRing->packetCount()
+                  << " ringPackets=" << (m_rtpIngressRing ? m_rtpIngressRing->packetCount() : -1)
                   << " mediaBudgetB=" << ClientMediaBudget::instance().totalBytes()
                   << "（>100ms=发帧慢或网络抖动，<0=首次包）";
         }
@@ -2084,6 +2122,10 @@ void WebRtcClient::setupVideoDecoder() {
         static QHash<QString, std::atomic<int>*> s_ringDropMap;
         static QHash<QString, std::atomic<int64_t>*> s_lastStatWinMap;
         static QMutex s_statMtx;
+
+        std::atomic<int> *arrivedN_ptr = nullptr;
+        std::atomic<int> *ringDropN_ptr = nullptr;
+        std::atomic<int64_t> *lastWin_ptr = nullptr;
         {
             QMutexLocker lk(&s_statMtx);
             if (!s_arrivedMap.contains(m_stream)) {
@@ -2091,17 +2133,22 @@ void WebRtcClient::setupVideoDecoder() {
                 s_ringDropMap[m_stream] = new std::atomic<int>(0);
                 s_lastStatWinMap[m_stream] = new std::atomic<int64_t>(rtpArrivalTime);
             }
+            arrivedN_ptr = s_arrivedMap[m_stream];
+            ringDropN_ptr = s_ringDropMap[m_stream];
+            lastWin_ptr = s_lastStatWinMap[m_stream];
         }
-        std::atomic<int> &arrivedN   = *s_arrivedMap[m_stream];
-        std::atomic<int> &ringDropN  = *s_ringDropMap[m_stream];
-        std::atomic<int64_t> &lastWin = *s_lastStatWinMap[m_stream];
+        if (!arrivedN_ptr || !ringDropN_ptr || !lastWin_ptr) return;
+
+        std::atomic<int> &arrivedN   = *arrivedN_ptr;
+        std::atomic<int> &ringDropN  = *ringDropN_ptr;
+        std::atomic<int64_t> &lastWin = *lastWin_ptr;
         arrivedN.fetch_add(1, std::memory_order_relaxed);
 
         RtpIngressPacket ing;
         ing.bytes = QByteArray(reinterpret_cast<const char *>(bin.data()),
                                static_cast<qsizetype>(bin.size()));
         ing.lifecycleId = lifecycleId;
-        if (!m_rtpIngressRing->tryPush(std::move(ing))) {
+        if (!m_rtpIngressRing || !m_rtpIngressRing->tryPush(std::move(ing))) {
           m_ingressTryPushFailSinceLastDrain.fetch_add(1, std::memory_order_relaxed);
           // ★ WHY4 关键路径：环形缓冲/预算满 → 此处丢包。若此计数持续增长，
           //   则条状的直接原因是客户端缓冲，而非 UDP 传输；否则是 UDP 层丢包。
@@ -2110,7 +2157,7 @@ void WebRtcClient::setupVideoDecoder() {
             qWarning() << "[Client][WebRTC][IngressDrop] ★★★ 环形缓冲/预算满，丢弃 RTP 包 ★★★"
                        << " stream=" << m_stream << " ringDropN=" << drops
                        << " arrivedN=" << arrivedN.load(std::memory_order_relaxed)
-                       << " ringPackets=" << m_rtpIngressRing->packetCount()
+                       << " ringPackets=" << (m_rtpIngressRing ? m_rtpIngressRing->packetCount() : -1)
                        << " mediaBudgetB=" << ClientMediaBudget::instance().totalBytes()
                        << " maxGlobalB=" << ClientMediaBudget::instance().maxGlobalBytes()
                        << " maxPerSlotB=" << ClientMediaBudget::instance().maxPerSlotBytes()
@@ -2401,12 +2448,16 @@ void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 fra
   }
 
   static int s_presentCount = 0;
-  if (s_presentCount <= 5 || (s_presentCount % 900) == 0) {
+  int presentCount = 0;
+  {
+      QMutexLocker lk(&s_diagMtx);
+      presentCount = ++s_presentCount;
+  }
+  if (presentCount <= 5 || (presentCount % 900) == 0) {
       qInfo() << "[Client][WebRTC][Present] presentDecodedFrameToOutputs stream=" << m_stream
                << " frameId=" << frameId << " size=" << image.size()
-               << " totalPresent=" << s_presentCount;
+               << " totalPresent=" << presentCount;
   }
-  s_presentCount++;
   if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
     qWarning() << "[Client][WebRTC][Present] 跳过无效/不完整尺寸 stream=" << m_stream
                << " frameId=" << frameId << " size=" << image.size();
@@ -2414,8 +2465,16 @@ void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 fra
   }
 
   static QSet<QString> s_loggedStreams;
-  if (!s_loggedStreams.contains(m_stream)) {
-    s_loggedStreams.insert(m_stream);
+  bool alreadyLogged = false;
+  {
+      QMutexLocker lk(&s_diagMtx);
+      if (!s_loggedStreams.contains(m_stream)) {
+          s_loggedStreams.insert(m_stream);
+      } else {
+          alreadyLogged = true;
+      }
+  }
+  if (!alreadyLogged) {
     qInfo() << "[Client][WebRTC][Present] first frame stream=" << m_stream
             << " frameId=" << frameId;
   }
@@ -2454,7 +2513,11 @@ void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 fra
     if (qEnvironmentVariableIntValue("CLIENT_VIDEO_FRAME_INTERVAL_TRACE") != 0) {
       if (frameInterval < 5 || frameInterval > 150) {
         static QHash<QString, int> s_fiCount;
-        const int fc = ++s_fiCount[m_stream];
+        int fc = 0;
+        {
+            QMutexLocker lk(&s_diagMtx);
+            fc = ++s_fiCount[m_stream];
+        }
         if (fc <= 100 || (fc % 50) == 0) {
           qInfo() << "[Client][Present][FrameInterval] stream=" << m_stream
                   << " dtMs=" << frameInterval << " pendingInQueue=" << m_framesPendingInQueue
@@ -2692,12 +2755,16 @@ void WebRtcClient::presentDecodedFrameToOutputs(const QImage &image, quint64 fra
 void WebRtcClient::onVideoFrameFromDecoder(const QImage &image, quint64 frameId) {
   {
     static int s_decoderSlotInCount = 0;
-    if (s_decoderSlotInCount <= 5 || (s_decoderSlotInCount % 300) == 0) {
+    int slotInCount = 0;
+    {
+        QMutexLocker lk(&s_diagMtx);
+        slotInCount = ++s_decoderSlotInCount;
+    }
+    if (slotInCount <= 5 || (slotInCount % 300) == 0) {
         qInfo() << "[Client][WebRTC][Slot] onVideoFrameFromDecoder stream=" << m_stream
                  << " frameId=" << frameId << " size=" << image.size()
-                 << " totalSlotIn=" << s_decoderSlotInCount;
+                 << " totalSlotIn=" << slotInCount;
     }
-    s_decoderSlotInCount++;
     ++m_presentSecVideoSlotEntries;
     ++m_framesPendingInQueue;
     m_presentSecMaxPending = std::max(m_presentSecMaxPending, m_framesPendingInQueue);
@@ -2916,9 +2983,16 @@ void WebRtcClient::sendRtcp(const QByteArray &data) {
         if (b1 == 205u) {
           static QHash<QString, qint64> s_lastRtcp205LogMs;
           const qint64 wall = QDateTime::currentMSecsSinceEpoch();
-          const qint64 prev = s_lastRtcp205LogMs.value(m_stream, 0);
+          qint64 prev = 0;
+          {
+              QMutexLocker lk(&s_diagMtx);
+              prev = s_lastRtcp205LogMs.value(m_stream, 0);
+          }
           if (wall - prev >= 5000) {
-            s_lastRtcp205LogMs.insert(m_stream, wall);
+            {
+                QMutexLocker lk(&s_diagMtx);
+                s_lastRtcp205LogMs.insert(m_stream, wall);
+            }
             qInfo() << "[Client][WebRTC][RTCP][Sent][throttled5s] stream=" << m_stream << " pt=205 RTPFB fmt="
                     << (b0 & 0x1Fu) << " len=" << data.size()
                     << " ★fmt=1 为 Generic NACK；与 [H264][NACK] 对照，确认 RTCP 已出 libdatachannel";

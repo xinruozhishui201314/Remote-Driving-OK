@@ -32,7 +32,16 @@ VehicleStatus::VehicleStatus(QObject *parent)
       m_trashBinLevel(40.0),
       m_cleaningCurrent(400),
       m_cleaningTotal(500),
-      m_lastStatusTimestamp(0) {}
+      m_lastStatusTimestamp(0),
+      m_localIntentRemoteControl(false) {}
+
+void VehicleStatus::setLocalIntentRemoteControl(bool intended) {
+  if (m_localIntentRemoteControl != intended) {
+    m_localIntentRemoteControl = intended;
+    qInfo().noquote() << "[Client][VehicleStatus] Local intent for REMOTE_CONTROL updated to:" << intended;
+    emit localIntentRemoteControlChanged(m_localIntentRemoteControl);
+  }
+}
 
 void VehicleStatus::setSpeed(double speed) {
   if (qAbs(m_speed - speed) > 0.01) {
@@ -412,7 +421,7 @@ void VehicleStatus::updateStatus(const QJsonObject &status) {
         changedFields << QString("current:%1").arg(newCurrent, 0, 'f', 1);
     }
   }
-  if (status.contains("temperature")) {
+    if (status.contains("temperature")) {
     double newTemp = status["temperature"].toDouble();
     if (qAbs(m_temperature - newTemp) > 0.1) {
       setTemperature(newTemp);
@@ -420,6 +429,16 @@ void VehicleStatus::updateStatus(const QJsonObject &status) {
       if (shouldLog)
         changedFields << QString("temperature:%1").arg(newTemp, 0, 'f', 1);
     }
+  }
+
+  // ★ 核心修复：处理致命错误消息 (Bridge 发送的 fatal_error)
+  if (status.contains("type") && status["type"].toString() == "fatal_error") {
+      QString msg = status.value("message").toString();
+      qCritical().noquote() << "★★★ [Client][VehicleStatus][FATAL] 收到链路致命错误通知！ ★★★"
+                           << "\n  消息内容:" << msg
+                           << "\n  原因推测: carla-bridge 进程可能已崩溃或无法连接 CARLA 模拟器（检查 docker-carla-server.log）";
+      // 触发信号通知 UI 展示错误条
+      emit safetyWarning(QString("链路中断: %1").arg(msg));
   }
   bool isAckMessage = status.contains("type") && status["type"].toString() == "remote_control_ack";
 
@@ -456,6 +475,17 @@ void VehicleStatus::updateStatus(const QJsonObject &status) {
       hasChanges = true;
       if (shouldLog || isAckMessage)
         changedFields << QString("mode:%1").arg(newDrivingMode);
+    }
+    
+    // ★ 关键取证：检测远驾异常退出（意图与车端反馈不一致）
+    if (m_localIntentRemoteControl && newDrivingMode == "自驾") {
+        static QElapsedTimer s_mismatchTimer;
+        if (!s_mismatchTimer.isValid() || s_mismatchTimer.elapsed() > 3000) {
+            s_mismatchTimer.start();
+            qCritical().noquote() << "★★★ [关键证据][取证] 检测到远驾模式异常丢失！ ★★★"
+                                 << "本地意图=REMOTE_DRIVING, 车端上报=" << newDrivingMode
+                                 << "原因推测：车端进程可能刚刚发生过崩溃重启（默认回自驾）或触发了服务端/车端的看门狗自动释放。";
+        }
     }
   }
 

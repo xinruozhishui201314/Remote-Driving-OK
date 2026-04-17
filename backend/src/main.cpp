@@ -1591,6 +1591,23 @@ int main() {
         res.status = 200;
     });
 
+    // [Fix] 补充缺失的 ZLM 钩子，解决后端日志 404 刷屏问题 (on_server_keepalive 等)
+    auto generic_hook_handler = [](const httplib::Request& req, httplib::Response& res) {
+        // std::cout << "[Backend][Hook] 处理 ZLM 钩子: " << req.path << std::endl;
+        res.set_content("{\"code\":0,\"msg\":\"success\"}", "application/json");
+        res.status = 200;
+    };
+    svr.Post("/api/v1/hooks/on_flow_report", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_rtp_server_timeout", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_stream_none_reader", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_stream_not_found", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_server_started", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_server_keepalive", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_record_mp4", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_shell_login", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_stream_changed", generic_hook_handler);
+    svr.Post("/api/v1/hooks/on_http_access", generic_hook_handler);
+
     // 未匹配路由或 4xx/5xx 时记录日志，便于验证时依据日志判断（如 POST /api/v1/vehicles 返回 404 说明当前进程未注册该路由，需重新构建并重启）
     svr.set_error_handler([](const httplib::Request& req, httplib::Response& res) {
         std::cout << "[Backend][未匹配] method=" << req.method << " path=" << req.path << " status=" << res.status

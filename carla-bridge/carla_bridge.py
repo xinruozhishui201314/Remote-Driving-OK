@@ -392,6 +392,7 @@ def run_ffmpeg_pusher(stream_id, frame_queue, rtmp_url, width, height, fps, stop
     )
     # ── 诊断增强：捕获 ffmpeg stderr 以解析 FPS/码率/帧质量 ────────────────────
     # ffmpeg stderr 包含 frame= fps= bitrate= 等统计行，是推流质量的核心证据
+    log_zlm("[FFmpeg] 命令行: %s", " ".join(cmd))
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     with streaming_lock:
         pusher_procs[stream_id] = proc
@@ -402,26 +403,22 @@ def run_ffmpeg_pusher(stream_id, frame_queue, rtmp_url, width, height, fps, stop
 
     def drain_stderr():
         try:
+            # 改进：使用迭代方式读取，因为 ffmpeg 状态行通常以 \r 结尾，readline 可能阻塞或跳过
+            buffer = ""
             while not ffmpeg_stop.is_set():
-                line = proc.stderr.readline()
-                if not line:
+                char = proc.stderr.read(1)
+                if not char:
                     break
-                line = line.decode("utf-8", errors="replace").rstrip()
-                with ffmpeg_lock:
-                    ffmpeg_lines.append(line)
-                # 实时解析关键行（frame / fps / bitrate），平时静默
-                m_frame = re.search(r"frame=\s*(\d+)", line)
-                m_fps   = re.search(r"fps=\s*(\d+\.?\d*)", line)
-                m_br    = re.search(r"bitrate=\s*(\d+\.?\d*\s*\D+)", line)
-                m_drop  = re.search(r"dropped=\s*(\d+)", line)
-                m_size  = re.search(r"size=\s*(\d+\s*\w+)", line)
-                if m_frame or m_fps or m_br or m_drop or m_size:
-                    parts = []
-                    if m_frame: parts.append("frame=%s" % m_frame.group(1))
-                    if m_fps:   parts.append("fps=%s" % m_fps.group(1))
-                    if m_br:    parts.append("bitrate=%s" % m_br.group(1).strip())
-                    if m_drop:  parts.append("drop=%s" % m_drop.group(1))
-                    if m_size:  parts.append("size=%s" % m_size.group(1))
+                char = char.decode("utf-8", errors="replace")
+                if char in ('\n', '\r'):
+                    if buffer.strip():
+                        with ffmpeg_lock:
+                            ffmpeg_lines.append(buffer.strip())
+                            if len(ffmpeg_lines) > 500: # 限制内存
+                                ffmpeg_lines.pop(0)
+                    buffer = ""
+                else:
+                    buffer += char
         except Exception:
             pass
 
@@ -550,6 +547,7 @@ def run_ffmpeg_testsrc(stream_id, rtmp_url, width, height, fps, stop_event):
         ]
     )
     proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+    log_zlm("[testsrc][FFmpeg] 命令行: %s", " ".join(cmd))
     import re
     ffmpeg_lines = []
     ffmpeg_lock = threading.Lock()
@@ -557,19 +555,22 @@ def run_ffmpeg_testsrc(stream_id, rtmp_url, width, height, fps, stop_event):
 
     def drain_stderr():
         try:
+            # 改进：兼容 \r 状态行
+            buffer = ""
             while not ffmpeg_stop.is_set():
-                line = proc.stderr.readline()
-                if not line:
+                char = proc.stderr.read(1)
+                if not char:
                     break
-                line = line.decode("utf-8", errors="replace").rstrip()
-                with ffmpeg_lock:
-                    ffmpeg_lines.append(line)
-                m_frame = re.search(r"frame=\s*(\d+)", line)
-                m_fps = re.search(r"fps=\s*(\d+\.?\d*)", line)
-                if m_frame or m_fps:
-                    parts = []
-                    if m_frame: parts.append("frame=%s" % m_frame.group(1))
-                    if m_fps: parts.append("fps=%s" % m_fps.group(1))
+                char = char.decode("utf-8", errors="replace")
+                if char in ('\n', '\r'):
+                    if buffer.strip():
+                        with ffmpeg_lock:
+                            ffmpeg_lines.append(buffer.strip())
+                            if len(ffmpeg_lines) > 500:
+                                ffmpeg_lines.pop(0)
+                    buffer = ""
+                else:
+                    buffer += char
         except Exception:
             pass
 
@@ -815,14 +816,17 @@ def _put_cam_frame(cam_id, image):
             q.put_nowait(frame)
         except queue.Full:
             try:
-                q.get_nowait()  # 丢弃队首（旧帧）
+                dropped = q.get_nowait()  # 丢弃队首（旧帧）
+                # [SystemicFix] 记录丢帧，便于诊断 CPU/编码 瓶颈
+                if st["count"] % 50 == 0:
+                    _warn("ZLM", "推流积压：队列已满，强制丢弃旧帧以保证实时性 stream_id=%s", cam_id)
             except (queue.Empty, AttributeError):
                 pass
             try:
                 q.put_nowait(frame)
             except (queue.Full, AttributeError):
                 # 两次队列满，说明 ffmpeg 写入阻塞；记录并丢弃该帧
-                _warn("ZLM", "camera callback: queue full after drain, dropping frame cam_id=%s", cam_id)
+                _warn("ZLM", "关键瓶颈：即使清理后队列仍满，丢弃当前帧 stream_id=%s", cam_id)
     except Exception as e:
         _warn("ZLM", "camera callback unexpected error cam_id=%s: %s", cam_id, e)
 
@@ -874,7 +878,9 @@ def run_one_stream(cam_id, x, y, z, yaw, q, stop, rtmp_url, cam_bp):
 
             arrived_at_start = init_count
             fps_low_logged = False
-            while _time.time() - t_start < 10.0:
+            # [RootCauseFix] 增加等待时间到 30s，给 CARLA 充分的初始化时间（尤其是 offscreen EGL）
+            WAIT_WINDOW = 30.0
+            while _time.time() - t_start < WAIT_WINDOW:
                 _time.sleep(1.0)
                 if stop.is_set():
                     pusher_stop.set()
@@ -887,22 +893,23 @@ def run_one_stream(cam_id, x, y, z, yaw, q, stop, rtmp_url, cam_bp):
                 elapsed = _time.time() - t_start
                 arrival_fps = (count_now - arrived_at_start) / elapsed if elapsed > 0.1 else 0.0
 
-                if arrival_fps >= 3.0:
-                    log_zlm("[CARLA相机] stream_id=%s 帧到达率 %.1f fps >= 3，继续使用 CARLA 相机", cam_id, arrival_fps)
+                if arrival_fps >= 3.0 and elapsed >= 5.0:
+                    log_zlm("[CARLA相机] stream_id=%s 帧到达率 %.1f fps >= 3，稳定运行", cam_id, arrival_fps)
                     break  # 正常，使用 CARLA 相机
-                if not fps_low_logged and elapsed >= 5.0:
-                    _warn("ZLM", "[testsrc] 相机 %s 帧率 %.1f fps < 3（%.0fs 内 %d 帧），"
-                               "若持续 < 3 将降级到 testsrc", cam_id, arrival_fps, elapsed, count_now - arrived_at_start)
+                
+                if not fps_low_logged and elapsed >= 10.0:
+                    _warn("ZLM", "[testsrc] 相机 %s 帧率 %.1f fps 仍然较低，继续观察（剩余 %.0fs）", 
+                          cam_id, arrival_fps, WAIT_WINDOW - elapsed)
                     fps_low_logged = True
             else:
-                # 10s 窗口内始终 < 3 fps，降级到 testsrc
+                # WAIT_WINDOW 窗口内始终 < 3 fps，降级到 testsrc
                 final_count = 0
                 with _cam_stats_lock:
                     st = _cam_stats.get(cam_id, {"count": 0})
                     final_count = st.get("count", 0)
-                arrival_fps = (final_count - arrived_at_start) / 10.0
-                log_zlm("[testsrc] 降级 CARLA→testsrc stream_id=%s（%.0fs 内 %d 帧，%.1f fps < 3 fps）",
-                        cam_id, 10.0, final_count - arrived_at_start, arrival_fps)
+                arrival_fps = (final_count - arrived_at_start) / WAIT_WINDOW
+                log_zlm("[testsrc] 最终判定：降级 CARLA→testsrc stream_id=%s（%.0fs 内 %d 帧，%.1f fps < 3 fps）",
+                        cam_id, WAIT_WINDOW, final_count - arrived_at_start, arrival_fps)
                 # 停止 CARLA 推流 worker，切换到 testsrc
                 pusher_stop.set()
                 pusher_thread.join(timeout=3.0)
@@ -1125,14 +1132,32 @@ def _apply_vehicle_control():
             # ★ 安全：控制指令看门狗 (Watchdog)
             # 只有在远驾接管开启时才执行看门狗检查
             if remote_ok:
-                elapsed_ms = (time.time() - m_last_valid_cmd_time) * 1000
+                now_sec = time.time()
+                elapsed_ms = (now_sec - m_last_valid_cmd_time) * 1000
+                
+                # ── 诊断：看门狗健康状态（约 2s 一次，定死“喂狗”时间） ──
+                if _control_apply_count % 100 == 0:
+                    _log("Control", "[看门狗状态] 距离最后有效指令 %.1fms, last_seq=%d, sid=%s", 
+                         elapsed_ms, m_last_seq, m_active_session_id)
+
                 if m_last_valid_cmd_time > 0 and elapsed_ms > WATCHDOG_TIMEOUT_MS:
-                    _warn("Control", "看门狗超时！已过 %.0fms (> %dms)，强制释放远驾并安全停车", 
-                          elapsed_ms, WATCHDOG_TIMEOUT_MS)
-                    control_state["remote_enabled"] = False
-                    m_active_session_id = None
-                    # 继续向下执行，remote_ok 会被判定为 False，从而进入安全制动逻辑
-                    remote_ok = False
+                    # ── 分级保护策略 ──
+                    if elapsed_ms > 2000:
+                        # 超过 2 秒：判定为严重故障，彻底释放控制权
+                        _err("Control", "★★★ [关键证据] 严重超时触发退出！已断连 %.0fms, 强制释放控制锁 (last_seq=%d, sid=%s)", 
+                              elapsed_ms, m_last_seq, m_active_session_id)
+                        # 获取堆栈，看清是谁执行的
+                        import traceback
+                        _err("Control", "[退出堆栈追溯]:\n%s", "".join(traceback.format_stack()[-5:]))
+                        
+                        control_state["remote_enabled"] = False
+                        m_active_session_id = None
+                        remote_ok = False
+                    else:
+                        # 500ms - 2000ms 之间：仅原地制动，允许短时抖动恢复
+                        if _control_apply_count % 50 == 0: 
+                            _warn("Control", "[制动] 检测到抖动(%.0fms)，原地等待恢复...", elapsed_ms)
+                        remote_ok = False
 
             steer = max(-1.0, min(1.0, control_state.get("steering", 0.0)))
             throttle = max(0.0, min(1.0, control_state.get("throttle", 0.0)))
@@ -1371,48 +1396,97 @@ def on_message(client, userdata, msg):
         
         msg_type = full_payload.get("type", "")
         vin = full_payload.get("vin", "")
-        seq = int(full_payload.get("seq", -1))
+        seq_raw = full_payload.get("seq", -1)
+        # [EvidenceFix] 增加 seq 类型与取值范围校验，防止被 timestamp 污染
+        try:
+            seq = int(seq_raw)
+        except (ValueError, TypeError):
+            seq = -1
+            
         ts_ms = int(full_payload.get("timestampMs", 0) or full_payload.get("timestamp", 0))
         session_id = full_payload.get("sessionId")
         trace_id = full_payload.get("trace_id") or full_payload.get("traceId", "unknown")
         
         # 交互记录：MQTT 入
-        summary = "type=%s,vin=%s,seq=%s" % (msg_type, vin, seq)
+        summary = "type=%s,vin=%s,seq=%s,sid=%s" % (msg_type, vin, seq, session_id)
         _record_interaction("in", "mqtt", msg.topic or "vehicle/control", summary, len(raw), vin=vin, payload=raw if RECORD_INTERACTION_FULL else None)
         
+        # ★ 增强日志：记录每一个进来的控制指令，用于取证
+        if msg_type in ("drive", "remote_control", "emergency_stop", "start_stream", "stop_stream"):
+            # 只有在非高频指令或状态变更时全量打印
+            if msg_type != "drive" or (int(time.time()*1000) % 5000 < 20): 
+                _log("Control", "[IN] 收到消息: type=%s, vin=%s, seq=%s, sid=%s, traceId=%s", 
+                     msg_type, vin, seq, session_id, trace_id)
+
         if vin != VIN:
-            _warn("Control", "忽略消息：VIN 不匹配 (msg_vin=%s, local_vin=%s, type=%s)", vin, VIN, msg_type)
+            if _control_apply_count % 500 == 0:
+                _warn("Control", "[忽略] VIN 不匹配: 期望=%s, 实际=%s, 类型=%s", VIN, vin, msg_type)
             return
 
         # ★ 安全：陈旧指令校验 (Timestamp Check)
         now_ms = int(time.time() * 1000)
         delay_ms = now_ms - ts_ms
         if ts_ms > 0 and abs(delay_ms) > STALE_COMMAND_THRESHOLD_MS:
-            _warn("Control", "陈旧指令被丢弃 type=%s seq=%s delay=%dms (threshold=%dms, now=%d, msg_ts=%d)", 
-                  msg_type, seq, delay_ms, STALE_COMMAND_THRESHOLD_MS, now_ms, ts_ms)
+            _err("Control", "★★★ [丢弃] 陈旧指令！延迟=%dms (阈值=%dms), type=%s, seq=%s, traceId=%s, payload_preview=%s", 
+                  delay_ms, STALE_COMMAND_THRESHOLD_MS, msg_type, seq, trace_id, raw[:100])
             return
         
+        # ★ 隔离与分流 (Message Type Isolation)
+        # 类别 A: 驱动控制类 (严格 seq 校验，必须单调递增)
+        IS_DRIVING_CMD = msg_type in ("drive", "speed", "gear")
+        
+        # 类别 B: 远驾接管类 (修改状态机，不应更新驱动 seq)
+        IS_TAKEOVER_CMD = msg_type == "remote_control"
+        
+        # 类别 C: 管理类 (不更新全局 m_last_seq，不干扰驱动流)
+        IS_MGMT_CMD = msg_type in ("start_stream", "stop_stream", "emergency_stop")
+
         # ★ 安全：防重放校验 (Sequence Check)
-        global m_last_seq, m_active_session_id, m_last_valid_cmd_time, m_last_raw_warn_time
+        global m_last_seq, m_active_session_id, m_last_valid_cmd_time
         now_sec = time.time()
         
+        if IS_DRIVING_CMD:
+            # 序列号污染自愈：如果收到的 seq 是正常的低数值，而 last_seq 是天文数字，强制修复
+            if m_last_seq > 1000000000 and seq < 1000000:
+                _err("Control", "★★★ [自愈] 驱动指令 seq 强制重置 (检测到污染): last_seq=%d, recv_seq=%d", 
+                     m_last_seq, seq)
+                m_last_seq = 0
+
+            if seq <= m_last_seq:
+                # 只有在接管模式下且 seq 确实落后时才丢弃
+                if control_state.get("remote_enabled"):
+                    if _control_apply_count % 100 == 0:
+                        _log("Control", "[丢弃] 驱动指令过期: recv=%d, last=%d, type=%s", seq, m_last_seq, msg_type)
+                return
+            
+            # 记录跳变证据
+            if seq > m_last_seq + 10000 and m_last_seq > 0:
+                _warn("Control", "序列号跳变较大: %d -> %d (type=%s)", m_last_seq, seq, msg_type)
+                
+            m_last_seq = seq
+            m_last_valid_cmd_time = now_sec # 驱动指令“喂狗”
+        elif IS_TAKEOVER_CMD:
+            # 接管指令不更新驱动序列号，防止混淆
+            _log("Control", "[接管逻辑] 处理 remote_control seq=%d", seq)
+        else:
+            # 其他管理消息（如 start_stream）绝对禁止更新 m_last_seq
+            pass
+
+        # ★ 诊断：记录关键指令入口
+        if msg_type in ("drive", "remote_control", "emergency_stop", "start_stream", "stop_stream"):
+            if msg_type != "drive" or (int(time.time()*1000) % 5000 < 50): # 限制频率，每 5s 取样
+                log_control("[IN] 收到指令 type=%s seq=%s sid=%s delay=%dms active_sid=%s",
+                            msg_type, seq, session_id, delay_ms if ts_ms > 0 else 0, m_active_session_id)
+
         # 会话自愈逻辑：若超过 10s 未收到有效驱动指令，且收到新 session 的 start_stream，允许接管
         with control_lock:
             stale_session = (now_sec - m_last_valid_cmd_time > 10.0)
             if msg_type == "start_stream" and stale_session and m_active_session_id != session_id:
-                _log("Control", "检测到陈旧会话 (%.1fs 无指令) 且收到新 start_stream，自动更新 sessionId: %s -> %s", 
+                _log("Control", "[会话接管] 检测到陈旧会话 (%.1fs 无指令) 且收到新 start_stream，更新 sessionId: %s -> %s", 
                      now_sec - m_last_valid_cmd_time, m_active_session_id, session_id)
                 m_active_session_id = session_id
                 m_last_valid_cmd_time = now_sec # 重置时间避免连续触发
-
-            if seq > 0:
-                if seq <= m_last_seq:
-                    if CONTROL_DEBUG or (int(time.time()*1000) % 5000 < 50): 
-                        _log("Control", "DEBUG: 指令被重放校验丢弃! seq=%d, last_seq=%d, type=%s", 
-                             seq, m_last_seq, msg_type)
-                    if abs(now_ms - int(m_last_valid_cmd_time * 1000)) < 5000:
-                        return
-                m_last_seq = seq
+                m_last_seq = 0 # 新会话重置序列号校验
 
         # ★ 诊断：详细记录关键指令入口
         if msg_type in ("drive", "remote_control", "emergency_stop", "speed", "gear", "start_stream"):
@@ -1434,19 +1508,21 @@ def on_message(client, userdata, msg):
                 if enable:
                     # ★ 安全：会话加锁 (Session Lock)
                     if m_active_session_id and m_active_session_id != session_id:
-                        _warn("Control", "拒绝远驾接管：已有活跃会话 %s (当前 %s)", m_active_session_id, session_id)
+                        _err("Control", "★★★ [拒绝接管] 已有活跃会话！当前有效SID=%s, 申请人SID=%s, msg_seq=%d", 
+                              m_active_session_id, session_id, seq)
                         return
                     m_active_session_id = session_id
                     control_state["remote_enabled"] = True
-                    log_control("远驾接管开启：sid=%s", session_id)
+                    log_control("远驾接管开启成功：sid=%s, seq=%d", session_id, seq)
                 else:
                     # 只有原持有者或无锁时可释放
                     if not m_active_session_id or m_active_session_id == session_id:
                         m_active_session_id = None
                         control_state["remote_enabled"] = False
-                        log_control("远驾接管释放：sid=%s", session_id)
+                        log_control("[退出] 收到手动释放指令：sid=%s, seq=%d", session_id, seq)
                     else:
-                        _warn("Control", "忽略释放指令：sid 不匹配 (active=%s, req=%s)", m_active_session_id, session_id)
+                        _err("Control", "[非法释放] 试图释放他人持有的锁：当前SID=%s, 请求人SID=%s, seq=%d", 
+                              m_active_session_id, session_id, seq)
                         return
 
             # Send Ack
@@ -1468,11 +1544,15 @@ def on_message(client, userdata, msg):
             with control_lock:
                 # ★ 安全：会话一致性验证 (Session Verification)
                 if m_active_session_id and session_id and m_active_session_id != session_id:
-                    _warn("Control", "丢弃非法会话指令 active=%s, msg=%s", m_active_session_id, session_id)
+                    if _control_apply_count % 100 == 0: # 节流
+                        _err("Control", "★★★ [丢弃] 非法会话指令！当前有效SID=%s, 消息SID=%s, seq=%d", 
+                              m_active_session_id, session_id, seq)
                     return
                 
                 # ★ 安全：更新看门狗时间 (Watchdog Update)
                 m_last_valid_cmd_time = time.time()
+                if _control_apply_count % 500 == 0:
+                    _log("Control", "[喂狗] 指令到达 seq=%d, sid=%s", seq, session_id)
 
                 # [Poka-yoke Guard] 强制必选控制字段校验
                 required = ["steering", "throttle", "brake", "gear"]
@@ -1626,12 +1706,13 @@ def mqtt_thread_func():
             _warn("MQTT", "connect/loop_forever failed err=E_MQTT_CONN_FAILED cause=%s", e)
             log_mqtt("[MQTT] 连接或循环异常: %s，2s 后重连", e)
             
-            # ★ 安全：连接断开时，为防止车辆“失控”，强制重置远驾状态
+            # ★ 安全：连接断开时，为防止车辆“失控”，强制进入原地待命状态
             with control_lock:
                 if control_state["remote_enabled"]:
-                    log_mqtt("[MQTT] 检测到连接异常，强制重置远驾状态以确保安全")
-                    control_state["remote_enabled"] = False
-                    m_active_session_id = None
+                    _err("MQTT", "★★★ [警告] MQTT 链路闪断！原地制动等待重连... (保持接管状态, SID=%s)", m_active_session_id)
+                    # ★ 核心改动：不再释放控制权，仅触发看门狗过期效果（通过不更新时间戳）
+                    # 只要不修改 remote_enabled，当连接恢复且新指令到达时，即可无缝继续控制
+                    m_last_valid_cmd_time = 0 
             
             time.sleep(2)
 

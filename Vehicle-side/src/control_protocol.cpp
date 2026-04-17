@@ -15,6 +15,13 @@
 #include <string>
 #include <sstream>
 
+using namespace vehicle::error;
+using namespace std;
+
+// 前向声明
+static bool is_streaming_running();
+static void stop_streaming_processes();
+
 // 检查推流进程是否在运行
 static bool is_streaming_running()
 {
@@ -117,7 +124,7 @@ static bool is_streaming_running()
         return (ret == 0);
 
     } catch (const std::exception& e) {
-        LOG_STREAM_ERROR_WITH_CODE(SYS_UNEXPECTED_EXCEPTION, "Exception in is_streaming_running: {}", e.what());
+        LOG_STREAM_ERROR_WITH_CODE(Code::SYS_UNEXPECTED_EXCEPTION, "Exception in is_streaming_running: {}", e.what());
         return false;
     } catch (...) {
         LOG_STREAM_ERROR("Unknown exception in is_streaming_running");
@@ -191,7 +198,7 @@ static void run_dataset_push_script()
             LOG_STREAM_INFO("ZLM stream expected to be available in 5~15 seconds");
             LOG_STREAM_INFO("Log file: /tmp/push-stream.log");
         } else {
-            LOG_STREAM_ERROR_WITH_CODE(STREAM_START_FAILED,
+            LOG_STREAM_ERROR_WITH_CODE(Code::STREAM_START_FAILED,
                 "Streaming script started but process not detected after 500ms");
             LOG_STREAM_ERROR("Check /tmp/push-stream.log for errors");
             LOG_STREAM_ERROR("If using NuScenes dataset, verify dataset path is mounted correctly");
@@ -206,7 +213,7 @@ static void run_dataset_push_script()
         LOG_EXIT_WITH_VALUE("r={}, running={}", r, after500);
 
     } catch (const std::exception& e) {
-        LOG_STREAM_ERROR_WITH_CODE(STREAM_START_FAILED,
+        LOG_STREAM_ERROR_WITH_CODE(Code::STREAM_START_FAILED,
             "Exception in run_dataset_push_script: {}", e.what());
         LOG_EXIT_WITH_VALUE("exception");
     } catch (...) {
@@ -303,7 +310,7 @@ static void stop_streaming_processes()
         LOG_EXIT_WITH_VALUE("still_running={}", still_running);
 
     } catch (const std::exception& e) {
-        LOG_STREAM_ERROR_WITH_CODE(SYS_UNEXPECTED_EXCEPTION,
+        LOG_STREAM_ERROR_WITH_CODE(Code::SYS_UNEXPECTED_EXCEPTION,
             "Exception in stop_streaming_processes: {}", e.what());
         LOG_EXIT();
     } catch (...) {
@@ -333,14 +340,14 @@ bool handle_control_json(VehicleController* controller,
     LOG_STREAM_TRACE("handle_control_json called, payload length: {} bytes", jsonPayload.length());
 
     if (!controller) {
-        LOG_CTRL_ERROR_WITH_CODE(SYS_NULL_POINTER, "Controller is null, ignoring message");
+        LOG_CTRL_ERROR_WITH_CODE(Code::SYS_NULL_POINTER, "Controller is null, ignoring message");
         LOG_EXIT_WITH_VALUE("false: null_controller");
         return false;
     }
 
     // 检查输入参数
     if (jsonPayload.empty()) {
-        LOG_CTRL_ERROR_WITH_CODE(SYS_INVALID_PARAM, "Empty JSON payload received");
+        LOG_CTRL_ERROR_WITH_CODE(Code::SYS_INVALID_PARAM, "Empty JSON payload received");
         LOG_EXIT_WITH_VALUE("false: empty_payload");
         return false;
     }
@@ -404,7 +411,7 @@ bool handle_control_json(VehicleController* controller,
         if (typeStr == "start_stream") {
             // 仅当未配置 VEHICLE_VIN，或消息无 VIN，或消息 VIN 与配置一致时才响应
             if (!cfg_vin.empty() && !msg_vin.empty() && msg_vin != cfg_vin) {
-                LOG_SEC_WARN_WITH_CODE(SEC_VIN_MISMATCH,
+                LOG_SEC_WARN_WITH_CODE(Code::SEC_VIN_MISMATCH,
                     "Ignoring start_stream: VIN mismatch (msg_vin={}, cfg_vin={})", msg_vin, cfg_vin);
                 LOG_EXIT_WITH_VALUE("true: vin_mismatch_ignored");
                 return true;  // 返回true表示已处理，只是忽略
@@ -426,7 +433,7 @@ bool handle_control_json(VehicleController* controller,
 
         if (typeStr == "stop_stream") {
             if (!cfg_vin.empty() && !msg_vin.empty() && msg_vin != cfg_vin) {
-                LOG_SEC_WARN_WITH_CODE(SEC_VIN_MISMATCH,
+                LOG_SEC_WARN_WITH_CODE(Code::SEC_VIN_MISMATCH,
                     "Ignoring stop_stream: VIN mismatch (msg_vin={}, cfg_vin={})", msg_vin, cfg_vin);
                 LOG_EXIT_WITH_VALUE("true: vin_mismatch_ignored");
                 return true;
@@ -487,7 +494,7 @@ bool handle_control_json(VehicleController* controller,
                     LOG_CTRL_DEBUG("Extracted gear value: {} ({})", gearValue,
                                  (gearValue == -1 ? "R" : (gearValue == 0 ? "N" : (gearValue == 1 ? "D" : (gearValue == 2 ? "P" : "Unknown")))));
                 } catch (const std::exception& e) {
-                    LOG_CTRL_ERROR_WITH_CODE(CTRL_INVALID_GEAR,
+                    LOG_CTRL_ERROR_WITH_CODE(Code::CTRL_INVALID_GEAR,
                         "Failed to parse gear value: {}", e.what());
                     gearValue = 0;
                 }
@@ -620,7 +627,7 @@ bool handle_control_json(VehicleController* controller,
                     targetSpeedValue = std::max(0.0, std::min(100.0, targetSpeedValue));  // 限制在0-100 km/h
                     LOG_CTRL_DEBUG("Target speed extracted: {} km/h", targetSpeedValue);
                 } catch (const std::exception& e) {
-                    LOG_CTRL_ERROR_WITH_CODE(CTRL_INVALID_PARAM,
+                    LOG_CTRL_ERROR_WITH_CODE(Code::SYS_INVALID_PARAM,
                         "Failed to parse target speed: {}", e.what());
                     targetSpeedValue = 0.0;
                 }
@@ -656,7 +663,7 @@ bool handle_control_json(VehicleController* controller,
                     brakeValue = std::max(0.0, std::min(1.0, brakeValue));  // 限制在0.0-1.0
                     LOG_CTRL_DEBUG("Brake value extracted: {} (range: 0.0-1.0)", brakeValue);
                 } catch (const std::exception& e) {
-                    LOG_CTRL_ERROR_WITH_CODE(CTRL_INVALID_BRAKE,
+                    LOG_CTRL_ERROR_WITH_CODE(Code::CTRL_INVALID_BRAKE,
                         "Failed to parse brake value: {}", e.what());
                     brakeValue = 0.0;
                 }
@@ -728,7 +735,10 @@ bool handle_control_json(VehicleController* controller,
         // 检查远驾接管状态与会话锁
         if (!typeStr.empty() && typeStr != "start_stream" && typeStr != "stop_stream" && typeStr != "remote_control") {
             if (!controller->isRemoteControlEnabled()) {
-                LOG_CTRL_WARN("Remote control not enabled, ignoring control command type={}", typeStr);
+                LOG_CTRL_WARN("REJECT_CONTROL: type={} rejected because REMOTE_CONTROL is DISABLED. "
+                              "Vehicle might have restarted or session expired. "
+                              "Current DrivingMode: {}", 
+                              typeStr, controller->getDrivingModeString());
                 LOG_EXIT_WITH_VALUE("false: remote_control_disabled");
                 return false;
             }
@@ -736,7 +746,7 @@ bool handle_control_json(VehicleController* controller,
             // ★ 安全：会话一致性校验 (Session Lock Check)
             std::string activeSid = controller->getActiveSessionId();
             if (!activeSid.empty() && !sessionId.empty() && activeSid != sessionId) {
-                LOG_SEC_ERROR_WITH_CODE(SEC_SESSION_HIJACK_DETECTED,
+                LOG_SEC_ERROR_WITH_CODE(Code::SEC_SESSION_MISMATCH,
                     "Session Hijack detected! ActiveSession={}, MessageSession={}, Type={}",
                     activeSid, sessionId, typeStr);
                 LOG_EXIT_WITH_VALUE("false: session_mismatch");
@@ -772,7 +782,7 @@ bool handle_control_json(VehicleController* controller,
                                  (gear == -1 ? "R" : (gear == 0 ? "N" : (gear == 1 ? "D" : "P"))));
                 }
             } catch (const std::exception& e) {
-                LOG_CTRL_ERROR_WITH_CODE(CTRL_INVALID_PARAM,
+                LOG_CTRL_ERROR_WITH_CODE(Code::SYS_INVALID_PARAM,
                     "Failed to parse '{}': {}", key, e.what());
                 // Apply safe defaults for critical values
                 if (key == "steering") steering = 0.0;
@@ -845,12 +855,12 @@ bool handle_control_json(VehicleController* controller,
         return true;
 
     } catch (const JsonParseException& e) {
-        LOG_CTRL_ERROR_WITH_CODE(static_cast<vehicle::error::Code>(e.error_code_),
+        LOG_CTRL_ERROR_WITH_CODE(static_cast<Code>(e.error_code_),
             "JSON parse error: {}", e.what());
         LOG_EXIT_WITH_VALUE("false: json_parse_error");
         return false;
     } catch (const std::exception &e) {
-        LOG_CTRL_ERROR_WITH_CODE(SYS_UNEXPECTED_EXCEPTION,
+        LOG_CTRL_ERROR_WITH_CODE(Code::SYS_UNEXPECTED_EXCEPTION,
             "Unexpected error in handle_control_json: {}", e.what());
         LOG_EXIT_WITH_VALUE("false: unexpected_error");
         return false;
@@ -898,7 +908,7 @@ bool check_and_restore_streaming()
                 LOG_EXIT_WITH_VALUE("true: restored");
                 return true;
             } else {
-                LOG_STREAM_ERROR_WITH_CODE(STREAM_RESTORE_FAILED,
+                LOG_STREAM_ERROR_WITH_CODE(Code::STREAM_RESTORE_FAILED,
                     "Failed to auto-restore streaming process");
                 LOG_EXIT_WITH_VALUE("false: restore_failed");
                 return false;

@@ -51,9 +51,14 @@ class VehicleStatus : public QObject {
   Q_PROPERTY(int cleaningTotal READ cleaningTotal NOTIFY cleaningTotalChanged)
   /** 最后一次收到车端状态上报的时间戳（毫秒） */
   Q_PROPERTY(qint64 lastStatusTimestamp READ lastStatusTimestamp NOTIFY lastStatusTimestampChanged)
+  /** 本地意图：是否期望处于远驾接管状态（用于检测车端异常退出/重启导致的模式丢失） */
+  Q_PROPERTY(bool localIntentRemoteControl READ localIntentRemoteControl WRITE setLocalIntentRemoteControl NOTIFY localIntentRemoteControlChanged)
 
  public:
   explicit VehicleStatus(QObject *parent = nullptr);
+
+  bool localIntentRemoteControl() const { return m_localIntentRemoteControl; }
+  void setLocalIntentRemoteControl(bool intended);
 
   double speed() const { return m_speed; }
   double batteryLevel() const { return m_batteryLevel; }
@@ -133,6 +138,8 @@ class VehicleStatus : public QObject {
   void cleaningCurrentChanged(int current);
   void cleaningTotalChanged(int total);
   void lastStatusTimestampChanged(qint64 timestamp);
+  void localIntentRemoteControlChanged(bool intended);
+  void safetyWarning(const QString &reason);
 
  private:
   double m_speed = 0.0;
@@ -159,6 +166,7 @@ class VehicleStatus : public QObject {
   int m_cleaningCurrent = 400;
   int m_cleaningTotal = 500;
   qint64 m_lastStatusTimestamp = 0;
+  bool m_localIntentRemoteControl = false;
 };
 
 #endif  // VEHICLESTATUS_H

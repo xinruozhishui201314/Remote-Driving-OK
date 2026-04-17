@@ -18,6 +18,9 @@
 #include <future>
 #endif
 
+using namespace std;
+using namespace vehicle::error;
+
 MqttHandler::MqttHandler(VehicleController *controller)
     : m_controller(controller)
     , m_dataGenerator()
@@ -94,11 +97,22 @@ bool MqttHandler::connect(const std::string &brokerUrl)
                              topic, payload.size());
                 onMessageReceived(topic, payload);
             } catch (const std::exception& e) {
-                LOG_MQTT_ERROR_WITH_CODE(SYS_UNEXPECTED_EXCEPTION,
+                LOG_MQTT_ERROR_WITH_CODE(Code::SYS_UNEXPECTED_EXCEPTION,
                     "Exception in message callback: {}", e.what());
             } catch (...) {
                 LOG_MQTT_ERROR("Unknown exception in message callback");
             }
+        });
+
+        // 设置连接回调，用于追踪自动重连等状态
+        m_client->set_connected_handler([this](const std::string& cause) {
+            LOG_MQTT_INFO("MQTT connected handler: cause={}, m_connected was {}", cause, m_connected);
+            m_connected = true;
+        });
+
+        m_client->set_connection_lost_handler([this](const std::string& cause) {
+            LOG_MQTT_WARN("MQTT connection LOST: cause={}, m_connected was {}", cause, m_connected);
+            m_connected = false;
         });
 
         // 连接选项
@@ -117,7 +131,7 @@ bool MqttHandler::connect(const std::string &brokerUrl)
             m_client->connect(connOpts)->wait();
             LOG_MQTT_INFO("Connected to MQTT broker successfully");
         } catch (const std::exception& e) {
-            LOG_MQTT_ERROR_WITH_CODE(MQTT_CONN_FAILED,
+            LOG_MQTT_ERROR_WITH_CODE(Code::MQTT_CONN_FAILED,
                 "Failed to connect to broker: {}", e.what());
             LOG_EXIT_WITH_VALUE("false: connection_failed");
             return false;
@@ -129,7 +143,7 @@ bool MqttHandler::connect(const std::string &brokerUrl)
             m_client->subscribe(m_controlTopic, 1)->wait();
             LOG_MQTT_INFO("Subscribed to topic: {} successfully", m_controlTopic);
         } catch (const std::exception& e) {
-            LOG_MQTT_ERROR_WITH_CODE(MQTT_SUBSCRIBE_FAILED,
+            LOG_MQTT_ERROR_WITH_CODE(Code::MQTT_SUBSCRIBE_FAILED,
                 "Failed to subscribe to topic {}: {}", m_controlTopic, e.what());
             LOG_EXIT_WITH_VALUE("false: subscribe_failed");
             return false;
@@ -155,13 +169,13 @@ bool MqttHandler::connect(const std::string &brokerUrl)
         return true;
 
     } catch (const std::exception &e) {
-        LOG_MQTT_ERROR_WITH_CODE(MQTT_CONN_FAILED,
+        LOG_MQTT_ERROR_WITH_CODE(Code::MQTT_CONN_FAILED,
             "MQTT connect exception: {}", e.what());
         LOG_EXIT_WITH_VALUE("false: exception");
         return false;
     }
 #else
-    LOG_MQTT_ERROR_WITH_CODE(CFG_ENV_VAR_MISSING,
+    LOG_MQTT_ERROR_WITH_CODE(Code::CFG_ENV_VAR_MISSING,
         "MQTT support not compiled (ENABLE_MQTT_PAHO not defined)");
     LOG_EXIT_WITH_VALUE("false: not_compiled");
     return false;
@@ -181,7 +195,7 @@ void MqttHandler::disconnect()
             m_connected = false;
             LOG_MQTT_INFO("MQTT disconnected successfully");
         } catch (const std::exception &e) {
-            LOG_MQTT_ERROR_WITH_CODE(MQTT_DISCONNECTED,
+            LOG_MQTT_ERROR_WITH_CODE(Code::MQTT_DISCONNECTED,
                 "MQTT disconnect error: {}", e.what());
         }
     } else {
@@ -236,7 +250,7 @@ void MqttHandler::processClientEncoderHint(const std::string &jsonPayload)
 
     const bool vin_ok = m_vin.empty() || msg_vin.empty() || msg_vin == m_vin;
     if (!vin_ok) {
-        LOG_SEC_WARN_WITH_CODE(SEC_VIN_MISMATCH,
+        LOG_SEC_WARN_WITH_CODE(Code::SEC_VIN_MISMATCH,
             "Ignoring encoder hint: VIN mismatch (msg_vin={}, cfg_vin={})", msg_vin, m_vin);
         return;
     }
@@ -282,7 +296,7 @@ void MqttHandler::processClientEncoderHint(const std::string &jsonPayload)
         m_client->publish(msg);
         LOG_MQTT_INFO("Published encoder_hint_ack to {}", m_statusTopic);
     } catch (const std::exception &e) {
-        LOG_MQTT_ERROR_WITH_CODE(MQTT_PUBLISH_FAILED,
+        LOG_MQTT_ERROR_WITH_CODE(Code::MQTT_PUBLISH_FAILED,
             "Failed to publish encoder_hint_ack: {}", e.what());
     }
 #else
@@ -314,7 +328,7 @@ void MqttHandler::processControlCommand(const std::string &jsonPayload)
             LOG_MQTT_INFO("Received start_stream command, VIN matched. Enabling chassis data publishing.");
             LOG_MQTT_INFO("  msg_vin={}, cfg_vin={}", msg_vin, cfg_vin);
         } else {
-            LOG_SEC_WARN_WITH_CODE(SEC_VIN_MISMATCH,
+            LOG_SEC_WARN_WITH_CODE(Code::SEC_VIN_MISMATCH,
                 "Ignoring start_stream: VIN mismatch (msg_vin={}, cfg_vin={})", msg_vin, cfg_vin);
         }
     }
@@ -353,6 +367,12 @@ void MqttHandler::processControlCommand(const std::string &jsonPayload)
         }
     }
 
+    // 记录收到的关键指令信息
+    LOG_MQTT_INFO("RECV_CONTROL: seq={}, ts={}, type={}, payload_size={}", 
+                  seq, timestamp, 
+                  (std::regex_search(jsonPayload, type_match, type_regex) ? type_match[1].str() : "unknown"),
+                  jsonPayload.size());
+
     // 计算网络 RTT (简单估算)
     auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     if (hasTs && timestamp > 0) {
@@ -361,6 +381,9 @@ void MqttHandler::processControlCommand(const std::string &jsonPayload)
         if (m_controller) {
             m_controller->setNetworkQuality(rtt);
             LOG_NET_TRACE("Network RTT updated: {:.2f}ms", rtt);
+        }
+        if (rtt > 200.0) {
+            LOG_NET_WARN("High control latency detected: {:.1f}ms (seq={})", rtt, seq);
         }
     }
 
@@ -387,7 +410,7 @@ void MqttHandler::processControlCommand(const std::string &jsonPayload)
         handled = handle_control_json(m_controller, jsonPayload);
         LOG_MQTT_DEBUG("handle_control_json returned: {}", handled);
     } catch (const std::exception &e) {
-        LOG_MQTT_ERROR_WITH_CODE(SYS_UNEXPECTED_EXCEPTION,
+        LOG_MQTT_ERROR_WITH_CODE(Code::SYS_UNEXPECTED_EXCEPTION,
             "handle_control_json exception: {}", e.what());
         handled = false;
     }
@@ -410,7 +433,7 @@ void MqttHandler::processControlCommand(const std::string &jsonPayload)
 
     LOG_EXIT_WITH_VALUE("handled={}", handled);
 #else
-    LOG_MQTT_ERROR_WITH_CODE(CFG_ENV_VAR_MISSING,
+    LOG_MQTT_ERROR_WITH_CODE(Code::CFG_ENV_VAR_MISSING,
         "MQTT support not compiled");
     LOG_EXIT_WITH_VALUE("false: not_compiled");
 #endif
@@ -614,7 +637,7 @@ void MqttHandler::publishStatus()
                 LOG_MQTT_DEBUG("Published to topic: {}", m_statusTopic);
             }
         } catch (const std::exception &e) {
-            LOG_MQTT_ERROR_WITH_CODE(MQTT_PUBLISH_FAILED,
+            LOG_MQTT_ERROR_WITH_CODE(Code::MQTT_PUBLISH_FAILED,
                 "Failed to publish to {}: {}", m_statusTopic, e.what());
         }
 
@@ -630,7 +653,7 @@ void MqttHandler::publishStatus()
                     LOG_MQTT_DEBUG("Published to vehicle topic: {}", vehicleStatusTopic);
                 }
             } catch (const std::exception &e) {
-                LOG_MQTT_ERROR_WITH_CODE(MQTT_PUBLISH_FAILED,
+                LOG_MQTT_ERROR_WITH_CODE(Code::MQTT_PUBLISH_FAILED,
                     "Failed to publish to vehicle topic: {}", e.what());
             }
         } else {
@@ -640,7 +663,7 @@ void MqttHandler::publishStatus()
         }
 
     } catch (const std::exception &e) {
-        LOG_MQTT_ERROR_WITH_CODE(SYS_UNEXPECTED_EXCEPTION,
+        LOG_MQTT_ERROR_WITH_CODE(Code::SYS_UNEXPECTED_EXCEPTION,
             "Status publish error: {}", e.what());
     }
 #else
@@ -706,7 +729,7 @@ void MqttHandler::publishRemoteControlAck(bool enabled)
                      enabled, drivingModeStr, m_statusTopic);
 
     } catch (const std::exception &e) {
-        LOG_MQTT_ERROR_WITH_CODE(MQTT_PUBLISH_FAILED,
+        LOG_MQTT_ERROR_WITH_CODE(Code::MQTT_PUBLISH_FAILED,
             "Failed to send remote control ack: {}", e.what());
     }
 

@@ -571,6 +571,11 @@ void VehicleControlService::sendUiCommand(const QString& type, const QVariantMap
   }
 
   const uint32_t seq = nextSequenceNumber();
+  if (seq > 1000000000) {
+      qCritical().noquote() << "★★★ [关键证据][取证] UI 指令获取到异常 seq=" << seq
+                           << " type=" << type
+                           << " traceId=" << traceId;
+  }
 
   if (type == QLatin1String("gear")) {
     int g = payload.value(QStringLiteral("value")).toInt();

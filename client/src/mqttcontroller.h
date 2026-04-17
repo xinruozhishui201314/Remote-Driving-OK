@@ -133,6 +133,7 @@ class MqttController : public QObject {
   void controlChannelReadyChanged();
   void statusReceived(const QJsonObject &status);
   void errorOccurred(const QString &error);
+  void remoteControlRequested(bool enabled);
 
  private slots:
   void onConnected();

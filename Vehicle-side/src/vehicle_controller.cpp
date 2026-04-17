@@ -4,6 +4,7 @@
 #include "common/log_macros.h" // 引入增强日志宏
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 #include <chrono>
 #include <chrono>
 #include <stdexcept>
@@ -14,6 +15,9 @@
 #include <boost/shared_ptr.hpp>
 #endif
 
+using namespace std;
+using namespace vehicle::error;
+
 VehicleController::VehicleController()
     : m_lastSeq(0)
     , m_lastCmdTimestamp(0)
@@ -22,8 +26,6 @@ VehicleController::VehicleController()
     LOG_ENTRY();  // 函数入口追踪
 
     try {
-        // 初始化日志系统
-        vehicle::common::Logger::init("vehicle-ctrl", "info");
         LOG_INFO("Vehicle-side Controller initialized");
         LOG_INFO("Controller version: 1.0.0, Build timestamp: {}", __DATE__ " " __TIME__);
 
@@ -32,6 +34,7 @@ VehicleController::VehicleController()
 
         LOG_CTRL_INFO("VehicleController constructed successfully");
         LOG_CTRL_INFO("Initial state: IDLE, RemoteControl: disabled, DrivingMode: AUTONOMOUS");
+        LOG_INFO("RESTART_DETECTED: VehicleController has been (re)initialized. Driving mode defaulted to AUTONOMOUS.");
         LOG_EXIT_WITH_VALUE("success");
     } catch (const std::exception& e) {
         LOG_CTRL_CRITICAL("CRITICAL: Failed to construct VehicleController: {}", e.what());
@@ -87,7 +90,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
         // ==================== 参数验证 ====================
         // 验证方向盘值
         if (std::isnan(steering) || std::isinf(steering)) {
-            LOG_CTRL_ERROR_WITH_CODE(CTRL_INVALID_STEERING,
+            LOG_CTRL_ERROR_WITH_CODE(Code::CTRL_INVALID_STEERING,
                 "Invalid steering value: {} (NaN={}, Inf={}), defaulting to 0.0",
                 steering, std::isnan(steering), std::isinf(steering));
             steering = 0.0;
@@ -95,7 +98,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
 
         // 验证油门值
         if (std::isnan(throttle) || std::isinf(throttle)) {
-            LOG_CTRL_ERROR_WITH_CODE(CTRL_INVALID_THROTTLE,
+            LOG_CTRL_ERROR_WITH_CODE(Code::CTRL_INVALID_THROTTLE,
                 "Invalid throttle value: {} (NaN={}, Inf={}), defaulting to 0.0",
                 throttle, std::isnan(throttle), std::isinf(throttle));
             throttle = 0.0;
@@ -103,7 +106,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
 
         // 验证刹车值
         if (std::isnan(brake) || std::isinf(brake)) {
-            LOG_CTRL_ERROR_WITH_CODE(CTRL_INVALID_BRAKE,
+            LOG_CTRL_ERROR_WITH_CODE(Code::CTRL_INVALID_BRAKE,
                 "Invalid brake value: {} (NaN={}, Inf={}), defaulting to 0.0",
                 brake, std::isnan(brake), std::isinf(brake));
             brake = 0.0;
@@ -111,7 +114,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
 
         // 验证档位值
         if (gear != -1 && gear != 0 && gear != 1 && gear != 2) {
-            LOG_CTRL_ERROR_WITH_CODE(CTRL_INVALID_GEAR,
+            LOG_CTRL_ERROR_WITH_CODE(Code::CTRL_INVALID_GEAR,
                 "Invalid gear value: {} (valid: -1, 0, 1, 2), defaulting to 1 (Drive)",
                 gear);
             gear = 1;
@@ -130,7 +133,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
                                  m_lastSeq, seq, std::abs(now - m_lastCmdTimestamp));
                     m_lastSeq = seq;  // 允许重置
                 } else {
-                    LOG_SEC_ERROR_WITH_CODE(SEC_SEQ_INVALID,
+                    LOG_SEC_ERROR_WITH_CODE(Code::SEC_SEQ_INVALID,
                         "SEC-7002: Replay attack detected! LastSeq={}, CurrentSeq={}, TimeDiff={}ms",
                         m_lastSeq, seq, std::abs(now - m_lastCmdTimestamp));
                     LOG_EXIT_WITH_VALUE("rejected: replay_attack");
@@ -140,7 +143,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
 
             // 时间戳校验
             if (std::abs(now - timestampMs) > 2000 && m_lastCmdTimestamp != 0) {
-                LOG_SEC_ERROR_WITH_CODE(SEC_TIMESTAMP_EXPIRED,
+                LOG_SEC_ERROR_WITH_CODE(Code::SEC_TIMESTAMP_EXPIRED,
                     "SEC-7003: Timestamp expired! CurrTime={}, CmdTime={}, Diff={}ms > 2000ms threshold",
                     now, timestampMs, std::abs(now - timestampMs));
                 LOG_EXIT_WITH_VALUE("rejected: timestamp_expired");
@@ -164,7 +167,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
         if (m_networkRtt > 300.0) {
             // 严重降级：强制安全停车
             effectiveThrottle = 0.0;
-            LOG_SAFE_ERROR_WITH_CODE(SAFETY_NETWORK_CRITICAL,
+            LOG_SAFE_ERROR_WITH_CODE(Code::SAFETY_NETWORK_CRITICAL,
                 "Network CRITICAL (RTT={:.1f}ms > 300ms). Forcing SAFE_STOP!",
                 m_networkRtt);
 
@@ -211,7 +214,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
             applyBrake(m_currentCommand.brake);
             applyGear(m_currentCommand.gear);
         } catch (const std::exception& e) {
-            LOG_CTRL_ERROR_WITH_CODE(CTRL_HW_INTERFACE_ERROR,
+            LOG_CTRL_ERROR_WITH_CODE(Code::CTRL_HW_INTERFACE_ERROR,
                 "Hardware interface error during applyControl: {}", e.what());
             // 继续执行，因为可能有软件层面的保护
         }
@@ -220,7 +223,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
         try {
             applyControlToCarla();
         } catch (const std::exception& e) {
-            LOG_CARLA_ERROR_WITH_CODE(CARLA_APPLY_CONTROL_FAILED,
+            LOG_CARLA_ERROR_WITH_CODE(Code::CARLA_APPLY_CONTROL_FAILED,
                 "Failed to apply control to CARLA: {}", e.what());
         }
 #endif
@@ -251,7 +254,7 @@ void VehicleController::processCommand(double steering, double throttle, double 
         LOG_EXIT_WITH_VALUE("success");
 
     } catch (const std::exception& e) {
-        LOG_CTRL_ERROR_WITH_CODE(SYS_UNEXPECTED_EXCEPTION,
+        LOG_CTRL_ERROR_WITH_CODE(Code::SYS_UNEXPECTED_EXCEPTION,
             "Unexpected exception in processCommand: {}", e.what());
         LOG_EXIT_WITH_VALUE("exception");
         throw;  // 重新抛出，因为这是核心控制逻辑
@@ -314,9 +317,10 @@ void VehicleController::watchdogTick(int timeoutMs)
 
     if (elapsedMs > timeoutMs && m_state != SafetyState::SAFE_STOP) {
         // 记录 ERROR 级别日志，因为触发了安全停车
-        LOG_SAFE_ERROR_WITH_CODE(SAFETY_WATCHDOG_TIMEOUT,
-            "WATCHDOG TIMEOUT! Elapsed={}ms > Threshold={}ms. Entering SAFE_STOP immediately!",
-            elapsedMs, timeoutMs);
+        LOG_SAFE_ERROR_WITH_CODE(Code::SAFETY_WATCHDOG_TIMEOUT,
+            "WATCHDOG TIMEOUT! Elapsed={}ms > Threshold={}ms. Entering SAFE_STOP immediately! "
+            "LastCmdSeq={}, LastCmdTs={}, RemoteEnabled={}, DrivingMode={}",
+            elapsedMs, timeoutMs, m_lastSeq, m_lastCmdTimestamp, m_remoteControlEnabled, static_cast<int>(m_drivingMode));
 
         m_state = SafetyState::SAFE_STOP;
         m_remoteControlEnabled = false; // 超时自动释放
@@ -333,7 +337,7 @@ void VehicleController::watchdogTick(int timeoutMs)
             applyControlToCarla();  // 确保 CARLA 收到停车指令
             LOG_CARLA_INFO("CARLA notified of SAFE_STOP");
         } catch (const std::exception& e) {
-            LOG_CARLA_ERROR_WITH_CODE(CARLA_APPLY_CONTROL_FAILED,
+            LOG_CARLA_ERROR_WITH_CODE(Code::CARLA_APPLY_CONTROL_FAILED,
                 "Failed to notify CARLA of SAFE_STOP: {}", e.what());
         }
 #endif
@@ -411,7 +415,7 @@ void VehicleController::emergencyStop()
             applyControlToCarla();  // 确保 CARLA 收到停车指令
             LOG_CARLA_INFO("CARLA notified of EMERGENCY STOP");
         } catch (const std::exception& e) {
-            LOG_CARLA_ERROR_WITH_CODE(CARLA_APPLY_CONTROL_FAILED,
+            LOG_CARLA_ERROR_WITH_CODE(Code::CARLA_APPLY_CONTROL_FAILED,
                 "Failed to notify CARLA of EMERGENCY_STOP: {}", e.what());
         }
 #endif
@@ -494,7 +498,8 @@ void VehicleController::setDrivingMode(DrivingMode mode)
         default: oldModeStr = "Unknown"; break;
     }
 
-    LOG_CTRL_INFO("Driving mode changed: {} ({} -> {})", modeStr, oldModeStr, modeStr);
+    LOG_CTRL_INFO("Driving mode changed: {} ({} -> {}) | Session: {} | RemoteEnabled: {}", 
+                  modeStr, oldModeStr, modeStr, m_activeSessionId, m_remoteControlEnabled);
     LOG_EXIT();
 }
 
@@ -527,10 +532,10 @@ void VehicleController::setNetworkQuality(double rtt)
 
     // 记录网络质量警告
     if (rtt > 300.0) {
-        LOG_NET_ERROR_WITH_CODE(NET_RTT_CRITICAL,
+        LOG_NET_ERROR_WITH_CODE(Code::NET_RTT_CRITICAL,
             "Network RTT CRITICAL: {:.2f}ms (>300ms threshold)", rtt);
     } else if (rtt > 150.0) {
-        LOG_NET_WARN_WITH_CODE(NET_RTT_HIGH,
+        LOG_NET_WARN_WITH_CODE(Code::NET_RTT_HIGH,
             "Network RTT HIGH: {:.2f}ms (>150ms threshold)", rtt);
     }
 
@@ -598,7 +603,7 @@ void VehicleController::applySafeStopLocked()
         applyGear(0);
         LOG_SAFE_INFO("SAFE_STOP commands sent to hardware interfaces");
     } catch (const std::exception& e) {
-        LOG_SAFE_ERROR_WITH_CODE(CTRL_HW_INTERFACE_ERROR,
+        LOG_SAFE_ERROR_WITH_CODE(Code::CTRL_HW_INTERFACE_ERROR,
             "Failed to apply SAFE_STOP to hardware: {}", e.what());
         // 继续执行，因为已经设置了软件层面的状态
     }
@@ -649,7 +654,7 @@ void VehicleController::applyControlToCarla()
         auto vehicle = boost::static_pointer_cast<carla::client::Vehicle>(m_carlaActor);
 
         if (!vehicle) {
-            LOG_CARLA_ERROR_WITH_CODE(CARLA_ACTOR_NOT_FOUND,
+            LOG_CARLA_ERROR_WITH_CODE(Code::CARLA_ACTOR_NOT_FOUND,
                 "Failed to cast actor to Vehicle type");
             return;
         }
@@ -686,7 +691,7 @@ void VehicleController::applyControlToCarla()
                    "TODO_VIN", m_lastSeq, m_lastCmdTimestamp, t5_now, (t5_now - m_lastCmdTimestamp));
 
     } catch (const std::exception& e) {
-        LOG_CARLA_ERROR_WITH_CODE(CARLA_APPLY_CONTROL_FAILED,
+        LOG_CARLA_ERROR_WITH_CODE(Code::CARLA_APPLY_CONTROL_FAILED,
             "CARLA ApplyControl failed: {}. Entering SAFE_STOP immediately!", e.what());
 
         m_state = SafetyState::SAFE_STOP;

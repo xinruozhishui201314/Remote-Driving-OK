@@ -16,9 +16,9 @@ RUN echo "[build] [1/6] apt update" && apt-get update
 RUN echo "[build] [2/6] apt install ca-certificates wget" && \
     apt-get install -y --no-install-recommends ca-certificates wget
 
-RUN echo "[build] [3/6] apt install ffmpeg, python3-pip, ninja-build, build-essential, libssl-dev" && \
+RUN echo "[build] [3/6] apt install ffmpeg, python3-pip, ninja-build, build-essential, libssl-dev, xdg-user-dirs" && \
     apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg python3-pip python3-setuptools ninja-build build-essential libssl-dev
+    ffmpeg python3-pip python3-setuptools ninja-build build-essential libssl-dev xdg-user-dirs
 
 # 使用宿主机 deps/cmake.tar.gz（构建前请下载到 deploy/carla/deps/cmake.tar.gz），无需构建时从 GitHub 拉取
 RUN echo "[build] [4/6] Using local CMake tarball (deps/cmake.tar.gz)"

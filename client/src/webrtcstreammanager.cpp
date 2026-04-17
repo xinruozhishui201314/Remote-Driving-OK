@@ -1728,6 +1728,14 @@ void WebRtcStreamManager::onZlmReadyTimerTick() {
     const QJsonArray rows = doc.object().value(QStringLiteral("data")).toArray();
     const int n = countVinCamStreamsInZlmMediaList(rows, m_vin);
     if (n < 4) {
+      // ★ 核心修复：当资源未就绪时，检查 ZLM 返回的 code，排除 secret 错误
+      int zlmCode = doc.object().value("code").toInt();
+      if (zlmCode != 0) {
+          qCritical().noquote() << "[StreamManager][ZlmReady][ERROR] ZLM API 返回错误码:" << zlmCode
+                               << " body=" << QString::fromUtf8(data)
+                               << " ★ 请检查 ZLM_API_SECRET 是否与 deploy/zlm/config.ini 匹配";
+      }
+
       qWarning().noquote() << "[StreamManager][ZlmReady] ★ ZLM 资源未就绪 ★: vinStreams=" << n << "/4"
               << "vin=" << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin)
               << "\n  [Check-1] 正在轮询 URL: " << url.toString()

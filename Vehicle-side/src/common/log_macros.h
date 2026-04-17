@@ -11,7 +11,7 @@
 #include <mutex>
 #include "logger.h"
 #include "error_code.h"
-#include <fmt/format.h>  // 添加 fmt 头文件
+#include <spdlog/fmt/fmt.h> // 使用 spdlog 自带的 fmt，避免版本冲突
 
 /**
  * @brief 增强的日志宏系统
@@ -164,7 +164,7 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
     do { \
         auto prefix = vehicle::logging::getLogPrefix(module, __FUNCTION__, __LINE__); \
         auto err_str = vehicle::logging::formatErrorCode(static_cast<uint32_t>(code)); \
-        std::string full_msg = prefix + "[" + err_str + "] " + fmt::format(__VA_ARGS__); \
+        std::string full_msg = prefix + "[" + err_str + "] " + ::fmt::format(__VA_ARGS__); \
         LOG_ERROR("{}", full_msg); \
     } while(0)
 
@@ -172,7 +172,7 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
     do { \
         auto prefix = vehicle::logging::getLogPrefix(module, __FUNCTION__, __LINE__); \
         auto err_str = vehicle::logging::formatErrorCode(static_cast<uint32_t>(code)); \
-        std::string full_msg = prefix + "[" + err_str + "] " + fmt::format(__VA_ARGS__); \
+        std::string full_msg = prefix + "[" + err_str + "] " + ::fmt::format(__VA_ARGS__); \
         LOG_WARN("{}", full_msg); \
     } while(0)
 
@@ -185,6 +185,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_SYS_WARN(...)   LOG_BASE(LOG_MODULE_SYSTEM, WARN, __VA_ARGS__)
 #define LOG_SYS_ERROR(...)  LOG_BASE(LOG_MODULE_SYSTEM, ERROR, __VA_ARGS__)
 #define LOG_SYS_CRITICAL(...) LOG_BASE(LOG_MODULE_SYSTEM, CRITICAL, __VA_ARGS__)
+#define LOG_SYS_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_SYSTEM, code, __VA_ARGS__)
+#define LOG_SYS_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_SYSTEM, code, __VA_ARGS__)
 
 // MQTT模块日志
 #define LOG_MQTT_TRACE(...)  LOG_BASE(LOG_MODULE_MQTT, TRACE, __VA_ARGS__)
@@ -193,6 +195,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_MQTT_WARN(...)   LOG_BASE(LOG_MODULE_MQTT, WARN, __VA_ARGS__)
 #define LOG_MQTT_ERROR(...)  LOG_BASE(LOG_MODULE_MQTT, ERROR, __VA_ARGS__)
 #define LOG_MQTT_CRITICAL(...) LOG_BASE(LOG_MODULE_MQTT, CRITICAL, __VA_ARGS__)
+#define LOG_MQTT_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_MQTT, code, __VA_ARGS__)
+#define LOG_MQTT_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_MQTT, code, __VA_ARGS__)
 
 // 控制器模块日志
 #define LOG_CTRL_TRACE(...)  LOG_BASE(LOG_MODULE_CTRL, TRACE, __VA_ARGS__)
@@ -201,6 +205,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_CTRL_WARN(...)   LOG_BASE(LOG_MODULE_CTRL, WARN, __VA_ARGS__)
 #define LOG_CTRL_ERROR(...)  LOG_BASE(LOG_MODULE_CTRL, ERROR, __VA_ARGS__)
 #define LOG_CTRL_CRITICAL(...) LOG_BASE(LOG_MODULE_CTRL, CRITICAL, __VA_ARGS__)
+#define LOG_CTRL_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_CTRL, code, __VA_ARGS__)
+#define LOG_CTRL_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_CTRL, code, __VA_ARGS__)
 
 // 安全模块日志
 #define LOG_SAFE_TRACE(...)  LOG_BASE(LOG_MODULE_SAFETY, TRACE, __VA_ARGS__)
@@ -209,6 +215,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_SAFE_WARN(...)   LOG_BASE(LOG_MODULE_SAFETY, WARN, __VA_ARGS__)
 #define LOG_SAFE_ERROR(...)  LOG_BASE(LOG_MODULE_SAFETY, ERROR, __VA_ARGS__)
 #define LOG_SAFE_CRITICAL(...) LOG_BASE(LOG_MODULE_SAFETY, CRITICAL, __VA_ARGS__)
+#define LOG_SAFE_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_SAFETY, code, __VA_ARGS__)
+#define LOG_SAFE_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_SAFETY, code, __VA_ARGS__)
 
 // 网络模块日志
 #define LOG_NET_TRACE(...)  LOG_BASE(LOG_MODULE_NETWORK, TRACE, __VA_ARGS__)
@@ -217,6 +225,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_NET_WARN(...)   LOG_BASE(LOG_MODULE_NETWORK, WARN, __VA_ARGS__)
 #define LOG_NET_ERROR(...)  LOG_BASE(LOG_MODULE_NETWORK, ERROR, __VA_ARGS__)
 #define LOG_NET_CRITICAL(...) LOG_BASE(LOG_MODULE_NETWORK, CRITICAL, __VA_ARGS__)
+#define LOG_NET_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_NETWORK, code, __VA_ARGS__)
+#define LOG_NET_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_NETWORK, code, __VA_ARGS__)
 
 // CARLA模块日志
 #define LOG_CARLA_TRACE(...)  LOG_BASE(LOG_MODULE_CARLA, TRACE, __VA_ARGS__)
@@ -225,6 +235,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_CARLA_WARN(...)   LOG_BASE(LOG_MODULE_CARLA, WARN, __VA_ARGS__)
 #define LOG_CARLA_ERROR(...)  LOG_BASE(LOG_MODULE_CARLA, ERROR, __VA_ARGS__)
 #define LOG_CARLA_CRITICAL(...) LOG_BASE(LOG_MODULE_CARLA, CRITICAL, __VA_ARGS__)
+#define LOG_CARLA_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_CARLA, code, __VA_ARGS__)
+#define LOG_CARLA_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_CARLA, code, __VA_ARGS__)
 
 // 推流模块日志
 #define LOG_STREAM_TRACE(...)  LOG_BASE(LOG_MODULE_STREAM, TRACE, __VA_ARGS__)
@@ -233,6 +245,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_STREAM_WARN(...)   LOG_BASE(LOG_MODULE_STREAM, WARN, __VA_ARGS__)
 #define LOG_STREAM_ERROR(...)  LOG_BASE(LOG_MODULE_STREAM, ERROR, __VA_ARGS__)
 #define LOG_STREAM_CRITICAL(...) LOG_BASE(LOG_MODULE_STREAM, CRITICAL, __VA_ARGS__)
+#define LOG_STREAM_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_STREAM, code, __VA_ARGS__)
+#define LOG_STREAM_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_STREAM, code, __VA_ARGS__)
 
 // 配置模块日志
 #define LOG_CFG_TRACE(...)  LOG_BASE(LOG_MODULE_CONFIG, TRACE, __VA_ARGS__)
@@ -241,6 +255,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_CFG_WARN(...)   LOG_BASE(LOG_MODULE_CONFIG, WARN, __VA_ARGS__)
 #define LOG_CFG_ERROR(...)  LOG_BASE(LOG_MODULE_CONFIG, ERROR, __VA_ARGS__)
 #define LOG_CFG_CRITICAL(...) LOG_BASE(LOG_MODULE_CONFIG, CRITICAL, __VA_ARGS__)
+#define LOG_CFG_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_CONFIG, code, __VA_ARGS__)
+#define LOG_CFG_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_CONFIG, code, __VA_ARGS__)
 
 // 安全校验模块日志
 #define LOG_SEC_TRACE(...)  LOG_BASE(LOG_MODULE_SECURITY, TRACE, __VA_ARGS__)
@@ -249,6 +265,8 @@ inline std::string formatErrorCode(uint32_t code, const std::string& msg = "") {
 #define LOG_SEC_WARN(...)   LOG_BASE(LOG_MODULE_SECURITY, WARN, __VA_ARGS__)
 #define LOG_SEC_ERROR(...)  LOG_BASE(LOG_MODULE_SECURITY, ERROR, __VA_ARGS__)
 #define LOG_SEC_CRITICAL(...) LOG_BASE(LOG_MODULE_SECURITY, CRITICAL, __VA_ARGS__)
+#define LOG_SEC_ERROR_WITH_CODE(code, ...) LOG_ERROR_WITH_CODE(LOG_MODULE_SECURITY, code, __VA_ARGS__)
+#define LOG_SEC_WARN_WITH_CODE(code, ...)  LOG_WARN_WITH_CODE(LOG_MODULE_SECURITY, code, __VA_ARGS__)
 
 // ============== 调用链追踪宏 ==============
 

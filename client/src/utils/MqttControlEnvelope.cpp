@@ -35,6 +35,13 @@ PrepareResult MqttControlEnvelope::prepareForSend(const QJsonObject& command,
   }
   if (!cmd.contains(QStringLiteral("seq"))) {
     cmd[QStringLiteral("seq")] = static_cast<int>(++seqCounter);
+  } else {
+    qint64 existingSeq = cmd.value(QStringLiteral("seq")).toVariant().toLongLong();
+    if (existingSeq > 1000000000) {
+        qWarning().noquote() << "★★★ [关键证据][取证] prepareForSend 发现已有超大 seq=" << existingSeq
+                             << " type=" << cmd.value(QStringLiteral("type")).toString()
+                             << " 正在保留该错误数值";
+    }
   }
   if (!cmd.contains(QStringLiteral("schemaVersion"))) {
     cmd[QStringLiteral("schemaVersion")] = controlSchemaVersionString();

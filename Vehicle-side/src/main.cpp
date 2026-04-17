@@ -11,6 +11,7 @@
 #include "vehicle_config.h"
 #include "control_protocol.h"
 #include "common/logger.h"  // 添加日志头文件以支持优雅关闭
+#include "common/error_code.h" // 引入错误码
 
 #ifdef ENABLE_ROS2
 #include "ros2_bridge.h"
@@ -24,6 +25,8 @@
 #include <carla/exception/Exception.h>
 #endif
 
+using namespace std;
+
 volatile bool g_running = true;
 
 void signalHandler(int signal) {
@@ -34,6 +37,12 @@ void signalHandler(int signal) {
 
 int main(int argc, char *argv[])
 {
+    // 初始化日志系统 (必须最先执行，确保 LOG_* 宏可用)
+    std::cout << "[main] calling Logger::init..." << std::endl;
+    vehicle::common::Logger::init("vehicle-main", "info");
+    std::cout << "[main] Logger::init returned" << std::endl;
+    LOG_INFO("Logger system initialized in main");
+
     // 注册信号处理
     signal(SIGINT, signalHandler);
     signal(SIGTERM, signalHandler);
@@ -219,6 +228,12 @@ int main(int argc, char *argv[])
 #ifdef ENABLE_ROS2
     rclcpp::shutdown();
 #endif
+
+    // ★ 关键修复：先销毁所有可能使用日志的对象，再关闭日志系统
+    // 否则对象在析构时调用 LOG_EXIT() 会因 spdlog 线程池已销毁而崩溃
+    mqtt_handler.reset();
+    zlm_control.reset();
+    vehicle_controller.reset();
 
     // 优雅关闭日志系统，防止 async_logger 线程池在程序退出时崩溃
     vehicle::common::Logger::shutdown();

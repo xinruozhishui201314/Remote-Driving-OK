@@ -18,6 +18,7 @@
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QHash>
+#include <QMutex>
 #include <QString>
 #include <QTimer>
 #include <QtGlobal>
@@ -37,6 +38,7 @@ extern "C" {
 }
 
 namespace {
+static QMutex s_diagMtx;
 static void quiet_av_log_callback(void *avcl, int level, const char *fmt, va_list vl) {
   // ★ 条状排障：不再过滤 concealing，这通常意味着码流损坏触发了 FFmpeg 错误隐藏
   // if (fmt && strstr(fmt, "concealing"))
@@ -994,10 +996,14 @@ void H264Decoder::feedRtp(const uint8_t *data, size_t len, quint64 lifecycleId) 
       // ── ★★★ 端到端追踪：RTP 包 seq 进入解码器 ★★★ ───────────────────────
       static QHash<QString, int> s_pktCountPerStream;
       const QString tag = m_streamTag.isEmpty() ? "unknown" : m_streamTag;
-      ++s_pktCountPerStream[tag];
-      if (s_pktCountPerStream[tag] <= 20) {
+      int pktCount = 0;
+      {
+          QMutexLocker lk(&s_diagMtx);
+          pktCount = ++s_pktCountPerStream[tag];
+      }
+      if (pktCount <= 20) {
         qInfo() << "[H264][feedRtp] ★ RTP包seq=" << seq << " → 解码器 stream=" << tag
-                << " pktCount=" << s_pktCountPerStream[tag] << " ts=" << ts << " marker=" << marker
+                << " pktCount=" << pktCount << " ts=" << ts << " marker=" << marker
                 << " payloadLen=" << (len - kRtpHeaderMinLen);
       }
       processRtpPacket(data, len);
@@ -1025,7 +1031,11 @@ void H264Decoder::feedRtp(const uint8_t *data, size_t len, quint64 lifecycleId) 
       // ── 诊断：乱序包进入缓冲 ─────────────────────────────────────────────
       static QHash<QString, int> s_outOfOrderCount;
       const QString tag2 = m_streamTag.isEmpty() ? "unknown" : m_streamTag;
-      int ooCount = ++s_outOfOrderCount[tag2];
+      int ooCount = 0;
+      {
+          QMutexLocker lk(&s_diagMtx);
+          ooCount = ++s_outOfOrderCount[tag2];
+      }
       
       bool wasPending = m_pendingNacks.contains(seq);
       if (wasPending) {
@@ -1185,7 +1195,12 @@ void H264Decoder::processRtpPacket(const uint8_t *data, size_t len) {
   if (!rtpComputePayloadOffset(data, len, &payloadOff, &herr)) {
     ++m_rtpHdrParseFailInWindow;
     static QHash<QString, int> s_hdrFailLog;
-    if (++s_hdrFailLog[m_streamTag] <= 20 || (s_hdrFailLog[m_streamTag] % 120) == 0)
+    int c = 0;
+    {
+        QMutexLocker lk(&s_diagMtx);
+        c = ++s_hdrFailLog[m_streamTag];
+    }
+    if (c <= 20 || (c % 120) == 0)
       qWarning() << "[H264][RTP][Hdr] payload 偏移解析失败 stream=" << m_streamTag << " len=" << len
                  << " err=" << herr << " ★RFC3550 CSRC/extension 与长度不一致或非 RTP";
     return;
@@ -1193,7 +1208,12 @@ void H264Decoder::processRtpPacket(const uint8_t *data, size_t len) {
   if (payloadOff != kRtpHeaderMinLen) {
     ++m_rtpNonMinimalHdrInWindow;
     static QHash<QString, int> s_nmLog;
-    if (++s_nmLog[m_streamTag] <= 30 || (s_nmLog[m_streamTag] % 200) == 0)
+    int c = 0;
+    {
+        QMutexLocker lk(&s_diagMtx);
+        c = ++s_nmLog[m_streamTag];
+    }
+    if (c <= 30 || (c % 200) == 0)
       qWarning() << "[H264][RTP][Hdr] payloadOffset=" << payloadOff
                  << " (非12) stream=" << m_streamTag << " len=" << len
                  << " ★含 CSRC 或 RTP extension，须用动态偏移取 H264 payload";
@@ -1266,8 +1286,16 @@ void H264Decoder::processRtpPayload(quint16 rtpSeq, quint32 rtpTs, bool marker,
         size_t nalLen = m_fuBuffer.size();
         // ── ★★★ 端到端追踪：FU-A 组装完成，准备送入帧缓冲 ★★★ ──────────────
         static QSet<QString> s_loggedFuStreams;
-        if (!s_loggedFuStreams.contains(m_streamTag)) {
-          s_loggedFuStreams.insert(m_streamTag);
+        bool alreadyLoggedFu = false;
+        {
+            QMutexLocker lk(&s_diagMtx);
+            if (!s_loggedFuStreams.contains(m_streamTag)) {
+                s_loggedFuStreams.insert(m_streamTag);
+            } else {
+                alreadyLoggedFu = true;
+            }
+        }
+        if (!alreadyLoggedFu) {
           qInfo() << "[H264][" << m_streamTag << "] FU-A 组装完成"
                   << " fuNalType=" << fuNalType << " nalLen=" << nalLen << " ts=" << rtpTs
                   << " marker=" << marker << " ★ 对比 emitDecoded frameId 确认 FU-A→帧缓冲链路";
@@ -1280,8 +1308,16 @@ void H264Decoder::processRtpPayload(quint16 rtpSeq, quint32 rtpTs, bool marker,
           } else {
             // ── SPS/PPS 参数集，跳过帧缓冲 ────────────────────────────────────
             static QSet<QString> s_loggedSpsPps;
-            if (!s_loggedSpsPps.contains(m_streamTag)) {
-              s_loggedSpsPps.insert(m_streamTag);
+            bool alreadyLoggedSps = false;
+            {
+                QMutexLocker lk(&s_diagMtx);
+                if (!s_loggedSpsPps.contains(m_streamTag)) {
+                    s_loggedSpsPps.insert(m_streamTag);
+                } else {
+                    alreadyLoggedSps = true;
+                }
+            }
+            if (!alreadyLoggedSps) {
               qInfo() << "[H264][" << m_streamTag << "] SPS/PPS 已处理，FU-A type=" << fuNalType
                       << " ★ 对比 emitDecoded 确认解码器参数就绪";
             }
@@ -1296,7 +1332,11 @@ void H264Decoder::processRtpPayload(quint16 rtpSeq, quint32 rtpTs, bool marker,
     if (m_fuStarted) {
       // 收到非 FU-A NAL，但 FU-A 还未结束，清除 FU 缓冲
       static QHash<QString, int> s_fuBreakSeq;
-      const int n = ++s_fuBreakSeq[m_streamTag];
+      int n = 0;
+      {
+          QMutexLocker lk(&s_diagMtx);
+          n = ++s_fuBreakSeq[m_streamTag];
+      }
       if (n <= 8 || (n % 40 == 0)) {
         qWarning() << "[H264][payload][FU-A_break] stream=" << m_streamTag << " count=" << n
                    << " rtpSeq=" << rtpSeq << " nalType=" << nalType
@@ -1459,7 +1499,12 @@ void H264Decoder::flushPendingFrame() {
     // 之前只在「时间戳切换」路径有此检查，忽略了「Marker 位触发」路径，导致不完整帧漏过产生条纹。
     if (m_expectedSliceCount > 0 && sliceCount < m_expectedSliceCount && !hasIdr) {
         static QHash<QString, int> s_stripeDefenseLog;
-        if (++s_stripeDefenseLog[m_streamTag] <= 20 || (s_stripeDefenseLog[m_streamTag] % 100 == 0)) {
+        int n = 0;
+        {
+            QMutexLocker lk(&s_diagMtx);
+            n = ++s_stripeDefenseLog[m_streamTag];
+        }
+        if (n <= 20 || (n % 100 == 0)) {
             qWarning() << "[H264][" << m_streamTag << "][StripeDefense][REJECT] 丢弃 slice 不足的 P 帧"
                        << " ts=" << m_pendingFrame.timestamp << " slices=" << sliceCount << "/" << m_expectedSliceCount
                        << " | bitstreamIncomplete=" << (bitstreamIncomplete ? 1 : 0)
@@ -1474,7 +1519,12 @@ void H264Decoder::flushPendingFrame() {
     // ★ 额外诊断：如果 slices 超过预期，可能学习值太小了
     if (m_expectedSliceCount > 0 && sliceCount > m_expectedSliceCount) {
         static QHash<QString, int> s_sliceOverLog;
-        if (++s_sliceOverLog[m_streamTag] <= 10) {
+        int n = 0;
+        {
+            QMutexLocker lk(&s_diagMtx);
+            n = ++s_sliceOverLog[m_streamTag];
+        }
+        if (n <= 10) {
             qInfo() << "[H264][" << m_streamTag << "][StripeDefense][INFO] sliceCount (" << sliceCount 
                     << ") > exp (" << m_expectedSliceCount << ")，可能需要重新学习";
         }
@@ -1575,7 +1625,11 @@ void H264Decoder::flushPendingFrame() {
             m_needKeyframe = true;
             m_framesSinceKeyframeRequest = 0;
             static QHash<QString, int> s_incompleteDropLog;
-            const int logN = ++s_incompleteDropLog[m_streamTag];
+            int logN = 0;
+            {
+                QMutexLocker lk(&s_diagMtx);
+                logN = ++s_incompleteDropLog[m_streamTag];
+            }
             if (logN <= 20 || (logN % 100 == 0)) {
                 qWarning().noquote()
                     << QStringLiteral(
@@ -1599,7 +1653,11 @@ void H264Decoder::flushPendingFrame() {
         } else if (bitstreamIncomplete) {
             ++m_statsIncompleteFrameEmitInWindow;
             static QHash<QString, int> s_incompleteEmitLog;
-            const int emitN = ++s_incompleteEmitLog[m_streamTag];
+            int emitN = 0;
+            {
+                QMutexLocker lk(&s_diagMtx);
+                emitN = ++s_incompleteEmitLog[m_streamTag];
+            }
             if (emitN <= 5 || (emitN % 50 == 0)) {
                 qWarning() << "[H264][" << m_streamTag
                            << "][IncompleteFrameEmit] ★ 允许 emit 不完整帧（首屏或测试模式）"
@@ -1699,10 +1757,17 @@ void H264Decoder::checkAndRequestNacks() {
       static QHash<QString, qint64> s_lastNackEarlyLogMs;
       const QString k =
           m_streamTag + QLatin1Char('#') + QString::fromLatin1(earlyReason);
-      const qint64 last = s_lastNackEarlyLogMs.value(k, 0);
+      qint64 last = 0;
+      {
+          QMutexLocker lk(&s_diagMtx);
+          last = s_lastNackEarlyLogMs.value(k, 0);
+      }
       // 降低 noise，改为 10s 一次
       if (now - last >= 10000) {
-        s_lastNackEarlyLogMs.insert(k, now);
+        {
+            QMutexLocker lk(&s_diagMtx);
+            s_lastNackEarlyLogMs.insert(k, now);
+        }
         const char *hint =
             std::strcmp(earlyReason, "seq_uninit") == 0
                 ? "尚未收到首包，无法 NACK"
@@ -2147,7 +2212,11 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
       char errbuf[AV_ERROR_MAX_STRING_SIZE];
       av_strerror(ret, errbuf, sizeof(errbuf));
       static QHash<QString, int> s_recvErrLogN;
-      const int errN = ++s_recvErrLogN[m_streamTag];
+      int errN = 0;
+      {
+          QMutexLocker lk(&s_diagMtx);
+          errN = ++s_recvErrLogN[m_streamTag];
+      }
       if (errN <= 25 || (errN % 60) == 0) {
         qWarning() << "[H264][" << m_streamTag
                    << "][decode][ERROR] avcodec_receive_frame ret=" << ret << " err=" << errbuf
@@ -2189,7 +2258,12 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
 
       if (frame->decode_error_flags != 0 || bitstreamIncomplete) {
           static QHash<QString, int> s_errFlagLog;
-          if (++s_errFlagLog[m_streamTag] <= 50 || (s_errFlagLog[m_streamTag] % 100 == 0)) {
+          int errLogCount = 0;
+          {
+              QMutexLocker lk(&s_diagMtx);
+              errLogCount = ++s_errFlagLog[m_streamTag];
+          }
+          if (errLogCount <= 50 || (errLogCount % 100 == 0)) {
               qWarning() << "[H264][" << m_streamTag << "][decode][WARN] 帧解码异常标记"
                          << " fid=" << m_frameIdCounter + 1
                          << " decode_error_flags=" << frame->decode_error_flags
@@ -2514,7 +2588,12 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
         sh.horizontalShift, sh.fineTop, sh.fineMid, sh.fineBot);
 
     static QHash<QString, int> s_stripeAlerts;
-    if (++s_stripeAlerts[m_streamTag] <= 15) {
+    int alertCount = 0;
+    {
+        QMutexLocker lk(&s_diagMtx);
+        alertCount = ++s_stripeAlerts[m_streamTag];
+    }
+    if (alertCount <= 15) {
       // ── ★ 精准定位：条状触发时的 AVFrame 状态 ────────────────────────────
       const AVPixelFormat curSrcFmt = static_cast<AVPixelFormat>(frame->format);
       const char *curFmtName = av_get_pix_fmt_name(curSrcFmt);
@@ -2626,7 +2705,12 @@ void H264Decoder::emitDecodedFrames(bool bitstreamIncomplete) {
         // 即便 RTP 序列是完整的，也可能是解码器内部状态损坏。
         if (sh.verdict != VideoFrameEvidence::StripeHeuristicVerdict::Clean) {
             static QHash<QString, int> s_stripeIdrReq;
-            if (++s_stripeIdrReq[m_streamTag] <= 5 || (s_stripeIdrReq[m_streamTag] % 50 == 0)) {
+            int reqCount = 0;
+            {
+                QMutexLocker lk(&s_diagMtx);
+                reqCount = ++s_stripeIdrReq[m_streamTag];
+            }
+            if (reqCount <= 5 || (reqCount % 50 == 0)) {
                 qWarning() << "[H264][" << m_streamTag << "][StripeFeedback] 检测到条状 verdict=" 
                            << (int)sh.verdict << "，主动请求 IDR 以恢复参考帧";
             }

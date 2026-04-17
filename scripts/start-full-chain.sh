@@ -89,6 +89,28 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_ROOT"
+
+# ---------- 错误处理：一旦报错立即关闭所有 Docker 镜像 ----------
+fail_and_cleanup() {
+    local exit_code=$?
+    local line_number=$1
+    if [ $exit_code -ne 0 ]; then
+        echo -e "\n${RED}══════════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${RED}脚本在第 $line_number 行执行失败 (退出码: $exit_code)${NC}"
+        echo -e "${YELLOW}由于开启了「失败即清理」模式，正在关闭所有 Docker 容器...${NC}"
+        
+        # 停止可能正在后台运行的验证进程
+        wait_stream_e2e_background 2>/dev/null || true
+        
+        # 彻底关闭所有 Compose 服务
+        dc_all_down --remove-orphans 2>/dev/null || true
+        
+        echo -e "${GREEN}✓ 所有容器已停止。请根据上方日志修复问题后重试。${NC}"
+        echo -e "${RED}══════════════════════════════════════════════════════════════════════${NC}\n"
+    fi
+    exit $exit_code
+}
+trap 'fail_and_cleanup $LINENO' ERR
 # shellcheck source=lib/mqtt_control_json.sh
 source "$SCRIPT_DIR/lib/mqtt_control_json.sh"
 
@@ -362,10 +384,46 @@ start_carla_stack() {
         return 1
     fi
     if docker ps --format '{{.Names}}' | grep -q '^carla-server$'; then
-        echo -e "${GREEN}  ✓ carla-server 已运行${NC}"
-        echo -e "${YELLOW}  等待 CARLA 仿真与 Bridge 初始化（约 25s）...${NC}"
-        sleep 25
-        docker logs carla-server 2>&1 | tail -35 | sed 's/^/    /' || true
+        echo -e "${GREEN}  ✓ carla-server 容器已启动${NC}"
+        echo -e "${YELLOW}  等待 CARLA 仿真与 Bridge 初始化（约 30s）...${NC}"
+        sleep 30
+
+        # 核心改进：深度校验 CARLA 运行状态，防止带病启动
+        local _logs
+        _logs=$(docker logs carla-server 2>&1)
+        
+        # 1. 检查容器是否还在运行
+        if ! docker ps --format '{{.Names}}' | grep -q '^carla-server$'; then
+            echo -e "${RED}✗ CARLA 容器在初始化过程中崩溃退出！${NC}"
+            echo -e "${CYAN}--- 容器最后 40 行日志 ---${NC}"
+            echo "$_logs" | tail -40 | sed 's/^/    /'
+            echo -e "${RED}══════════════════════════════════════════════════════════════════════${NC}"
+            exit 1
+        fi
+
+        # 2. 检查日志中是否存在致命错误
+        if echo "$_logs" | grep -qE "LowLevelFatalError|Segmentation fault|FATAL|链路中断致命错误|Refusing to run with the root privileges"; then
+            echo -e "${RED}✗ 检测到 CARLA 仿真链致命错误！${NC}"
+            local _error_line
+            _error_line=$(echo "$_logs" | grep -E "LowLevelFatalError|Segmentation fault|FATAL|链路中断致命错误|Refusing to run with the root privileges" | tail -1)
+            echo -e "${YELLOW}原因预判: ${_error_line}${NC}"
+            if echo "$_logs" | grep -q "Refusing to run with the root privileges"; then
+                echo -e "${YELLOW}💡 解决建议: 请检查 entrypoint.sh 是否错误地尝试以 root 身份运行 CARLA。${NC}"
+            fi
+            echo -e "${CYAN}--- 故障日志现场 ---${NC}"
+            echo "$_logs" | grep -B 10 -A 5 -E "LowLevelFatalError|Segmentation fault|FATAL|链路中断致命错误|Refusing to run with the root privileges" | tail -20 | sed 's/^/    /'
+            echo -e "${RED}══════════════════════════════════════════════════════════════════════${NC}"
+            exit 1
+        fi
+
+        # 3. 检查 Bridge 是否已完成初始化（Python 或 C++）
+        if ! echo "$_logs" | grep -qE "Python Bridge 启动入口|启动 C++ Bridge|阶段: CARLA 连接成功"; then
+            echo -e "${YELLOW}⚠ 警告: CARLA 容器虽在运行，但未检测到 Bridge 成功启动关键字。${NC}"
+            echo "$_logs" | tail -20 | sed 's/^/    /'
+            # 此处不一定 exit，有些环境下日志输出可能延迟，交给后续 verify_chain 兜底
+        fi
+
+        echo -e "${GREEN}  ✓ CARLA 仿真链初始化验证通过${NC}"
         return 0
     fi
     echo -e "${RED}✗ 未检测到运行中的 carla-server${NC}"
@@ -415,8 +473,9 @@ start_all_nodes() {
 
     if [ "${SKIP_CARLA:-0}" != "1" ]; then
         if ! start_carla_stack; then
-            echo -e "${RED}CARLA 环节失败。安装 nvidia-container-toolkit 并重启 Docker，或 CARLA_NO_GPU=1 / skip-carla 后重试。${NC}"
-            return 1
+            echo -e "${RED}FATAL: CARLA 仿真链启动失败。${NC}"
+            echo -e "${YELLOW}请检查上述日志排查根本原因（GPU/驱动、文件描述符限制、代码语法等）。${NC}"
+            false # 触发 fail_and_cleanup
         fi
     else
         echo -e "${YELLOW}已跳过 CARLA（SKIP_CARLA=1 或参数 skip-carla）${NC}"

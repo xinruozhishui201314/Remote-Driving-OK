@@ -141,8 +141,8 @@ struct VideoFrame {
  * 解码器配置。
  */
 struct DecoderConfig {
-  int width = 1920;
-  int height = 1080;
+  int width = 0;
+  int height = 0;
   QString codec = "H264";  // H264 / H265 / AV1
   /** AVCDecoderConfigurationRecord（与 H264Decoder::openDecoderWithExtradata 一致），硬解 open 前写入
    * avcodec extradata */
