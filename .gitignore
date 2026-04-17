@@ -2,6 +2,10 @@
 build/
 bin/
 lib/
+# scripts/lib/ is versioned shell/Python helpers (sourced by start-full-chain.sh, verify-*.sh).
+# The blanket lib/ rule above would otherwise ignore this directory.
+!scripts/lib/
+!scripts/lib/**
 out/
 *.o
 *.obj
