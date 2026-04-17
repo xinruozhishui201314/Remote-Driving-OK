@@ -81,6 +81,18 @@ class VehicleControlWorker : public QObject {
           m_lastPollGear = input.gear;
       }
 
+      // [RootCauseFix] 必须要合并 targetSpeed，否则硬件采样（始终为0）会冲掉 UI 的巡航设定
+      if (std::abs(input.targetSpeed - m_lastPollSpeed) < 0.001) {
+          if (input.targetSpeed != current.targetSpeed && teleopTraceEnvEnabled()) {
+              qInfo().noquote() << "[Client][Control][Merge] Speed preserved from UI:" << current.targetSpeed 
+                                << "(Hardware zero ignored)";
+          }
+          input.targetSpeed = current.targetSpeed;
+      } else {
+          qInfo().noquote() << "[Client][Control][Merge] Speed updated from Hardware:" << input.targetSpeed;
+          m_lastPollSpeed = input.targetSpeed;
+      }
+
       // 同理处理 emergencyStop 等 modal 状态
       if (input.emergencyStop == m_lastPollEmg) {
           input.emergencyStop = current.emergencyStop;
@@ -102,11 +114,14 @@ class VehicleControlWorker : public QObject {
     // 2. 输入处理
     auto processed = m_svc->processInput(input);
 
-    // ★ 核心防错：输入链路活跃度监控 (Input Link Watchdog)
+    // ★ 核心修复：输入链路活跃度监控 (Input Link Watchdog)
+    // 2025/2026 规范修正：有效输入不仅包含物理踏板(throttle/brake)，也包含逻辑时速意图(targetSpeed)。
+    // 这样在“松开按键巡航”时，即使油门为0，看门狗也能识别到驾驶员的持续意图。
     const int64_t nowMs = TimeUtils::wallClockMs();
     bool hasEffectiveInput = (std::abs(processed.steeringAngle) > 0.001 || 
                               processed.throttle > 0.001 || 
-                              processed.brake > 0.001);
+                              processed.brake > 0.001 ||
+                              processed.targetSpeed > 0.1); 
     
     if (hasEffectiveInput) {
       m_svc->m_lastEffectiveInputMs.store(nowMs, std::memory_order_relaxed);
@@ -146,6 +161,7 @@ class VehicleControlWorker : public QObject {
     cmd.throttle = processed.throttle;
     cmd.brake = processed.brake;
     cmd.gear = processed.gear;
+    cmd.targetSpeed = processed.targetSpeed; // [Crucial] 注入时速意图
     cmd.emergencyStop = processed.emergencyStop;
     cmd.timestamp = TimeUtils::wallClockMs();
     cmd.sequenceNumber = m_svc->nextSequenceNumber();
@@ -197,6 +213,7 @@ class VehicleControlWorker : public QObject {
   VehicleControlService* m_svc;
   QTimer m_timer;
   int m_lastPollGear = 0;
+  double m_lastPollSpeed = 0.0;
   bool m_lastPollEmg = false;
 };
 
@@ -330,6 +347,7 @@ IInputDevice::InputState VehicleControlService::processInput(const IInputDevice:
   out.steeringAngle = std::clamp(raw.steeringAngle, -1.0, 1.0);
   out.throttle = std::clamp(raw.throttle, 0.0, 1.0);
   out.brake = std::clamp(raw.brake, 0.0, 1.0);
+  out.targetSpeed = std::max(0.0, raw.targetSpeed); // 透传目标车速意图
 
   // 2. 变化率检查 (Slew Rate Limit) - 防止输入异常跳变
   // 仅在热路径（DRIVING 状态）且有上一次合法输入时应用
@@ -442,6 +460,7 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
   cmdBuilder.add_brake(static_cast<float>(cmd.brake));
   cmdBuilder.add_steering(static_cast<float>(cmd.steeringAngle));
   cmdBuilder.add_gear(static_cast<int8_t>(cmd.gear));
+  cmdBuilder.add_maxSpeed(static_cast<uint16_t>(cmd.targetSpeed)); // [Fix] 注入目标时速到二进制协议
   cmdBuilder.add_deadman(true); // 示例：始终为 true，实际应根据输入
   cmdBuilder.add_emergency(cmd.emergencyStop);
   
@@ -477,6 +496,7 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
     json[QStringLiteral("throttle")] = cmd.throttle;
     json[QStringLiteral("brake")] = cmd.brake;
     json[QStringLiteral("gear")] = cmd.gear;
+    json[QStringLiteral("speed")] = cmd.targetSpeed; // [Fix] 同步目标速度
     json[QStringLiteral("seq")] = static_cast<qint64>(cmd.sequenceNumber);
     json[QStringLiteral("timestamp")] = static_cast<qint64>(cmd.timestamp);
     json[QStringLiteral("traceId")] = traceId;
@@ -488,9 +508,11 @@ void VehicleControlService::sendCommand(const ControlCommand& cmd) {
     if (teleopTraceEnvEnabled()) {
       static int s_sendCount = 0;
       if (s_sendCount++ % 100 == 0) {
-          qInfo().noquote() << "[Client][Control][MQTT] send drive backup: steer=" << cmd.steeringAngle 
+          qInfo().noquote() << "[Client][Control][Intent] SERIALIZED: steer=" << cmd.steeringAngle 
                             << " thr=" << cmd.throttle << " brk=" << cmd.brake
-                            << " gear=" << cmd.gear << " seq=" << cmd.sequenceNumber;
+                            << " gear=" << cmd.gear << " spd=" << cmd.targetSpeed 
+                            << " seq=" << cmd.sequenceNumber << " (TargetSpeed " 
+                            << (cmd.targetSpeed > 0.1 ? "ACTIVE" : "OFF") << ")";
       }
     }
     
@@ -583,11 +605,12 @@ void VehicleControlService::setGear(int gear) {
   }
 }
 
-void VehicleControlService::sendDriveCommand(double steering, double throttle, double brake) {
+void VehicleControlService::sendDriveCommand(double steering, double throttle, double brake, double targetSpeed) {
   IInputDevice::InputState input = m_latestInput.load();
   input.steeringAngle = steering;
   input.throttle = throttle;
   input.brake = brake;
+  input.targetSpeed = targetSpeed;
   input.timestamp = TimeUtils::nowUs();
   m_latestInput.store(input);
   if (teleopTraceEnvEnabled()) {
@@ -596,7 +619,7 @@ void VehicleControlService::sendDriveCommand(double steering, double throttle, d
     if (wallMs - s_lastDriveTraceMs >= 100) {
       s_lastDriveTraceMs = wallMs;
       qInfo().noquote() << "[Client][Teleop][TRACE][sendDriveCommand] steer=" << steering
-                        << " thr=" << throttle << " brk=" << brake;
+                        << " thr=" << throttle << " brk=" << brake << " spd=" << targetSpeed;
     }
   }
   pingSafety();

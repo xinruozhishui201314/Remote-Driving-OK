@@ -75,7 +75,7 @@ void TestMqttControlEnvelope::buildBrake_includes_seq() {
 }
 
 void TestMqttControlEnvelope::buildDrive_clamps() {
-  const auto o = buildDrive(9.0, 9.0, 9.0, 2, 0LL);
+  const auto o = buildDrive(9.0, 9.0, 9.0, 2, 0.0, 0LL);
   QCOMPARE(o.value(QStringLiteral("steering")).toDouble(), 1.0);
   QCOMPARE(o.value(QStringLiteral("throttle")).toDouble(), 1.0);
   QCOMPARE(o.value(QStringLiteral("brake")).toDouble(), 1.0);

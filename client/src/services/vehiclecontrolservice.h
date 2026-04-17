@@ -31,6 +31,7 @@ struct ControlCommand {
   double throttle = 0.0;
   double brake = 0.0;
   int gear = 0;
+  double targetSpeed = 0.0;    // [Crucial] 驾驶员时速意图
   bool emergencyStop = false;
   int64_t timestamp = 0;
   uint32_t sequenceNumber = 0;
@@ -101,7 +102,7 @@ class VehicleControlService : public QObject {
 
   Q_INVOKABLE void sendUiCommand(const QString& type, const QVariantMap& payload);
   Q_INVOKABLE void setGear(int gear);
-  Q_INVOKABLE void sendDriveCommand(double steering, double throttle, double brake);
+  Q_INVOKABLE void sendDriveCommand(double steering, double throttle, double brake, double targetSpeed = 0.0);
   Q_INVOKABLE void requestEmergencyStop();
   Q_INVOKABLE void sendRawControlJson(const QJsonObject& obj);
 

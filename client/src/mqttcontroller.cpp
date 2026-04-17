@@ -479,8 +479,9 @@ QString MqttController::getActiveChannelType() const {
 }
 
 void MqttController::requestStreamStart() {
-  qDebug() << "[CLIENT][Control] requestStreamStart mqtt=" << m_isConnected
-           << " m_currentVin=" << m_currentVin;
+  const qint64 now = QDateTime::currentMSecsSinceEpoch();
+  qInfo().noquote() << "[CLIENT][Control] requestStreamStart 收到请求 mqtt=" << m_isConnected
+                   << " m_currentVin=" << m_currentVin << " now=" << now;
   if (!m_isConnected) {
     qWarning() << "[CLIENT][Control] ✗ 无法发送 start_stream：MQTT 未连接";
     emit errorOccurred(
@@ -495,12 +496,13 @@ void MqttController::requestStreamStart() {
 
   if (m_startStreamRequestedVin == m_currentVin) {
     const qint64 now = QDateTime::currentMSecsSinceEpoch();
-    if (now - m_lastStartStreamTime < 15000) {
-      qInfo().noquote() << "[CLIENT][Control] [SKIP] 15s 内已为 VIN" << m_currentVin
+    // [SystemicFix] 将阈值缩减到 13s，确保 15s 轮询重试时不会被拦截
+    if (now - m_lastStartStreamTime < 13000) {
+      qInfo().noquote() << "[CLIENT][Control] [SKIP] 13s 内已为 VIN" << m_currentVin
                        << "发送过 start_stream，忽略重复请求；如需重试请等待或点击 Stop";
       return;
     } else {
-      qInfo().noquote() << "[CLIENT][Control] [RETRY] 超过 15s 未就绪，允许重发 start_stream vin="
+      qInfo().noquote() << "[CLIENT][Control] [RETRY] 超过 13s 未就绪，允许重发 start_stream vin="
                        << m_currentVin;
     }
   }
@@ -566,14 +568,17 @@ void MqttController::requestRemoteControl(bool enable) {
            << m_controlTopic << " 请确认车端收到";
 }
 
-void MqttController::sendDriveCommand(double steering, double throttle, double brake, int gear) {
-  sendControlCommand(MqttControlEnvelope::buildDrive(steering, throttle, brake, gear,
+void MqttController::sendDriveCommand(double steering, double throttle, double brake, int gear, double speed) {
+  sendControlCommand(MqttControlEnvelope::buildDrive(steering, throttle, brake, gear, speed,
                                                      QDateTime::currentMSecsSinceEpoch()));
 }
 
 bool MqttController::publishMessage(const QString &topic, const QJsonObject &payload, int qos) {
   QJsonDocument doc(payload);
   QByteArray data = doc.toJson(QJsonDocument::Compact);
+  if (topic == m_controlTopic) {
+    qInfo() << "[CLIENT][MQTT][PUBLISH]" << topic << "payload:" << data;
+  }
   const int q = (qos >= 1) ? 1 : 0;
 
 #ifdef ENABLE_MQTT_PAHO
@@ -639,23 +644,28 @@ void MqttController::onConnected() {
 #ifdef ENABLE_MQTT_PAHO
   if (m_client) {
     // 异步订阅，不调用 ->wait()，不阻塞主线程
-    qDebug() << "[CLIENT][MQTT] 订阅状态主题:" << m_statusTopic;
+    qInfo().noquote() << "[CLIENT][MQTT][Subscribe] 正在订阅状态主题:" << m_statusTopic;
     m_client->subscribe(m_statusTopic.toStdString(), 0);  // QoS 0，低延迟
 
     if (!m_currentVin.isEmpty()) {
       QString vehicleStatusTopic = QString("vehicle/%1/status").arg(m_currentVin);
-      qDebug() << "[CLIENT][MQTT] 订阅车辆主题:" << vehicleStatusTopic;
+      qInfo().noquote() << "[CLIENT][MQTT][Subscribe] 正在订阅车辆特定主题:" << vehicleStatusTopic;
       m_client->subscribe(vehicleStatusTopic.toStdString(), 0);
     }
+    
+    // [SystemicFix] 订阅 Bridge 状态心跳，用于诊断 Bridge 进程存活状态
+    qInfo().noquote() << "[CLIENT][MQTT][Subscribe] 正在订阅 Bridge 心跳主题: teleop/bridge_status/+";
+    m_client->subscribe("teleop/bridge_status/+", 0);
   } else {
-    qWarning() << "[CLIENT][MQTT] 客户端为空，无法订阅";
+    qWarning().noquote() << "[CLIENT][MQTT][Error] 客户端为空，无法订阅";
   }
 #else
   // 使用 mosquitto_sub 订阅状态主题
-  qDebug() << "[MQTT] 使用 mosquitto_sub 订阅状态主题（ENABLE_MQTT_PAHO 未定义）";
+  qInfo().noquote() << "[CLIENT][MQTT][mosquitto_sub] 准备启动订阅进程 (ENABLE_MQTT_PAHO 未定义)";
 
   // 如果已有进程在运行，先异步停止它（不阻塞主线程）
   if (m_mosquittoSubProcess) {
+    qDebug() << "[CLIENT][MQTT][mosquitto_sub] 清理旧进程";
     QProcess *oldProc = m_mosquittoSubProcess;
     m_mosquittoSubProcess = nullptr;
     if (oldProc->state() != QProcess::NotRunning) {
@@ -781,6 +791,8 @@ void MqttController::onConnected() {
     args << "-t" << vehicleStatusTopic;
     qDebug() << "[MQTT] 订阅车辆特定主题:" << vehicleStatusTopic;
   }
+  // [SystemicFix] 订阅 Bridge 状态心跳
+  args << "-t" << "teleop/bridge_status/+";
   qDebug() << "[MQTT] 启动 mosquitto_sub，参数:" << args.join(" ");
   // 连接错误启动信号，异步检测启动失败（不阻塞主线程）
   QObject::connect(
@@ -895,9 +907,43 @@ void MqttController::onMessageReceived(const QByteArray &topic, const QByteArray
                         << " ★编码侧已消费 hint（日志/MQTT 闭环）";
     }
 
-    // 日志记录（降频：每 300 条或每 30s；重要 ack 仍每次都记）
+    // [SystemicFix] 处理 Bridge 致命错误消息
+    const bool isFatalError = 
+        status.contains(QStringLiteral("type")) && status.value(QStringLiteral("type")).toString() == QLatin1String("fatal_error");
+    if (isFatalError) {
+        QString errVin = status.value(QStringLiteral("vin")).toString();
+        QString errMsg = status.value(QStringLiteral("message")).toString();
+        qCritical().noquote() << "★★★ [Client][MQTT][FATAL_ERROR] vin=" << errVin 
+                             << " ERROR_MESSAGE: " << errMsg
+                             << " ★★★ 链路已中断，请检查仿真环境状态";
+    }
+
+    // [SystemicFix] 处理 Bridge 心跳消息，确认 Bridge 进程存活
+    const bool isBridgeHeartbeat = 
+        topic.startsWith("teleop/bridge_status/") ||
+        (status.contains(QStringLiteral("type")) && status.value(QStringLiteral("type")).toString() == QLatin1String("bridge_heartbeat"));
+    if (isBridgeHeartbeat) {
+        QString hbVin = status.value(QStringLiteral("vin")).toString();
+        int uptime = status.value(QStringLiteral("uptime_sec")).toInt();
+        bool isStreaming = status.value(QStringLiteral("streaming")).toBool();
+        int actors = status.value(QStringLiteral("actors")).toInt();
+        int procs = status.value(QStringLiteral("procs")).toInt();
+        qInfo().noquote() << "[Client][MQTT][BridgeHeartbeat] vin=" << hbVin 
+                         << " uptime=" << uptime << "s"
+                         << " streaming=" << (isStreaming ? "YES" : "NO")
+                         << " actors=" << actors << " procs=" << procs
+                         << " ★ Confirm: Bridge process is ALIVE";
+    }
+
+    // [Diagnostic] 检查是否有 start_stream 后的 vehicle 响应 (如果存在该协议)
+    const bool isStartStreamAck = status.contains("type") && status["type"].toString() == "start_stream_ack";
+    if (isStartStreamAck) {
+        qInfo().noquote() << "[Client][MQTT][StreamAck] vehicle confirmed start_stream vin=" << status.value("vin").toString();
+    }
+
+    // 日志记录（降频：每 300 条或每 30s；重要消息每次都记）
     bool shouldLog = (messageCount % 300 == 0) || (logTimer.elapsed() >= 30000) || isAckMessage ||
-                     isEncoderHintAck;
+                     isEncoderHintAck || isBridgeHeartbeat || isStartStreamAck;
 
     if (shouldLog) {
       // 提取关键字段用于日志
@@ -917,7 +963,7 @@ void MqttController::onMessageReceived(const QByteArray &topic, const QByteArray
       qint64 totalElapsed = firstMessageTimer.elapsed();
       double actualFreq = (totalElapsed > 0) ? (messageCount * 1000.0 / totalElapsed) : 0.0;
 
-      qDebug() << "[CHASSIS_DATA] 接收 #" << messageCount << " | 主题:" << topic
+      qDebug().noquote() << "[CHASSIS_DATA] 接收 #" << messageCount << " | 主题:" << topic
                << " | 速度:" << QString::number(speed, 'f', 1) << "km/h"
                << " | 电池:" << QString::number(battery, 'f', 1) << "%"
                << " | 里程:" << QString::number(odometer, 'f', 2) << "km"

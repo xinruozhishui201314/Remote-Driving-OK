@@ -198,6 +198,7 @@ void WebRtcStreamManager::connectEncoderHintMqttRelay(MqttController *mqtt) {
     qWarning() << "[StreamManager][EncoderHint] MqttController=null, skip MQTT relay hookup";
     return;
   }
+  m_mqtt = mqtt; // [SystemicFix] 持有控制器，用于 ZLM 未就绪时重试 start_stream
   const auto hook = [mqtt](const QJsonObject &o) { mqtt->publishClientEncoderHint(o); };
   for (WebRtcClient *c : {m_front, m_rear, m_left, m_right}) {
     if (!c)
@@ -206,6 +207,10 @@ void WebRtcStreamManager::connectEncoderHintMqttRelay(MqttController *mqtt) {
   }
   qInfo() << "[StreamManager][EncoderHint] 4×WebRtcClient::clientEncoderHintSent → "
              "MqttController::publishClientEncoderHint (topic teleop/client_encoder_hint)";
+}
+
+void WebRtcStreamManager::setMqttController(MqttController *mqtt) {
+  m_mqtt = mqtt;
 }
 
 WebRtcStreamManager::WebRtcStreamManager(QObject *parent)
@@ -1657,6 +1662,7 @@ void WebRtcStreamManager::scheduleConnectFourStreamsWhenZlmReady(const QString &
   }
 
   m_zlmReadyDeadlineMs = QDateTime::currentMSecsSinceEpoch() + maxWait;
+  m_lastStartStreamRetryMs = QDateTime::currentMSecsSinceEpoch();
   m_zlmReadyTimer->setInterval(interval);
 
   qInfo().noquote() << QStringLiteral("[StreamManager][ZlmReady] schedule poll intervalMs=") << interval
@@ -1724,22 +1730,35 @@ void WebRtcStreamManager::onZlmReadyTimerTick() {
     if (n < 4) {
       qWarning().noquote() << "[StreamManager][ZlmReady] ★ ZLM 资源未就绪 ★: vinStreams=" << n << "/4"
               << "vin=" << (m_vin.isEmpty() ? QStringLiteral("(empty)") : m_vin)
-              << "\n  [Check] 正在轮询 URL: " << url.toString()
-              << "\n  [Check] 期望 App: " << m_app 
-              << "\n  [Check] 等待 carla-bridge 完成相机创建与推流（需 ZLM_HOST 配置正确）"
+              << "\n  [Check-1] 正在轮询 URL: " << url.toString()
+              << "\n  [Check-2] 期望 App: " << m_app 
+              << "\n  [Check-3] carla-bridge 可能未启动或推流失败（查看 docker-carla-server.log）"
+              << "\n  [Check-4] ZLM_API_SECRET 是否匹配？ (env 长度=" << secret.length() << ")"
               << " | bodyLen=" << data.size() << " | rows=" << rows.size()
-              << " | secret=" << secret.left(4) << "...";
+              << " | m_zlmReadyDeadlineMs=" << m_zlmReadyDeadlineMs;
+
+      // [SystemicFix] 增加自动重试机制：若超过 15s 仍未就绪，重发 start_stream 避免 Bridge 漏掉指令
+      const qint64 nowRetry = QDateTime::currentMSecsSinceEpoch();
+      const int waitSec = (nowRetry - m_lastStartStreamRetryMs) / 1000;
+      if (m_mqtt && (nowRetry - m_lastStartStreamRetryMs > 15000)) {
+        qWarning().noquote() << "[StreamManager][ZlmReady][ALERT] 已等待超过" << waitSec << "s 且 ZLM 仍无流，自动重试 requestStreamStart"
+                           << "\n  [Cause-1] carla-bridge 进程可能未启动（查看 docker-carla-server.log）"
+                           << "\n  [Cause-2] carla-bridge 网络无法到达 ZLM_HOST=" << qgetenv("ZLM_HOST")
+                           << "\n  [Cause-3] ZLM API Secret 不匹配或 ZLM 容器未启动";
+        m_mqtt->requestStreamStart();
+        m_lastStartStreamRetryMs = nowRetry;
+      }
+
       if (rows.size() > 0) {
           QStringList ids;
-          for (const auto& r : rows) ids << r.toObject().value("stream").toString();
-          qInfo().noquote() << "[StreamManager][ZlmReady] ZLM 当前已有流 ID (前10个):" << ids.mid(0, 10);
+          for (const auto& r : rows) {
+              QJsonObject row = r.toObject();
+              ids << QString("%1/%2").arg(row.value("app").toString(), row.value("stream").toString());
+          }
+          qInfo().noquote() << "[StreamManager][ZlmReady] ZLM 当前已有流 (app/id, 前10个):" << ids.mid(0, 10);
       }
     } else {
-      qInfo() << "[StreamManager][ZlmReady] ✓ ZLM 资源已就绪: vinStreams=" << n << "/4"
-              << "vin=" << m_vin << " → connectFourStreams";
-    }
-
-    if (n >= 4) {
+      qInfo().noquote() << "[StreamManager][ZlmReady] ★ ZLM 资源已就绪 ★: 发现" << n << "路流 (vin=" << m_vin << ")，准备 WHEP 连接";
       m_zlmReadyTimer->stop();
       connectFourStreams(m_zlmReadyWhep);
     }

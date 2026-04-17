@@ -4,6 +4,7 @@
 #include "webrtcclient.h"
 
 #include <QObject>
+#include <QPointer>
 #include <QString>
 #include <QTimer>
 
@@ -62,6 +63,8 @@ class WebRtcStreamManager : public QObject {
 
   /** 解码条状自愈时 WebRtcClient 发 encoder hint → MQTT 车端闭环（见 teleop/client_encoder_hint） */
   void connectEncoderHintMqttRelay(MqttController *mqtt);
+  /** 设置 MQTT 控制器，用于在 ZLM 未就绪时重试 start_stream */
+  void setMqttController(MqttController *mqtt);
 
   /**
    * 从 WHEP URL 解析 base URL 与 app，再连接四路（流名加 VIN 前缀）；
@@ -164,7 +167,9 @@ class WebRtcStreamManager : public QObject {
   QNetworkReply *m_zlmReadyReply = nullptr;
   QString m_zlmReadyWhep;
   qint64 m_zlmReadyDeadlineMs = 0;
+  qint64 m_lastStartStreamRetryMs = 0; // 上次尝试重发 start_stream 的时间
   bool m_zlmReadyPollInFlight = false;
+  QPointer<MqttController> m_mqtt; // [SystemicFix] 使用 QPointer 避免析构顺序导致的野指针崩溃
 };
 
 #endif  // WEBRTCSTREAMMANAGER_H

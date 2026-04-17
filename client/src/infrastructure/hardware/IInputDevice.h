@@ -28,6 +28,7 @@ class IInputDevice : public QObject {
     int gear = 0;                // -1=R, 0=N, 1..6=前进挡
     bool handbrake = false;
     bool emergencyStop = false;
+    double targetSpeed = 0.0;    // [Crucial] 驾驶员意图：目标时速 (km/h)，用于巡航闭环
     int64_t timestamp = 0;  // 采样时间戳（µs）
   };
 

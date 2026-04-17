@@ -335,7 +335,7 @@ Item {
                     if (root._trace && !changed) {
                         console.log("[Client][UI][Teleop][SYNC] 周期性同步 drive 指令: spd=" + teleop.targetSpeed.toFixed(1))
                     }
-                    vc.sendDriveCommand(currentSteer, 0, physicalBrake)
+                    vc.sendDriveCommand(currentSteer, 0, physicalBrake, teleop.targetSpeed)
                 }
                 
                 // 目标速度同步：按键按下时高频发，松开后每 500ms (25 ticks) 发一次心跳

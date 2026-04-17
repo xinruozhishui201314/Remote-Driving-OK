@@ -60,7 +60,8 @@ Rectangle {
                 controlPanel.vehicleControl.sendDriveCommand(
                     controlPanel._pendingSteering,
                     controlPanel._pendingThrottle,
-                    controlPanel._pendingBrake)
+                    controlPanel._pendingBrake,
+                    0.0) // 手动面板模式：目标速显式置 0
                 return
             }
             console.warn("[Client][Control][ControlPanel] vehicleControl missing; drive command dropped")
@@ -79,7 +80,11 @@ Rectangle {
         _driveChanged = false
         _notifySafety()
         if (_canUseVCS()) {
-            controlPanel.vehicleControl.sendDriveCommand(_pendingSteering, _pendingThrottle, _pendingBrake)
+            controlPanel.vehicleControl.sendDriveCommand(
+                controlPanel._pendingSteering, 
+                controlPanel._pendingThrottle, 
+                controlPanel._pendingBrake,
+                0.0) // 立即发送模式：目标速显式置 0
             return
         }
         console.warn("[Client][Control][ControlPanel] vehicleControl missing; immediate drive dropped")

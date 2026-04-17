@@ -92,12 +92,75 @@ def _log_startup():
     _m = _os.environ.get("MQTT_BROKER", "127.0.0.1")
     _s = _os.environ.get("SPECTATOR_VIEW_MODE", "driver")
     _z = _os.environ.get("ZLM_HOST", "127.0.0.1")
-    print(f"[carla-bridge] 环境 CARLA_HOST={_h} CARLA_PORT={_p} MQTT_BROKER={_m} SPECTATOR_VIEW_MODE={_s} ZLM_HOST={_z}", flush=True)
+    _z_p = _os.environ.get("ZLM_RTMP_PORT", "1935")
+    _m_p = _os.environ.get("MQTT_PORT", "1883")
+    
+    print(f"[carla-bridge][Startup] ========== 网络连通性预检 ==========", flush=True)
+    print(f"[carla-bridge][Startup] 环境 CARLA_HOST={_h} CARLA_PORT={_p} MQTT_BROKER={_m} MQTT_PORT={_m_p} ZLM_HOST={_z} ZLM_RTMP_PORT={_z_p}", flush=True)
+    
+    # 1. 检查 ZLM 连通性
     try:
         _z_ip = _socket.gethostbyname(_z)
-        print(f"[carla-bridge] ZLM_HOST 解析成功: {_z} -> {_z_ip}", flush=True)
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            if s.connect_ex((_z_ip, int(_z_p))) == 0:
+                print(f"[carla-bridge][Startup] ✓ ZLM 可达: {_z}({_z_ip}):{_z_p}", flush=True)
+            else:
+                print(f"[carla-bridge][Startup] ERROR: ZLM 端口不可达！推流必败！请检查防火墙或 ZLM 容器状态。", flush=True)
     except Exception as e:
-        print(f"[carla-bridge:WARN] ZLM_HOST 解析失败: {_z}. 推流可能会失败！错误: {e}", flush=True)
+        print(f"[carla-bridge][Startup] ERROR: ZLM_HOST 解析或连接异常: {_z}. 错误: {e}", flush=True)
+
+    # 2. 检查 MQTT 连通性
+    try:
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            if s.connect_ex((_m, int(_m_p))) == 0:
+                print(f"[carla-bridge][Startup] ✓ MQTT Broker 可达: {_m}:{_m_p}", flush=True)
+            else:
+                print(f"[carla-bridge][Startup] ERROR: MQTT Broker 端口不可达！车控与状态反馈必败！", flush=True)
+    except Exception as e:
+        print(f"[carla-bridge][Startup] ERROR: MQTT 连接检查异常: {_m}. 错误: {e}", flush=True)
+
+    # 3. 检查 CARLA 连通性
+    try:
+        with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as s:
+            s.settimeout(2.0)
+            if s.connect_ex((_h, int(_p))) == 0:
+                print(f"[carla-bridge][Startup] ✓ CARLA Server 可达: {_h}:{_p}", flush=True)
+            else:
+                print(f"[carla-bridge][Startup] ERROR: CARLA Server 端口不可达！仿真逻辑无法运行！", flush=True)
+    except Exception as e:
+        print(f"[carla-bridge][Startup] ERROR: CARLA 连接检查异常: {_h}. 错误: {e}", flush=True)
+
+
+def report_fatal_and_exit(msg):
+    """
+    [SystemicFix] 致命错误报告：
+    1. 打印 ERROR 日志（含 [carla-bridge:FATAL] 标记）
+    2. 尝试向 MQTT 发送致命错误消息，通知 client 链路已断开
+    3. 退出程序
+    """
+    _err("FATAL", "★★★ 链路中断致命错误: %s ★★★", msg)
+    try:
+        # 即使 CARLA 没连上，只要 MQTT 能连上，就尝试发布
+        _m = os.environ.get("MQTT_BROKER", "127.0.0.1")
+        _m_p = int(os.environ.get("MQTT_PORT", "1883"))
+        import paho.mqtt.publish as publish
+        fatal_msg = {
+            "type": "fatal_error",
+            "vin": VIN,
+            "message": msg,
+            "timestamp": int(time.time() * 1000),
+            "schemaVersion": "1.2.0"
+        }
+        publish.single(f"vehicle/status", payload=json.dumps(fatal_msg), hostname=_m, port=_m_p, qos=1)
+        print(f"[carla-bridge][FATAL] 已尝试向 MQTT 发布致命错误通知", flush=True)
+        time.sleep(0.5) # 给点时间发送
+    except Exception as e:
+        print(f"[carla-bridge][FATAL] 无法发布 MQTT 致命错误: {e}", flush=True)
+    sys.exit(1)
+        
+    print(f"[carla-bridge][Startup] ======================================", flush=True)
 
 CARLA_HOST = os.environ.get("CARLA_HOST", "127.0.0.1")
 CARLA_PORT = int(os.environ.get("CARLA_PORT", "2000"))
@@ -402,52 +465,64 @@ def run_ffmpeg_pusher(stream_id, frame_queue, rtmp_url, width, height, fps, stop
             if now - last_quality_report >= 5.0:
                 elapsed = now - last_quality_report
                 inst_fps = frames_since_report / elapsed if elapsed > 0 else 0
-                delta_frames = frames_since_report - last_frame_count
-                # 同时检查 ffmpeg 进程是否存活（避免进程崩溃后还在空转）
-                proc_alive = (proc.poll() is None)
+                
+                # 检查 ffmpeg 进程是否存活
+                ret = proc.poll()
+                if ret is not None:
+                    _err("ZLM", "★★★ [CRITICAL] FFmpeg 进程已意外退出 ★★★ stream_id=%s exit_code=%d", stream_id, ret)
+                    # 打印最后几行 ffmpeg stderr 以辅助诊断
+                    with ffmpeg_lock:
+                        last_lines = "\n".join(ffmpeg_lines[-10:])
+                    _err("ZLM", "FFmpeg 最后输出:\n%s", last_lines)
+                    break # 退出循环，触发 cleanup
+                
                 with ffmpeg_lock:
                     frame_snapshot = [l for l in ffmpeg_lines if "frame=" in l]
                     last_frame_line = frame_snapshot[-1] if frame_snapshot else "(无)"
-                log_zlm("[推流质量] stream_id=%s %.0fs内推帧%d 瞬时FPS=%.1f ffmpeg=%s %s",
-                         stream_id, elapsed, delta_frames, inst_fps,
-                         "存活" if proc_alive else "已崩溃", last_frame_line)
+                
+                log_zlm("[推流质量] stream_id=%s %.1fs内推帧%d 瞬时FPS=%.1f ffmpeg=%s %s",
+                         stream_id, elapsed, frames_since_report, inst_fps,
+                         "存活", last_frame_line)
+                
                 # 检测异常：瞬时 FPS 低于预期 50%
                 if inst_fps < fps * 0.5 and frames_since_report > 10:
-                    _warn("ZLM", "[推流质量] stream_id=%s FPS=%.1f < 预期%.0f 的 50%%！"
-                               "检查 CARLA 相机帧率或 ffmpeg 性能", stream_id, inst_fps, fps)
-                # ffmpeg 崩溃检测：若进程退出但推流仍在继续，说明推流链路断裂
-                if not proc_alive:
-                    log_zlm("[推流质量] ffmpeg 进程已退出 exit=%d，停止推流 stream_id=%s", proc.returncode, stream_id)
-                    break
+                    _warn("ZLM", "[推流质量] stream_id=%s FPS=%.1f < 预期%.0f 的 50%%！请检查系统负载或网络带宽", 
+                          stream_id, inst_fps, fps)
+                
                 last_quality_report = now
-                last_frame_count = frames_since_report
+                frames_since_report = 0
     except Exception as e:
-        import traceback
-        _warn("ZLM", "worker unexpected error stream_id=%s err=%s", stream_id, e)
-        log_zlm("环节: worker 异常 stream_id=%s 错误=%s", stream_id, e)
-        log_zlm("Traceback: %s", traceback.format_exc())
+        _err("ZLM", "run_ffmpeg_pusher 运行时异常 [%s]: %s", stream_id, e)
     finally:
         ffmpeg_stop.set()
+        log_zlm("环节: 正在关闭 pusher [%s]", stream_id)
+        with streaming_lock:
+            if stream_id in pusher_procs:
+                del pusher_procs[stream_id]
+        
         try:
-            proc.stdin.close()
-        except (IOError, OSError) as e:
-            log_zlm("环节: worker stdin.close 失败 stream_id=%s err=%s", stream_id, e)
+            if proc.stdin:
+                proc.stdin.close()
+        except Exception:
+            pass
+            
         # 取 ffmpeg 最终统计行
         with ffmpeg_lock:
             final_lines = [l for l in ffmpeg_lines if any(k in l for k in ("frame=", "fps=", "bitrate=", "size="))]
             if final_lines:
-                log_zlm("[推流质量] ffmpeg 最终统计 stream_id=%s: %s", stream_id, final_lines[-1])
-        proc.wait()
+                log_zlm("[推流质量] ffmpeg 最终统计 [%s]: %s", stream_id, final_lines[-1])
+        
+        proc.wait(timeout=2.0)
         if proc.returncode is not None and proc.returncode != 0:
             log_zlm("环节: worker ffmpeg 异常退出 stream_id=%s exit_code=%d", stream_id, proc.returncode)
-            # ── 诊断增强：ffmpeg 异常退出时打印最后 10 行 stderr ──────────────
             with ffmpeg_lock:
                 recent = ffmpeg_lines[-10:] if ffmpeg_lines else []
             if recent:
-                log_zlm("[推流质量] ffmpeg stderr 最近10行 stream_id=%s:", stream_id)
+                log_zlm("[推流质量] FFmpeg 错误现场证据 [%s]:", stream_id)
                 for l in recent:
-                    log_zlm("  ffmpeg: %s", l)
-        log_zlm("环节: worker 已退出 stream_id=%s 累计推帧=%d", stream_id, frames_since_report)
+                    log_zlm("  ffmpeg-stderr: %s", l)
+        
+        log_zlm("✓ pusher [%s] 已释放", stream_id)
 
 
 def run_ffmpeg_testsrc(stream_id, rtmp_url, width, height, fps, stop_event):
@@ -596,14 +671,10 @@ try:
     client, world = retry(_connect_carla, max_attempts=MAX_CARLA_ATTEMPTS, backoff_base=CARLA_RETRY_SLEEP)
     log_carla("[Bridge] 阶段: CARLA 连接成功")
 except Exception as e:
-    log_carla("CARLA connect failed after %d retries err=E_CARLA_CONN_FAILED cause=%s", MAX_CARLA_ATTEMPTS, e)
-    import traceback
-    log_carla("完整 Traceback:\n%s", traceback.format_exc())
-    sys.exit(1)
+    report_fatal_and_exit(f"CARLA 连接失败 ({MAX_CARLA_ATTEMPTS}次尝试): {e}")
 
 if not client:
-    log_carla("CARLA Client 初始化失败，请检查 CARLA 服务")
-    exit(1)
+    report_fatal_and_exit("CARLA Client 初始化失败，请检查 CARLA 服务")
 
 blueprint_library = world.get_blueprint_library()
 vehicle_bps = blueprint_library.filter(CARLA_VEHICLE_BP)
@@ -611,15 +682,14 @@ if not vehicle_bps:
     log_carla("无匹配车辆蓝图 CARLA_VEHICLE_BP=%s，尝试 vehicle.*", CARLA_VEHICLE_BP)
     vehicle_bps = blueprint_library.filter("vehicle.*")
 if not vehicle_bps:
-    log_carla("无车辆蓝图，退出")
-    exit(1)
+    report_fatal_and_exit(f"CARLA 端无可用车辆蓝图 (CARLA_VEHICLE_BP={CARLA_VEHICLE_BP})")
+
 vehicle_bp = vehicle_bps[0]
 log_carla("车辆蓝图: %s (CARLA_VEHICLE_BP=%s)", vehicle_bp.id, CARLA_VEHICLE_BP)
 
 spawn_points = world.get_map().get_spawn_points()
 if not spawn_points:
-    log_carla("无 spawn 点，退出")
-    exit(1)
+    report_fatal_and_exit("CARLA 当前地图无可用 spawn 点")
 spawn_idx = min(CARLA_SPAWN_INDEX, len(spawn_points) - 1)
 spawn_point = spawn_points[spawn_idx]
 log_carla("spawn 点: 索引 %d / 共 %d", spawn_idx, len(spawn_points))
@@ -661,8 +731,9 @@ _control_apply_count = 0    # 控制量应用计数
 _control_last_log_time = 0.0 # 上次记录控制量日志的时间
 m_last_valid_cmd_time = 0.0 # 记录最后一次收到 drive 指令的时间
 m_last_seq = 0              # 记录最后一次 seq
+m_last_raw_warn_time = 0.0  # [SystemicFix] 记录上次 raw 警告时间，用于 100Hz 消息节流
 WATCHDOG_TIMEOUT_MS = 500   # 看门狗超时：500ms
-STALE_COMMAND_THRESHOLD_MS = 2000 # 陈旧指令阈值：2s
+STALE_COMMAND_THRESHOLD_MS = 30000 # 陈旧指令阈值：从 2s 增加到 30s，解决容器时钟不同步导致的指令丢失
 
 # 推流相关：cameras + queues + workers；四路相互独立，每路一个线程
 camera_actors = []
@@ -883,6 +954,7 @@ def _spawn_cameras_and_start_pushers_impl():
         log_zlm("四路推流相互独立，每路一线程；spawn 与推流互不影响")
         rtmp_base = f"rtmp://{ZLM_HOST}:{ZLM_RTMP_PORT}/{ZLM_APP}"
         log_zlm("环节: spawn_cameras_and_start_pushers 进入 ZLM=%s:%s app=%s vin=%s", ZLM_HOST, ZLM_RTMP_PORT, ZLM_APP, VIN)
+        log_zlm("RTMP 推流基址: %s", rtmp_base)
         # 多车隔离：流名加 VIN 前缀，格式 {vin}_cam_front，避免多台车流名冲突
         vin_prefix = VIN + "_" if VIN else ""
         log_zlm("视频源: CARLA 仿真相机；推流目标 %s/{%scam_front,%scam_rear,%scam_left,%scam_right}",
@@ -963,6 +1035,7 @@ def _spawn_cameras_and_start_pushers_impl():
             stop = stop_events[cam_id]
             stream_name = f"{vin_prefix}{cam_id}"
             rtmp_url = f"{rtmp_base}/{stream_name}"
+            log_zlm("环节: 启动推流线程 %s url=%s", stream_name, rtmp_url)
             t = threading.Thread(
                 target=run_one_stream,
                 args=(cam_id, x, y, z, yaw, q, stop, rtmp_url, cam_bp),
@@ -1068,25 +1141,28 @@ def _apply_vehicle_control():
             target_speed = control_state.get("target_speed", 0.0)
             emergency = control_state.get("emergency_stop", False)
 
-        # ── 速度 PID 模拟（当有目标速且手动油门为 0 时激活） ──
-        if remote_ok and not emergency and target_speed > 0.1 and throttle < 0.01:
-            curr_speed = _read_vehicle_speed()
-            diff = target_speed - curr_speed
-            # 简单的 P 控制：每差 10km/h 给 0.3 油门
-            if diff > 0:
-                throttle = max(0.15, min(0.8, diff * 0.05))
-                brake = 0.0
-            else:
-                throttle = 0.0
-                brake = max(0.0, min(0.5, -diff * 0.05))
-            
-            if CONTROL_DEBUG or _control_apply_count % 50 == 0:
-                log_control("[Control][PID] 激活: target=%.1f curr=%.1f diff=%.1f -> PID_thr=%.3f PID_brk=%.3f",
-                            target_speed, curr_speed, diff, throttle, brake)
-        elif remote_ok and target_speed > 0.1:
-            if CONTROL_DEBUG or _control_apply_count % 50 == 0:
-                log_control("[Control][PID] 未激活: throttle=%.3f (需<0.01) remote=%s emergency=%s", 
-                            throttle, remote_ok, emergency)
+            # ── 速度 PID 模拟（当有目标速且手动油门为 0 时激活） ──
+            if remote_ok and not emergency and target_speed > 0.1:
+                if throttle < 0.01:
+                    curr_speed = _read_vehicle_speed()
+                    diff = target_speed - curr_speed
+                    # 简单的 P 控制：每差 10km/h 给 0.3 油门
+                    if diff > 0:
+                        throttle = max(0.15, min(0.8, diff * 0.05))
+                        brake = 0.0
+                    else:
+                        throttle = 0.0
+                        brake = max(0.0, min(0.5, -diff * 0.05))
+                    
+                    if CONTROL_DEBUG or (_control_apply_count % 50 == 0):
+                        _log("Control", "[PID] 运行中: target=%.1f curr=%.1f -> PID_thr=%.3f PID_brk=%.3f",
+                                    target_speed, curr_speed, throttle, brake)
+                else:
+                    if CONTROL_DEBUG or (_control_apply_count % 50 == 0):
+                        _log("Control", "[PID] 抑制: 手动油门=%.3f > 0.01，忽略目标速 %.1f", throttle, target_speed)
+            elif remote_ok and target_speed <= 0.1:
+                 if _control_apply_count % 100 == 0:
+                     _log("Control", "[PID] 闲置: 目标速为 0，纯手动模式")
 
         if emergency:
             throttle, brake = 0.0, 1.0
@@ -1282,7 +1358,8 @@ def on_message(client, userdata, msg):
         if topic == MQTT_ENCODER_HINT_TOPIC or topic.endswith("client_encoder_hint"):
             handle_client_encoder_hint_message(raw)
             return
-        log_control("收到 vehicle/control 消息 topic=%s payload=%s", msg.topic, raw[:200])
+        
+        # log_control("收到 vehicle/control 消息 topic=%s payload=%s", msg.topic, raw[:200])
         try:
             full_payload = json.loads(msg.payload if isinstance(msg.payload, str) else (msg.payload or b"").decode("utf-8"))
         except json.JSONDecodeError as e:
@@ -1297,47 +1374,61 @@ def on_message(client, userdata, msg):
         seq = int(full_payload.get("seq", -1))
         ts_ms = int(full_payload.get("timestampMs", 0) or full_payload.get("timestamp", 0))
         session_id = full_payload.get("sessionId")
+        trace_id = full_payload.get("trace_id") or full_payload.get("traceId", "unknown")
         
         # 交互记录：MQTT 入
         summary = "type=%s,vin=%s,seq=%s" % (msg_type, vin, seq)
         _record_interaction("in", "mqtt", msg.topic or "vehicle/control", summary, len(raw), vin=vin, payload=raw if RECORD_INTERACTION_FULL else None)
         
         if vin != VIN:
-            if CONTROL_DEBUG:
-                log_control("[Control] 忽略消息：VIN 不匹配 (msg=%s, local=%s)", vin, VIN)
+            _warn("Control", "忽略消息：VIN 不匹配 (msg_vin=%s, local_vin=%s, type=%s)", vin, VIN, msg_type)
             return
 
         # ★ 安全：陈旧指令校验 (Timestamp Check)
         now_ms = int(time.time() * 1000)
-        if ts_ms > 0 and abs(now_ms - ts_ms) > STALE_COMMAND_THRESHOLD_MS:
-            _warn("Control", "陈旧指令被丢弃 type=%s seq=%s delay=%dms", msg_type, seq, now_ms - ts_ms)
+        delay_ms = now_ms - ts_ms
+        if ts_ms > 0 and abs(delay_ms) > STALE_COMMAND_THRESHOLD_MS:
+            _warn("Control", "陈旧指令被丢弃 type=%s seq=%s delay=%dms (threshold=%dms, now=%d, msg_ts=%d)", 
+                  msg_type, seq, delay_ms, STALE_COMMAND_THRESHOLD_MS, now_ms, ts_ms)
             return
-
+        
         # ★ 安全：防重放校验 (Sequence Check)
-        global m_last_seq, m_active_session_id, m_last_valid_cmd_time
+        global m_last_seq, m_active_session_id, m_last_valid_cmd_time, m_last_raw_warn_time
+        now_sec = time.time()
+        
+        # 会话自愈逻辑：若超过 10s 未收到有效驱动指令，且收到新 session 的 start_stream，允许接管
         with control_lock:
+            stale_session = (now_sec - m_last_valid_cmd_time > 10.0)
+            if msg_type == "start_stream" and stale_session and m_active_session_id != session_id:
+                _log("Control", "检测到陈旧会话 (%.1fs 无指令) 且收到新 start_stream，自动更新 sessionId: %s -> %s", 
+                     now_sec - m_last_valid_cmd_time, m_active_session_id, session_id)
+                m_active_session_id = session_id
+                m_last_valid_cmd_time = now_sec # 重置时间避免连续触发
+
             if seq > 0:
-                if seq <= m_last_seq and abs(now_ms - int(m_last_valid_cmd_time * 1000)) < 5000:
-                    _warn("Control", "重放/旧序列指令被丢弃 type=%s seq=%s last_seq=%s", msg_type, seq, m_last_seq)
-                    return
+                if seq <= m_last_seq:
+                    if CONTROL_DEBUG or (int(time.time()*1000) % 5000 < 50): 
+                        _log("Control", "DEBUG: 指令被重放校验丢弃! seq=%d, last_seq=%d, type=%s", 
+                             seq, m_last_seq, msg_type)
+                    if abs(now_ms - int(m_last_valid_cmd_time * 1000)) < 5000:
+                        return
                 m_last_seq = seq
 
         # ★ 诊断：详细记录关键指令入口
-        if msg_type in ("drive", "remote_control", "emergency_stop", "speed", "gear"):
-            log_control("[Control][IN] 收到指令 type=%s seq=%s ts_ms=%s sid=%s delay=%dms",
-                        msg_type, seq, ts_ms, session_id, now_ms - ts_ms if ts_ms > 0 else 0)
+        if msg_type in ("drive", "remote_control", "emergency_stop", "speed", "gear", "start_stream"):
+            if msg_type != "drive" or (int(time.time()*1000) % 1000 < 100): # drive 指令限频日志
+                log_control("[Control][IN] 收到指令 type=%s seq=%s sid=%s delay=%dms active_sid=%s",
+                            msg_type, seq, session_id, delay_ms if ts_ms > 0 else 0, m_active_session_id)
 
         # ★ 关键：区分顶层指令（drive, remote_control）与 UI 包裹指令（speed, gear, sweep, start_stream...）
-        # UI 指令由 MqttControlEnvelope::buildUiCommandEnvelope 生成，包含 payload 字段
         inner_payload = full_payload.get("payload")
         if isinstance(inner_payload, dict):
-            # 是包裹指令，使用内部 payload 覆盖顶层作为后续字段提取源
             payload = inner_payload
         else:
-            # 是顶层指令
             payload = full_payload
 
         if msg_type == "remote_control":
+            # ... (keep existing remote_control logic)
             enable = payload.get("enable", False)
             with control_lock:
                 if enable:
@@ -1395,6 +1486,26 @@ def on_message(client, userdata, msg):
                     control_state["throttle"] = float(payload.get("throttle"))
                     control_state["brake"] = float(payload.get("brake"))
                     control_state["gear"] = int(payload.get("gear"))
+                    # [RootCauseFix] 从 drive 指令中解析目标速度，确保高频指令也能携带巡航意图
+                    if "speed" in payload:
+                        new_spd = float(payload.get("speed"))
+                        old_spd = control_state.get("target_speed", 0)
+                        if abs(new_spd - old_spd) > 0.01:
+                             _log("Control", "[Merge] drive 注入新目标速: %.1f -> %.1f km/h (seq=%s)", 
+                                  old_spd, new_spd, seq)
+                        control_state["target_speed"] = new_spd
+                    elif "target_speed" in payload:
+                        new_spd = float(payload.get("target_speed"))
+                        old_spd = control_state.get("target_speed", 0)
+                        if abs(new_spd - old_spd) > 0.01:
+                             _log("Control", "[Merge] drive 注入新目标速(alias): %.1f -> %.1f km/h", 
+                                  old_spd, new_spd)
+                        control_state["target_speed"] = new_spd
+                    else:
+                        # 只有当之前从未收到过速度时才设为 0，否则保持现状
+                        if "target_speed" not in control_state:
+                            control_state["target_speed"] = 0.0
+                            _log("Control", "[Warn] drive 未携带速度且状态为空，初始化为 0")
                 except (ValueError, TypeError) as e:
                     _warn("Control", "drive 指令字段类型错误: %s payload=%s", e, json.dumps(payload))
                 
@@ -1425,20 +1536,35 @@ def on_message(client, userdata, msg):
                 pass
             log_control("[Control] 收到 speed: target=%.1f km/h", float(speed_val))
         elif msg_type == "start_stream":
+            # [RootCause] 核心安全锁自愈：若当前会话超过 10s 无控制量，允许新会话抢占推流控制权
             with control_lock:
+                now_sec = time.time()
+                is_stale = (now_sec - m_last_valid_cmd_time > 10.0)
                 if m_active_session_id and session_id and m_active_session_id != session_id:
-                    _warn("Control", "拒绝 start_stream：sid 不匹配 (active=%s, msg=%s)", m_active_session_id, session_id)
-                    return
-            
-            log_control("收到 start_stream，准备 spawn 相机并开始推流")
-            log_control("已置 streaming=True（VIN 匹配）")
+                    if not is_stale:
+                        _warn("Control", "拒绝 start_stream：已有活跃会话 %s 且未超时 (msg_sid=%s)，请检查是否多端登录", m_active_session_id, session_id)
+                        return
+                    else:
+                        _log("Control", "活跃会话 %s 已超时(%.1fs)，允许新会话 %s 接管推流控制", 
+                             m_active_session_id, now_sec - m_last_valid_cmd_time, session_id)
+                        m_active_session_id = session_id
+                elif not m_active_session_id:
+                    m_active_session_id = session_id
+                    log_control("远驾会话锁已绑定: sid=%s", session_id)
+
+            log_control("★★★ [MQTT][IN] 收到 start_stream，触发推流重启链路 (sid=%s) ★★★", session_id)
+            # [SystemicFix] 强制重置推流状态，确保即使上次半途失败也能重新启动
             try:
+                # 若已有相机但 ZLM 无流，可能是 pusher 挂了，尝试重启
                 spawn_cameras_and_start_pushers()
             except Exception as e:
-                _err("ZLM", "spawn_cameras_and_start_pushers 异常: %s", e)
+                _err("ZLM", "spawn_cameras_and_start_pushers 严重异常: %s", e)
+                import traceback
+                _err("ZLM", "Traceback: %s", traceback.format_exc())
+
             with control_lock:
                 control_state["streaming"] = True
-            log_control("已置 streaming=True，将发布 vehicle/status")
+            log_control("✓ 推流状态已置为 streaming=True (vin=%s)", VIN)
 
         elif msg_type == "stop_stream":
             with control_lock:
@@ -1446,23 +1572,28 @@ def on_message(client, userdata, msg):
                     _warn("Control", "拒绝 stop_stream：sid 不匹配 (active=%s, msg=%s)", m_active_session_id, session_id)
                     return
 
-            log_control("收到 stop_stream，准备停止推流")
+            log_control("★★★ [MQTT][IN] 收到 stop_stream，正在停止推流链路 ★★★")
             try:
                 stop_streaming()
             except Exception as e:
                 _err("ZLM", "stop_streaming 异常: %s", e)
             with control_lock:
                 control_state["streaming"] = False
-            log_control("已置 streaming=False，将发布 vehicle/status")
+            log_control("✓ 推流状态已重置为 streaming=False (vin=%s)", VIN)
         elif msg_type == "remote_control_ack":
             log_control("收到远驾接管确认消息")
             pass
         else:
-            # [SystemicFix] 对未知指令或被包装的 raw 指令进行取证日志
+            # [SystemicFix] 对未知指令或被包装的 raw 指令进行取证日志，增加 5s 节流避免 100Hz 刷屏
+            now_sec = time.time()
             if "raw" in payload:
-                _warn("Control", "收到未解包的二进制指令 (raw) 且 bridge 不支持 FlatBuffers 解码；请检查客户端协议发送策略。 traceId=%s", trace_id)
-            else:
-                _warn("Control", "收到未知 msg_type: %s payload=%s", msg_type, json.dumps(payload))
+                if now_sec - m_last_raw_warn_time > 5.0:
+                    _warn("Control", "收到未解包的二进制指令 (raw) 且 bridge 不支持 FlatBuffers 解码；请检查客户端协议发送策略。 traceId=%s", trace_id)
+                    m_last_raw_warn_time = now_sec
+            elif msg_type:
+                if now_sec - m_last_raw_warn_time > 5.0:
+                    _warn("Control", "收到未知 msg_type: %s payload=%s", msg_type, json.dumps(payload))
+                    m_last_raw_warn_time = now_sec
     except Exception as e:
         _err("Control", "on_message 总异常: %s\n%s", e, _tb.format_exc())
 
@@ -1526,8 +1657,30 @@ last_spectator_time = 0
 last_control_time = 0
 last_cam_stats_time = 0
 last_health_check_time = 0
+last_bridge_heartbeat_time = 0  # [SystemicFix] 增加 Bridge 活跃度心跳，解决“进程是否在跑”不确定的问题
 _cam_stats_interval = 5.0  # 每 5s 打印一次相机帧到达率
 _health_check_interval = 2.0 # 每 2s 检查一次进程存活
+_bridge_heartbeat_interval = 5.0 # 每 5s 发送一次 Bridge 活跃心跳
+
+def send_bridge_heartbeat():
+    """发送 Bridge 活跃度心跳到 MQTT，便于客户端诊断 Bridge 是否正常启动及运行。"""
+    try:
+        hb_payload = {
+            "type": "bridge_heartbeat",
+            "vin": VIN,
+            "bridge_version": "v1.2.0-stable",
+            "uptime_sec": int(time.time() - start_time),
+            "streaming": control_state.get("streaming", False),
+            "timestamp": int(time.time() * 1000),
+            "actors": len(world.get_actors().filter("*vehicle*")),
+            "procs": len(pusher_procs)
+        }
+        mqtt_client.publish(f"teleop/bridge_status/{VIN}", json.dumps(hb_payload), qos=0)
+        # log_mqtt("[MQTT] 已发布 bridge_heartbeat")
+    except Exception as e:
+        _warn("MQTT", "send_bridge_heartbeat 异常: %s", e)
+
+start_time = time.time()
 _spectator_update_count = 0
 _spectator_last_log_time = 0
 SPECTATOR_UPDATE_HZ = 20  # 仿真窗口镜头更新频率
@@ -1599,6 +1752,9 @@ while True:
         if current_time - last_health_check_time >= _health_check_interval:
             _check_pusher_health()
             last_health_check_time = current_time
+        if current_time - last_bridge_heartbeat_time >= _bridge_heartbeat_interval:
+            send_bridge_heartbeat()
+            last_bridge_heartbeat_time = current_time
         _loop_error_count = 0  # 成功后重置连续错误计数
     except KeyboardInterrupt:
         log_carla("收到 KeyboardInterrupt，优雅退出")

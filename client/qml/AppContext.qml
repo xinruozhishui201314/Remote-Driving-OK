@@ -107,6 +107,13 @@ QtObject {
         var wsc = webrtcClient
         if (wsc !== null && wsc.isConnected === true)
             return true
+        
+        // [Diagnostic] 增加诊断行，当按钮置灰时明确告诉开发者是哪里的判断没过
+        if (typeof (rd_debug_video_gate) !== "undefined" && rd_debug_video_gate) {
+            console.log("[Client][UI][Gate] videoStreamsConnected=false: wsm=" + (wsm !== null) + 
+                        " wsm.anyConn=" + (wsm ? wsm.anyConnected : "N/A") + 
+                        " wsc=" + (wsc !== null) + " wsc.isConn=" + (wsc ? wsc.isConnected : "N/A"))
+        }
         return false
     }
 

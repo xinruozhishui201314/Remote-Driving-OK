@@ -98,15 +98,23 @@ check_lint() {
         fi
     fi
 
-    # 1.1e Python 语法检查 (carla-bridge)
-    echo -n "Python 语法检查 (carla-bridge)..."
-    if python3 -m py_compile "${PROJECT_ROOT}/carla-bridge/carla_bridge.py" >/dev/null 2>&1; then
+    # 1.1e Python 语法检查
+    echo -n "Python 语法检查 (carla-bridge & scripts)..."
+    PYTHON_ERRORS=0
+    for py_file in "${PROJECT_ROOT}/carla-bridge"/*.py "${PROJECT_ROOT}/scripts"/*.py; do
+        if [ -f "$py_file" ]; then
+            if ! python3 -m py_compile "$py_file" >/dev/null 2>&1; then
+                echo -e "\n${RED}✗ 发现 Python 语法错误：$(basename "$py_file")${NC}"
+                python3 -m py_compile "$py_file" 2>&1 | head -n 5
+                PYTHON_ERRORS=$((PYTHON_ERRORS + 1))
+            fi
+        fi
+    done
+
+    if [ $PYTHON_ERRORS -eq 0 ]; then
         echo -e "${GREEN}✓${NC}"
         PASSED=$((PASSED + 1))
     else
-        echo -e "${RED}✗${NC}"
-        echo -e "${RED}发现 Python 语法错误：${NC}"
-        python3 -m py_compile "${PROJECT_ROOT}/carla-bridge/carla_bridge.py" 2>&1 | head -n 5
         FAILED=$((FAILED + 1))
     fi
     if [ -f "${PROJECT_ROOT}/scripts/docker-push-with-registry-probe.sh" ]; then

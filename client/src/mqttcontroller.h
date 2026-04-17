@@ -95,7 +95,7 @@ class MqttController : public QObject {
   void sendControlCommand(const QJsonObject &command);
 
   // 组合控制指令（常用）
-  void sendDriveCommand(double steering, double throttle, double brake, int gear = 1);
+  void sendDriveCommand(double steering, double throttle, double brake, int gear = 1, double speed = 0.0);
   void sendSpeedCommand(double speed);  // 目标速度 (0.0 到 100.0 km/h)
   void sendEmergencyStopCommand(
       bool enable);  // 急停命令 (enable=true: 执行急停, enable=false: 解除急停)

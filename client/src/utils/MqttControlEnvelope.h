@@ -34,7 +34,7 @@ QJsonObject buildGear(int gear, qint64 timestampMs);
 QJsonObject buildSweep(const QString& sweepType, bool active, qint64 timestampMs);
 QJsonObject buildLight(const QString& lightType, bool active);
 QJsonObject buildDrive(double steering, double throttle, double brake, int gear,
-                       qint64 timestampMs);
+                       double speed, qint64 timestampMs);
 QJsonObject buildStartStream(qint64 timestampMs);
 QJsonObject buildStopStream(qint64 timestampMs);
 QJsonObject buildRemoteControl(bool enable, qint64 timestampMs);

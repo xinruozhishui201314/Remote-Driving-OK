@@ -112,13 +112,14 @@ QJsonObject MqttControlEnvelope::buildLight(const QString& lightType, bool activ
 }
 
 QJsonObject MqttControlEnvelope::buildDrive(double steering, double throttle, double brake,
-                                            int gear, qint64 timestampMs) {
+                                            int gear, double speed, qint64 timestampMs) {
   QJsonObject cmd;
   cmd[QStringLiteral("type")] = QStringLiteral("drive");
   cmd[QStringLiteral("steering")] = qBound(-1.0, steering, 1.0);
   cmd[QStringLiteral("throttle")] = qBound(0.0, throttle, 1.0);
   cmd[QStringLiteral("brake")] = qBound(0.0, brake, 1.0);
   cmd[QStringLiteral("gear")] = gear;
+  cmd[QStringLiteral("speed")] = qBound(0.0, speed, 100.0);
   cmd[QStringLiteral("emergency_stop")] = false;
   cmd[QStringLiteral("timestampMs")] = timestampMs;
   return cmd;

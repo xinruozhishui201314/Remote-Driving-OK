@@ -241,6 +241,21 @@ echo "[entrypoint] USE_PYTHON_BRIDGE=$USE_PYTHON_BRIDGE CARLA_PY3_OK=$CARLA_PY3_
 
 # 6) 运行 Bridge（前台，成为 PID 1）
 if [ "$USE_PYTHON_BRIDGE" = "1" ] && [ "$CARLA_PY3_OK" = "1" ] && [ -f "$BRIDGE_DIR/carla_bridge.py" ]; then
+  # 6.0) 核心安全检查：Python 语法校验（防止由于语法错误导致容器静默无限重启）
+  echo "[entrypoint] 正在对 $BRIDGE_DIR/carla_bridge.py 进行 Python 语法检查..."
+  # ★ 最终修复：使用 ast.parse() 仅在内存中进行语法树解析，完全不涉及 py_compile 的物理文件写入逻辑。
+  # 彻底规避只读文件系统下 py_compile 尝试写入 __pycache__ 导致的 OSError。
+  _CHECK_PY="python3"
+  [ -x /usr/bin/python3.7 ] && _CHECK_PY="/usr/bin/python3.7"
+  if ! $_CHECK_PY -c "import ast; ast.parse(open('$BRIDGE_DIR/carla_bridge.py').read())" >/dev/null 2>&1; then
+    echo "[entrypoint] ★★★ FATAL ERROR: $BRIDGE_DIR/carla_bridge.py 语法校验失败！ ★★★"
+    echo "[entrypoint] 详情如下："
+    $_CHECK_PY -c "import ast; ast.parse(open('$BRIDGE_DIR/carla_bridge.py').read())" 2>&1 | head -n 20
+    echo "[entrypoint] 链路中断：由于 Bridge 代码存在语法错误，无法启动推流，链路退出。"
+    exit 1
+  fi
+  echo "[entrypoint] Python 语法检查通过 ✓"
+
   for whl in /home/carla/PythonAPI/carla/dist/carla-*-py3-none-any.whl /home/carla/PythonAPI/carla/dist/carla-*-cp*.whl; do
     if [ -f "$whl" ]; then
       echo "[entrypoint] 尝试与服务器同版 carla: $whl"
