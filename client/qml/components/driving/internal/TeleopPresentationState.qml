@@ -96,6 +96,10 @@ Item {
             console.log("[Client][UI][Teleop] Emergency stop activated: " + reason)
             root.emergencyStopPressed = true
         }
+        function onTargetSpeedForcedChanged(speed) {
+            console.log("[Client][UI][Teleop][Sync] TargetSpeed forced to " + speed + " by backend safety logic")
+            root.targetSpeed = speed
+        }
     }
 
     Connections {
@@ -122,6 +126,11 @@ Item {
 
     onCurrentGearChanged: {
         gearChanged(currentGear)
+
+        if (targetSpeed !== 0.0) {
+            console.log("[Client][UI][Teleop][Safety] Gear changed, clearing local targetSpeed intent")
+            targetSpeed = 0.0
+        }
 
         var remoteOk = (svcVehicleStatus
                 && (svcVehicleStatus.remoteControlEnabled === true || svcVehicleStatus.drivingMode === "远驾"))

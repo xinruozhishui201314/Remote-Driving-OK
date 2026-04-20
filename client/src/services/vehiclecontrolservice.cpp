@@ -83,13 +83,16 @@ class VehicleControlWorker : public QObject {
 
       // [RootCauseFix] 必须要合并 targetSpeed，否则硬件采样（始终为0）会冲掉 UI 的巡航设定
       if (std::abs(input.targetSpeed - m_lastPollSpeed) < 0.001) {
-          if (input.targetSpeed != current.targetSpeed && teleopTraceEnvEnabled()) {
-              qInfo().noquote() << "[Client][Control][Merge] Speed preserved from UI:" << current.targetSpeed 
-                                << "(Hardware zero ignored)";
+          if (input.targetSpeed != current.targetSpeed) {
+              qInfo().noquote() << "[Client][Control][Audit] TargetSpeed Merged: Previous=" << input.targetSpeed 
+                                << "New(FromUI)=" << current.targetSpeed 
+                                << "Reason=HardwareIdle_UIActive";
           }
           input.targetSpeed = current.targetSpeed;
       } else {
-          qInfo().noquote() << "[Client][Control][Merge] Speed updated from Hardware:" << input.targetSpeed;
+          qInfo().noquote() << "[Client][Control][Audit] TargetSpeed Overwritten: Previous=" << current.targetSpeed 
+                            << "New(FromHW)=" << input.targetSpeed 
+                            << "Reason=HardwareInputDetected";
           m_lastPollSpeed = input.targetSpeed;
       }
 
@@ -628,8 +631,11 @@ void VehicleControlService::setGear(int gear) {
 
   if (input.gear != gear || emergencyRecovered) {
     input.gear = gear;
+    input.targetSpeed = 0.0; // [FIX] 切换档位时清除目标速度，防止误加速
     input.timestamp = TimeUtils::nowUs();
     m_latestInput.store(input);
+    
+    emit targetSpeedForcedChanged(0.0);
     
     // ★ 核心修复：同步到硬件采样器，防止下次采样被旧状态覆盖
     if (m_sampler) {
@@ -673,8 +679,12 @@ void VehicleControlService::requestEmergencyStop() {
   // ★ 安全增强：更新最新输入状态，确保控制环后续 tick 维持急停
   IInputDevice::InputState input = m_latestInput.load();
   input.emergencyStop = true;
+  input.targetSpeed = 0.0; // [FIX] 急停后清除目标速度
+  input.gear = 0;          // [FIX] 急停后强制归 N 档
   input.timestamp = TimeUtils::nowUs();
   m_latestInput.store(input);
+  
+  emit targetSpeedForcedChanged(0.0);
   
   if (m_sampler) {
     m_sampler->syncDeviceState(input);

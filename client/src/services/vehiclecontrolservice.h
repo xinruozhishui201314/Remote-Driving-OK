@@ -127,6 +127,7 @@ class VehicleControlService : public QObject {
   void commandSent(const ControlCommand& cmd);
   void safetyWarning(const QString& reason);
   void emergencyStopActivated(const QString& reason);
+  void targetSpeedForcedChanged(double speed);
 
  public slots:
   void noteOperatorActivity();
