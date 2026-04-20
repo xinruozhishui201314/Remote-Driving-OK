@@ -385,7 +385,9 @@ void SafetyMonitorService::stop() {
 }
 
 void SafetyMonitorService::clearEmergency() {
-  qInfo() << "[Client][SafetyMonitorService] User requested EMERGENCY CLEAR/RECOVER";
+  qInfo().noquote() << "[Client][SafetyMonitorService] User requested EMERGENCY CLEAR/RECOVER. "
+                    << "Current Status: emergencyActive=" << (m_emergencyActive.load() ? "YES" : "NO")
+                    << " allSystemsGo=" << (m_allSystemsGo.load() ? "YES" : "NO");
 
   m_emergencyActive.store(false);
   m_allSystemsGo.store(true);
@@ -396,7 +398,11 @@ void SafetyMonitorService::clearEmergency() {
 
   // 通知 FSM 恢复到 READY 态
   if (m_fsm) {
-    m_fsm->fire(SystemStateMachine::Trigger::RECOVER);
+    if (m_fsm->fire(SystemStateMachine::Trigger::RECOVER)) {
+        qInfo().noquote() << "[Client][SafetyMonitorService] FSM state transitioned to READY/DRIVE after recovery.";
+    } else {
+        qWarning().noquote() << "[Client][SafetyMonitorService] FSM REJECTED recovery trigger. Current State:" << m_fsm->currentState();
+    }
   }
 
   // 通知控制服务解除锁定（单测不链接 VehicleControlService 全量实现）
@@ -410,7 +416,7 @@ void SafetyMonitorService::clearEmergency() {
   emit allSystemsGoChanged(true);
   emit safetyStatusChanged(true);
 
-  qInfo() << "[Client][SafetyMonitorService] Emergency cleared, systems back to READY";
+  qInfo().noquote() << "[Client][SafetyMonitorService] Emergency cleared successfully. Systems back to operational mode.";
 }
 
 void SafetyMonitorService::runSafetyChecks() {

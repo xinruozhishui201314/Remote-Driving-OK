@@ -107,6 +107,12 @@ class VehicleControlWorker : public QObject {
     Q_UNUSED(s_tickCount.fetch_add(1, std::memory_order_relaxed));
 
     if (input.emergencyStop) {
+      // 增加诊断日志：每 100 次 tick (约 1s) 记录一次急停状态跳过
+      static int s_emgLogCount = 0;
+      if (s_emgLogCount++ % 100 == 0) {
+        qWarning().noquote() << "[Client][Control][Loop] Emergency stop ACTIVE, skipping normal control processing."
+                             << "InputState: gear=" << input.gear << " targetSpeed=" << input.targetSpeed;
+      }
       m_svc->requestEmergencyStop();
     } else {
       // 2. 输入处理
@@ -595,7 +601,32 @@ void VehicleControlService::sendUiCommand(const QString& type, const QVariantMap
 
 void VehicleControlService::setGear(int gear) {
   IInputDevice::InputState input = m_latestInput.load();
-  if (input.gear != gear) {
+  bool emergencyRecovered = false;
+
+  // 增加日志：记录档位请求及其当前系统状态
+  qInfo().noquote() << "[Client][VehicleControlService] setGear request:" << gear 
+                    << "current_gear=" << input.gear 
+                    << "emergency_stop_latched=" << (input.emergencyStop ? "TRUE" : "FALSE");
+
+  // ★ 核心逻辑修复：如果当前处于急停锁存状态，且用户选择了任意有效档位（R/N/D/P），
+  // 则自动清除急停状态，允许车辆恢复控车。
+  if (input.emergencyStop && (gear >= -1 && gear <= 2)) {
+      qInfo().noquote() << "[Client][Control][Recovery] Detecting gear change to" << gear 
+                        << "while in emergency stop. Automatically clearing emergency latch.";
+      
+      // 1. 先清除本地输入状态中的标记，防止下一帧 controlTick 继续触发急停
+      input.emergencyStop = false;
+      input.brake = 0.0;
+      emergencyRecovered = true;
+      
+      // 2. 通知 SafetyMonitor 整体恢复（由全链路状态机接管）
+      if (m_safety) {
+          // 使用 QueuedConnection 确保状态更新后再通知，避免死锁或竞态
+          QMetaObject::invokeMethod(m_safety.data(), "clearEmergency", Qt::QueuedConnection);
+      }
+  }
+
+  if (input.gear != gear || emergencyRecovered) {
     input.gear = gear;
     input.timestamp = TimeUtils::nowUs();
     m_latestInput.store(input);
@@ -605,7 +636,9 @@ void VehicleControlService::setGear(int gear) {
       m_sampler->syncDeviceState(input);
     }
     
-    qInfo() << "[Client][VehicleControlService] gear updated to" << gear << "(sync-to-device)";
+    qInfo().noquote() << "[Client][VehicleControlService] gear updated to" << gear 
+                      << "recovery_triggered=" << (emergencyRecovered ? "YES" : "NO")
+                      << "(sync-to-device)";
   }
 }
 
@@ -630,10 +663,13 @@ void VehicleControlService::sendDriveCommand(double steering, double throttle, d
 }
 
 void VehicleControlService::requestEmergencyStop() {
+  bool alreadyInSafetyStop = (m_safety && m_safety->emergencyActive());
+  
   // ★ 彻底修复：若已处于急停激活状态，则静默跳过，防止信号洪水和 I/O 阻塞
-  if (m_safety && m_safety->emergencyActive()) {
+  if (alreadyInSafetyStop) {
     return;
   }
+
   // ★ 安全增强：更新最新输入状态，确保控制环后续 tick 维持急停
   IInputDevice::InputState input = m_latestInput.load();
   input.emergencyStop = true;
@@ -652,7 +688,8 @@ void VehicleControlService::requestEmergencyStop() {
   emg.sequenceNumber = nextSequenceNumber();
   sendCommand(emg);
 
-  qCritical() << "[Client][VehicleControlService] EMERGENCY STOP sent";
+  qCritical().noquote() << "[Client][VehicleControlService] EMERGENCY STOP triggered."
+                        << "Reason: User/Safety request. Action: Full brake applied, Command latched.";
   notifyEmergencyStopActivated("User requested emergency stop");
 
   EmergencyStopEvent evt;
@@ -662,7 +699,7 @@ void VehicleControlService::requestEmergencyStop() {
 }
 
 void VehicleControlService::clearEmergencyStop() {
-  qInfo() << "[Client][VehicleControlService] Clearing emergency stop lock";
+  qInfo().noquote() << "[Client][VehicleControlService] Clearing emergency stop lock. System recovering to normal operation.";
 
   // 1. 重置输入采样状态
   IInputDevice::InputState input = m_latestInput.load();
@@ -692,7 +729,8 @@ void VehicleControlService::clearEmergencyStop() {
   clearCmd.sequenceNumber = nextSequenceNumber();
   sendCommand(clearCmd);
 
-  qInfo() << "[Client][VehicleControlService] EMERGENCY STOP RELEASE sent to vehicle";
+  qInfo().noquote() << "[Client][VehicleControlService] EMERGENCY STOP RELEASE command sent to vehicle."
+                    << "Resetting brake to 0.0 and releasing latch.";
 }
 
 void VehicleControlService::sendRawControlJson(const QJsonObject& obj) {
