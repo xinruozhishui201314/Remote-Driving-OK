@@ -22,6 +22,7 @@ struct e_start_session {};
 struct e_preflight_ok {};
 struct e_preflight_fail {};
 struct e_emergency_stop {};
+struct e_recover {};
 struct e_network_degrade {};
 struct e_network_recover {};
 struct e_stop_session {};
@@ -96,6 +97,7 @@ struct state_machine_def {
         state<driving_session_def> + event<e_reset> = state<s_idle>,
 
         // EMERGENCY
+        state<s_emergency> + event<e_recover> = state<s_ready>,
         state<s_emergency> + event<e_stop_session> = state<s_stopping>,
         state<s_emergency> + event<e_reset> = state<s_idle>,
         state<s_emergency> + event<e_logout> = state<s_idle>,
@@ -158,6 +160,7 @@ bool SystemStateMachine::fire(Trigger trigger) {
     case Trigger::PREFLIGHT_OK: handled = m_impl->sm.process_event(e_preflight_ok{}); break;
     case Trigger::PREFLIGHT_FAIL: handled = m_impl->sm.process_event(e_preflight_fail{}); break;
     case Trigger::EMERGENCY_STOP: handled = m_impl->sm.process_event(e_emergency_stop{}); break;
+    case Trigger::RECOVER: handled = m_impl->sm.process_event(e_recover{}); break;
     case Trigger::NETWORK_DEGRADE: handled = m_impl->sm.process_event(e_network_degrade{}); break;
     case Trigger::NETWORK_RECOVER: handled = m_impl->sm.process_event(e_network_recover{}); break;
     case Trigger::STOP_SESSION: handled = m_impl->sm.process_event(e_stop_session{}); break;
@@ -236,6 +239,7 @@ QString SystemStateMachine::triggerToString(Trigger t) {
     case Trigger::PREFLIGHT_OK: return QStringLiteral("PREFLIGHT_OK");
     case Trigger::PREFLIGHT_FAIL: return QStringLiteral("PREFLIGHT_FAIL");
     case Trigger::EMERGENCY_STOP: return QStringLiteral("EMERGENCY_STOP");
+    case Trigger::RECOVER: return QStringLiteral("RECOVER");
     case Trigger::NETWORK_DEGRADE: return QStringLiteral("NETWORK_DEGRADE");
     case Trigger::NETWORK_RECOVER: return QStringLiteral("NETWORK_RECOVER");
     case Trigger::STOP_SESSION: return QStringLiteral("STOP_SESSION");
@@ -257,6 +261,7 @@ SystemStateMachine::Trigger SystemStateMachine::stringToTrigger(const QString& n
       {"PREFLIGHT_OK", Trigger::PREFLIGHT_OK},
       {"PREFLIGHT_FAIL", Trigger::PREFLIGHT_FAIL},
       {"EMERGENCY_STOP", Trigger::EMERGENCY_STOP},
+      {"RECOVER", Trigger::RECOVER},
       {"NETWORK_DEGRADE", Trigger::NETWORK_DEGRADE},
       {"NETWORK_RECOVER", Trigger::NETWORK_RECOVER},
       {"STOP_SESSION", Trigger::STOP_SESSION},

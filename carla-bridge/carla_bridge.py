@@ -659,8 +659,10 @@ def _connect_carla():
     cl = carla.Client(CARLA_HOST, CARLA_PORT)
     cl.set_timeout(20)
     world = cl.get_world()
+    t0 = time.time()
     current_map = (world.get_map().name if world else "") or ""
-    log_carla("已连接，当前地图: %s", current_map or "(unknown)")
+    dt = time.time() - t0
+    log_carla("已连接，当前地图: %s (get_map took %.1fms)", current_map or "(unknown)", dt * 1000)
     if CARLA_MAP and CARLA_MAP not in current_map:
         log_carla("加载场景/地图: %s", CARLA_MAP)
         world = cl.load_world(CARLA_MAP)
@@ -676,6 +678,67 @@ except Exception as e:
 
 if not client:
     report_fatal_and_exit("CARLA Client 初始化失败，请检查 CARLA 服务")
+
+# ── CARLA 世界配置调优 ──────────────────────────────────────────────────────────
+try:
+    settings = world.get_settings()
+    # 强制非同步模式（异步通常对远程驾驶更宽容），设定固定的 delta 时间以稳定物理
+    settings.synchronous_mode = False
+    settings.fixed_delta_seconds = 0.05 # 20fps 物理步长
+    world.apply_settings(settings)
+    log_carla("[Tune] 已应用世界设置: sync=False, fixed_delta=0.05")
+except Exception as e:
+    _warn("Tune", "应用世界设置失败: %s", e)
+
+def carla_server_watchdog():
+    """监视 CARLA Server 进程是否存活。"""
+    server_pid_str = os.environ.get("CARLA_SERVER_PID", "-1")
+    try:
+        server_pid = int(server_pid_str)
+    except ValueError:
+        server_pid = -1
+        
+    if server_pid <= 0:
+        _warn("Watchdog", "CARLA_SERVER_PID 未设置或无效 (%s)，跳过进程级监控", server_pid_str)
+        return
+
+    log_carla("[Watchdog] 开始监控 CARLA Server PID: %d", server_pid)
+    while True:
+        try:
+            # 检查进程是否存在
+            os.kill(server_pid, 0)
+        except OSError:
+            msg = f"CARLA Server (PID {server_pid}) 已崩溃或被终止！"
+            _err("Watchdog", "★★★ %s ★★★", msg)
+            report_fatal_and_exit(msg)
+            break
+        time.sleep(2.0)
+
+def resource_monitor():
+    """周期性监控 GPU/CPU 资源，输出到日志以便追溯 OOM。"""
+    log_carla("[Monitor] 资源监控线程已启动")
+    while True:
+        try:
+            # GPU 监控 (nvidia-smi)
+            gpu_info = "N/A"
+            try:
+                gpu_info = subprocess.check_output(
+                    ["nvidia-smi", "--query-gpu=utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits"],
+                    encoding="utf-8", stderr=subprocess.DEVNULL
+                ).strip()
+            except Exception:
+                pass
+            
+            # CPU 监控 (简单的 loadavg)
+            load1, load5, load15 = os.getloadavg()
+            log_carla("[Monitor] GPU(Util%%/UsedMB/TotalMB): %s | CPU Load: %.2f, %.2f, %.2f", gpu_info, load1, load5, load15)
+        except Exception as e:
+            _warn("Monitor", "资源监控获取失败: %s", e)
+        time.sleep(10.0)
+
+# 启动辅助监控线程
+threading.Thread(target=carla_server_watchdog, daemon=True, name="CarlaWatchdog").start()
+threading.Thread(target=resource_monitor, daemon=True, name="ResourceMonitor").start()
 
 blueprint_library = world.get_blueprint_library()
 vehicle_bps = blueprint_library.filter(CARLA_VEHICLE_BP)
@@ -728,6 +791,48 @@ control_state = {
 # 安全与会话锁
 control_lock = threading.Lock()
 m_active_session_id = None  # 记录当前拥有控制权的 sessionId
+
+# --- [SystemicFix] 推流任务异步队列 ---
+# 彻底解决 start_stream 阻塞 MQTT 线程导致控制指令无法及时更新的问题
+streaming_task_queue = queue.Queue()
+
+def streaming_worker():
+    """推流工作线程：串行执行耗时的推流启动/停止任务"""
+    _log("Worker", "[推流工作线程] 启动成功，监听异步任务...")
+    while True:
+        try:
+            task = streaming_task_queue.get()
+            if task is None: break  # 退出信号
+            
+            msg_type, session_id = task
+            _log("Worker", "开始异步执行推流任务: %s (sid=%s)", msg_type, session_id)
+            
+            if msg_type == "start":
+                try:
+                    # [SystemicFix] 强制重置推流状态，确保即使上次半途失败也能重新启动
+                    spawn_cameras_and_start_pushers()
+                    with control_lock:
+                        control_state["streaming"] = True
+                    _log("Worker", "✓ 异步推流启动成功")
+                except Exception as e:
+                    _err("Worker", "异步启动推流失败: %s", e)
+            elif msg_type == "stop":
+                try:
+                    stop_streaming()
+                    with control_lock:
+                        control_state["streaming"] = False
+                    _log("Worker", "✓ 异步推流停止成功")
+                except Exception as e:
+                    _err("Worker", "异步停止推流失败: %s", e)
+            
+            streaming_task_queue.task_done()
+        except Exception as e:
+            _err("Worker", "工作线程循环异常: %s", e)
+            time.sleep(1)
+
+# 启动推流工作线程
+streaming_thread = threading.Thread(target=streaming_worker, daemon=True, name="streaming-worker")
+streaming_thread.start()
 _control_apply_count = 0    # 控制量应用计数
 _control_last_log_time = 0.0 # 上次记录控制量日志的时间
 m_last_valid_cmd_time = 0.0 # 记录最后一次收到 drive 指令的时间
@@ -1208,7 +1313,11 @@ def _apply_vehicle_control():
             manual_gear_shift=manual,
             gear=gear_num,
         )
+        t0 = time.time()
         vehicle.apply_control(ctrl)
+        dt = time.time() - t0
+        if dt > 0.05:
+            _warn("Control", "vehicle.apply_control() took %.1fms", dt * 1000)
         _control_apply_count += 1
 
         now = time.time()
@@ -1374,6 +1483,7 @@ def on_connect(client, userdata, flags, rc, *args):
         _err("MQTT", "on_connect/subscribe failed err=E_MQTT_CONN_FAILED cause=%s\n%s", e, traceback.format_exc())
 
 def on_message(client, userdata, msg):
+    global m_last_raw_warn_time
     import traceback as _tb
     try:
         raw = (msg.payload or b"")
@@ -1477,16 +1587,6 @@ def on_message(client, userdata, msg):
             if msg_type != "drive" or (int(time.time()*1000) % 5000 < 50): # 限制频率，每 5s 取样
                 log_control("[IN] 收到指令 type=%s seq=%s sid=%s delay=%dms active_sid=%s",
                             msg_type, seq, session_id, delay_ms if ts_ms > 0 else 0, m_active_session_id)
-
-        # 会话自愈逻辑：若超过 10s 未收到有效驱动指令，且收到新 session 的 start_stream，允许接管
-        with control_lock:
-            stale_session = (now_sec - m_last_valid_cmd_time > 10.0)
-            if msg_type == "start_stream" and stale_session and m_active_session_id != session_id:
-                _log("Control", "[会话接管] 检测到陈旧会话 (%.1fs 无指令) 且收到新 start_stream，更新 sessionId: %s -> %s", 
-                     now_sec - m_last_valid_cmd_time, m_active_session_id, session_id)
-                m_active_session_id = session_id
-                m_last_valid_cmd_time = now_sec # 重置时间避免连续触发
-                m_last_seq = 0 # 新会话重置序列号校验
 
         # ★ 诊断：详细记录关键指令入口
         if msg_type in ("drive", "remote_control", "emergency_stop", "speed", "gear", "start_stream"):
@@ -1595,19 +1695,28 @@ def on_message(client, userdata, msg):
                 #    control_state["brake"], control_state["gear"],
                 # )
         elif msg_type == "emergency_stop":
-            enable = payload.get("enable", True)
             with control_lock:
+                if m_active_session_id and session_id and m_active_session_id != session_id:
+                    _warn("Control", "丢弃非法 emergency_stop (sid mismatch)")
+                    return
+                enable = payload.get("enable", True)
                 control_state["emergency_stop"] = bool(enable)
             log_control("[Control] 收到 emergency_stop: enable=%s", enable)
         elif msg_type == "gear":
-            gear_val = payload.get("value", payload.get("gear"))
-            if isinstance(gear_val, (int, float)):
-                with control_lock:
-                    control_state["gear"] = int(gear_val)
-                log_control("[Control] 收到 gear: value=%d (-1=R 0=N 1=D 2=P)", int(gear_val))
-        elif msg_type == "speed":
-            speed_val = payload.get("value", payload.get("speed", 0.0))
             with control_lock:
+                if m_active_session_id and session_id and m_active_session_id != session_id:
+                    _warn("Control", "丢弃非法 gear (sid mismatch)")
+                    return
+                gear_val = payload.get("value", payload.get("gear"))
+                if isinstance(gear_val, (int, float)):
+                    control_state["gear"] = int(gear_val)
+                    log_control("[Control] 收到 gear: value=%d (-1=R 0=N 1=D 2=P)", int(gear_val))
+        elif msg_type == "speed":
+            with control_lock:
+                if m_active_session_id and session_id and m_active_session_id != session_id:
+                    _warn("Control", "丢弃非法 speed (sid mismatch)")
+                    return
+                speed_val = payload.get("value", payload.get("speed", 0.0))
                 control_state["target_speed"] = float(speed_val)
                 # [SystemicFix] 移除自动切 D 挡逻辑，挡位控制权完全由客户端 InputState 决定
                 # if control_state["target_speed"] > 0.1 and control_state["gear"] in (0, 2):
@@ -1616,50 +1725,55 @@ def on_message(client, userdata, msg):
                 pass
             log_control("[Control] 收到 speed: target=%.1f km/h", float(speed_val))
         elif msg_type == "start_stream":
-            # [RootCause] 核心安全锁自愈：若当前会话超过 10s 无控制量，允许新会话抢占推流控制权
+            # [RootCause] 核心修复：建立基于 SessionID 的独占访问机制
+            # 1. 如果已有活跃会话，拒绝来自 sid=None (如自动化脚本) 的干扰指令
+            # 2. 如果 sid 匹配或当前会话已超时 (10s 无控制量)，允许更新
             with control_lock:
                 now_sec = time.time()
                 is_stale = (now_sec - m_last_valid_cmd_time > 10.0)
-                if m_active_session_id and session_id and m_active_session_id != session_id:
-                    if not is_stale:
-                        _warn("Control", "拒绝 start_stream：已有活跃会话 %s 且未超时 (msg_sid=%s)，请检查是否多端登录", m_active_session_id, session_id)
-                        return
-                    else:
-                        _log("Control", "活跃会话 %s 已超时(%.1fs)，允许新会话 %s 接管推流控制", 
-                             m_active_session_id, now_sec - m_last_valid_cmd_time, session_id)
-                        m_active_session_id = session_id
-                elif not m_active_session_id:
+                
+                # 判定：是否允许操作
+                allow_operation = False
+                if not m_active_session_id:
+                    # 当前无锁：接受并锁定
                     m_active_session_id = session_id
-                    log_control("远驾会话锁已绑定: sid=%s", session_id)
+                    log_control("远驾会话锁已锁定: sid=%s", session_id)
+                    allow_operation = True
+                elif m_active_session_id == session_id:
+                    # sid 匹配：允许
+                    allow_operation = True
+                elif is_stale:
+                    # sid 不匹配但原会话已死：允许抢占
+                    _log("Control", "活跃会话 %s 已超时(%.1fs)，由新会话 %s 接管", 
+                         m_active_session_id, now_sec - m_last_valid_cmd_time, session_id)
+                    m_active_session_id = session_id
+                    # 允许接管后重置看门狗
+                    m_last_valid_cmd_time = now_sec
+                    m_last_seq = 0
+                    allow_operation = True
+                else:
+                    # sid 不匹配且原会话活跃：拒绝（重点！拦截 E2E 脚本干扰）
+                    _warn("Control", "★★★ [拒绝干扰] 拦截到非会话 start_stream 指令！当前正在远驾(sid=%s)，来源sid=%s", 
+                          m_active_session_id, session_id)
+                    allow_operation = False
 
-            log_control("★★★ [MQTT][IN] 收到 start_stream，触发推流重启链路 (sid=%s) ★★★", session_id)
-            # [SystemicFix] 强制重置推流状态，确保即使上次半途失败也能重新启动
-            try:
-                # 若已有相机但 ZLM 无流，可能是 pusher 挂了，尝试重启
-                spawn_cameras_and_start_pushers()
-            except Exception as e:
-                _err("ZLM", "spawn_cameras_and_start_pushers 严重异常: %s", e)
-                import traceback
-                _err("ZLM", "Traceback: %s", traceback.format_exc())
+                if not allow_operation:
+                    return
 
-            with control_lock:
-                control_state["streaming"] = True
-            log_control("✓ 推流状态已置为 streaming=True (vin=%s)", VIN)
+            # [RootCause] 核心修复：异步化推流控制逻辑
+            # 将耗时的 spawn_cameras_and_start_pushers 推入任务队列，立即释放 MQTT 回调线程
+            log_control("★★★ [MQTT][IN] 收到 start_stream，已推入异步队列 (sid=%s) ★★★", session_id)
+            streaming_task_queue.put(("start", session_id))
 
         elif msg_type == "stop_stream":
             with control_lock:
+                # 同样的独占逻辑：只有持有锁的 sid 才能停止推流
                 if m_active_session_id and session_id and m_active_session_id != session_id:
                     _warn("Control", "拒绝 stop_stream：sid 不匹配 (active=%s, msg=%s)", m_active_session_id, session_id)
                     return
 
-            log_control("★★★ [MQTT][IN] 收到 stop_stream，正在停止推流链路 ★★★")
-            try:
-                stop_streaming()
-            except Exception as e:
-                _err("ZLM", "stop_streaming 异常: %s", e)
-            with control_lock:
-                control_state["streaming"] = False
-            log_control("✓ 推流状态已重置为 streaming=False (vin=%s)", VIN)
+            log_control("★★★ [MQTT][IN] 收到 stop_stream，已推入异步队列 ★★★")
+            streaming_task_queue.put(("stop", session_id))
         elif msg_type == "remote_control_ack":
             log_control("收到远驾接管确认消息")
             pass
@@ -1696,10 +1810,11 @@ mqtt_client.will_set(
 
 def mqtt_thread_func():
     log_mqtt("[MQTT] MQTT 线程启动")
-    global m_active_session_id
+    global m_active_session_id, m_last_valid_cmd_time
     while True:
         try:
-            mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+            # ★ 架构增强：将 keepalive 从 60s 降至 10s，加速死链检测（配合 LWT 实现毫秒级离线感知）
+            mqtt_client.connect(MQTT_BROKER, MQTT_PORT, keepalive=10)
             log_mqtt("[MQTT] 连接成功 broker=%s:%s，进入 loop_forever 接收 vehicle/control", MQTT_BROKER, MQTT_PORT)
             mqtt_client.loop_forever()
         except Exception as e:
@@ -1776,12 +1891,23 @@ def _update_spectator_follow_vehicle():
     if not SPECTATOR_FOLLOW_VEHICLE:
         return
     try:
+        t0_spec = time.time()
         spectator = world.get_spectator()
+        dt_spec = time.time() - t0_spec
+        if dt_spec > 0.05:
+            _warn("Spectator", "world.get_spectator() took %.1fms", dt_spec * 1000)
+
         if spectator is None:
             if SPECTATOR_DEBUG or _spectator_update_count == 0:
                 _warn("Spectator", "world.get_spectator() 返回 None（无头模式时可能无 spectator）")
             return
+        
+        t0_vtrans = time.time()
         v_transform = vehicle.get_transform()
+        dt_vtrans = time.time() - t0_vtrans
+        if dt_vtrans > 0.05:
+            _warn("Spectator", "vehicle.get_transform() took %.1fms", dt_vtrans * 1000)
+
         yaw_rad = math.radians(v_transform.rotation.yaw)
         if SPECTATOR_VIEW_MODE == "driver":
             dx = SPECTATOR_OFFSET_DRIVER_X * math.cos(yaw_rad)
@@ -1797,7 +1923,13 @@ def _update_spectator_follow_vehicle():
             z=v_transform.location.z + dz,
         )
         spectator_transform = carla.Transform(spectator_loc, v_transform.rotation)
+        
+        t0_set = time.time()
         spectator.set_transform(spectator_transform)
+        dt_set = time.time() - t0_set
+        if dt_set > 0.05:
+            _warn("Spectator", "spectator.set_transform() took %.1fms", dt_set * 1000)
+
         _spectator_update_count += 1
         now = time.time()
         if SPECTATOR_DEBUG or (_spectator_update_count <= 3) or (now - _spectator_last_log_time >= 10):
@@ -1819,13 +1951,25 @@ while True:
     try:
         current_time = time.time()
         if current_time - last_control_time >= (1.0 / CONTROL_HZ):
+            t0 = time.time()
             _apply_vehicle_control()
+            dt = time.time() - t0
+            if dt > 0.05: # > 50ms warning
+                _warn("Main", "Control iteration took too long: %.1fms", dt * 1000)
             last_control_time = current_time
         if current_time - last_status_time >= (1.0 / STATUS_HZ):
+            t0 = time.time()
             send_status()
+            dt = time.time() - t0
+            if dt > 0.05:
+                _warn("Main", "Status iteration took too long: %.1fms", dt * 1000)
             last_status_time = current_time
         if SPECTATOR_FOLLOW_VEHICLE and current_time - last_spectator_time >= (1.0 / SPECTATOR_UPDATE_HZ):
+            t0 = time.time()
             _update_spectator_follow_vehicle()
+            dt = time.time() - t0
+            if dt > 0.1: # > 100ms warning
+                _warn("Main", "Spectator update took too long: %.1fms", dt * 1000)
             last_spectator_time = current_time
         if current_time - last_cam_stats_time >= _cam_stats_interval:
             _report_cam_stats()

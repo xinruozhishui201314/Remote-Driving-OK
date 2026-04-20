@@ -248,6 +248,7 @@ void AuthManager::onLoginReply(QNetworkReply *reply) {
   }
 
   // 安全存储令牌
+  m_refreshToken = refreshToken;
   storeTokensSecurely(token, refreshToken, expiresIn);
 
   QString username = m_pendingUsername;
@@ -419,14 +420,40 @@ void AuthManager::onRefreshReply(QNetworkReply *reply) {
     return;
   }
 
+  int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
   if (reply->error() != QNetworkReply::NoError) {
-    qWarning().noquote() << "[Client][Auth] token 刷新失败，触发重新登录 error="
-                         << reply->errorString();
+    qWarning().noquote() << "[Client][Auth] token 刷新失败 statusCode=" << statusCode
+                         << " error=" << reply->errorString();
+
+    // ★ 架构增强：实现指数退避重试（最多 3 次）
+    if (m_refreshRetryCount < MAX_REFRESH_RETRY) {
+      m_refreshRetryCount++;
+      int backoffMs = 1000 * (1 << (m_refreshRetryCount - 1)); // 1s, 2s, 4s
+      qInfo().noquote() << "[Client][Auth] 尝试第" << m_refreshRetryCount << "次重试，延迟"
+                        << backoffMs << "ms";
+      QTimer::singleShot(backoffMs, this, &AuthManager::refreshToken);
+      reply->deleteLater();
+      m_refreshReply = nullptr;
+      return;
+    }
+
+    // 重试耗尽后的策略：如果是活跃驾驶状态，暂不登出，进入「无令牌保护期」
+    if (m_isDrivingActive) {
+      qCritical().noquote() << "[Client][Auth] 令牌刷新重试耗尽，但处于 DRIVING 状态，暂时维持会话以防断电";
+      // 可以在此处 emit 一个警告信号给 UI
+    } else {
+      qWarning().noquote() << "[Client][Auth] 令牌刷新重试耗尽，触发登出";
+      logout();
+    }
+
     reply->deleteLater();
     m_refreshReply = nullptr;
-    logout();
     return;
   }
+
+  // 刷新成功，重置计数器
+  m_refreshRetryCount = 0;
 
   QByteArray data = reply->readAll();
   QJsonParseError error;
@@ -461,13 +488,12 @@ void AuthManager::onRefreshReply(QNetworkReply *reply) {
       emit tokenRefreshed(m_authToken);
       saveCredentials();
 
-      qDebug().noquote() << "[Client][Auth] 令牌刷新成功";
+      qDebug().noquote() << "[Client][Auth] 令牌刷新成功，有效时长:" << expiresIn << "s";
     } else {
-      qWarning().noquote() << "[Client][Auth] token 刷新响应中无有效 token，触发重新登录";
-      reply->deleteLater();
-      m_refreshReply = nullptr;
-      logout();
-      return;
+      qWarning().noquote() << "[Client][Auth] token 刷新响应中无有效 token，且非网络错误，可能凭证已失效";
+      if (!m_isDrivingActive) {
+        logout();
+      }
     }
   } else {
     qWarning().noquote() << "[Client][Auth] token 刷新响应 JSON 解析失败:" << error.errorString();

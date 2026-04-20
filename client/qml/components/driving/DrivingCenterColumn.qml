@@ -1276,12 +1276,12 @@ ColumnLayout {
                                     spacing: 1
                                 
                                 Text {
-                                    text: "⛔"
+                                    text: facade.teleop.emergencyStopPressed ? "✅" : "⛔"
                                     font.pixelSize: facade.teleop.emergencyStopPressed ? 10 : 12
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
                                 Text {
-                                    text: "急停"
+                                    text: facade.teleop.emergencyStopPressed ? "恢复" : "急停"
                                     color: facade.teleop.emergencyStopPressed ? "#FFFFFF" : "#CCDDEE"
                                     font.pixelSize: 10
                                     font.bold: true
@@ -1317,41 +1317,39 @@ ColumnLayout {
                                     anchors.fill: parent
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
-                                    console.log("[Client][UI][EmergencyStop] ========== 急停按钮点击 ==========")
-                                    console.log("[Client][UI][EmergencyStop] 当前目标速度: " + facade.teleop.targetSpeed)
-                                    console.log("[Client][UI][EmergencyStop] 急停按钮状态: " + (facade.teleop.emergencyStopPressed ? "已按下" : "未按下"))
-                                    
-                                    // Plan 4.1: E-Stop is highest priority. Send regardless of remoteControlEnabled state check.
-                                    // However, we keep the logging.
-                                    var remoteControlEnabled = false;
-                                    if (facade.appServices.vehicleStatus) {
-                                        remoteControlEnabled = (facade.appServices.vehicleStatus.drivingMode === "远驾");
-                                    }
-                                    
-                                    facade.teleop.emergencyStopPressed = true
-                                    console.log("[Client][UI][EmergencyStop] 急停按钮状态已更新为: 已按下（红色）")
-                                    
-                                    // Disable UI immediately to prevent double-click
-                                    emergencyStopButton.enabled = false;
-                                    
-                                        // ★ 使用统一发送接口 (DataChannel 优先)
-                                        facade.teleop.targetSpeed = 0.0
-                                        targetSpeedInput.text = "0.0"
+                                        console.log("[Client][UI][EmergencyStop] ========== 急停/恢复按钮点击 ==========")
                                         
-                                        facade.teleop.emergencyStopPressed = true
-                                        emergencyStopButton.enabled = false;
-
-                                        var ssmEs = facade.appServices.systemStateMachine
-                                        if (ssmEs && typeof ssmEs.fireByName === "function")
-                                            ssmEs.fireByName("EMERGENCY_STOP")
-                                        var vcEs = facade.appServices.vehicleControl
-                                        if (vcEs && typeof vcEs.requestEmergencyStop === "function")
-                                            vcEs.requestEmergencyStop()
-                                        else {
-                                            facade.teleop.sendControlCommand("brake", { value: 1.0 })
-                                            facade.teleop.sendControlCommand("speed", { value: 0.0 })
+                                        if (facade.teleop.emergencyStopPressed) {
+                                            console.log("[Client][UI][EmergencyStop] 正在执行恢复...")
+                                            facade.teleop.emergencyStopPressed = false
+                                            emergencyStopButton.enabled = true
+                                            
+                                            var smRec = facade.appServices.safetyMonitor
+                                            if (smRec && typeof smRec.clearEmergency === "function")
+                                                smRec.clearEmergency()
+                                            
+                                            console.log("[Client][UI][EmergencyStop] ✓ 已发送恢复请求")
+                                        } else {
+                                            console.log("[Client][UI][EmergencyStop] 正在执行急停...")
+                                            console.log("[Client][UI][EmergencyStop] 当前目标速度: " + facade.teleop.targetSpeed)
+                                            
+                                            facade.teleop.emergencyStopPressed = true
+                                            facade.teleop.targetSpeed = 0.0
+                                            if (typeof targetSpeedInput !== "undefined")
+                                                targetSpeedInput.text = "0.0"
+                                            
+                                            var ssmEs = facade.appServices.systemStateMachine
+                                            if (ssmEs && typeof ssmEs.fireByName === "function")
+                                                ssmEs.fireByName("EMERGENCY_STOP")
+                                            var vcEs = facade.appServices.vehicleControl
+                                            if (vcEs && typeof vcEs.requestEmergencyStop === "function")
+                                                vcEs.requestEmergencyStop()
+                                            else {
+                                                facade.teleop.sendControlCommand("brake", { value: 1.0 })
+                                                facade.teleop.sendControlCommand("speed", { value: 0.0 })
+                                            }
+                                            console.log("[Client][UI][EmergencyStop] ✓ 已发送急停命令")
                                         }
-                                        console.log("[Client][UI][EmergencyStop] ✓ 已通过统一接口发送急停命令")
                                         console.log("[Client][UI][EmergencyStop] ========================================")
                                     }
                                 }

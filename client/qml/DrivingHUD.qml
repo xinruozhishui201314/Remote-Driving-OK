@@ -37,6 +37,7 @@ Item {
 
     // 控制信号
     signal emergencyStopRequested()
+    signal emergencyRecoverRequested()
     signal keyPressed(int key)
     signal keyReleased(int key)
 
@@ -383,7 +384,55 @@ Item {
             id: emergencyArea
             anchors.fill: parent
             hoverEnabled: true
-            onClicked: root.emergencyStopRequested()
+            onClicked: {
+                if (safetyStatusModel.emergencyStop) {
+                    root.emergencyRecoverRequested()
+                } else {
+                    root.emergencyStopRequested()
+                }
+            }
+        }
+    }
+
+    // ── ★ 恢复驾驶按钮 ──────────────────────────────────────────────
+    Rectangle {
+        id: recoverBtn
+        anchors.horizontalCenter: parent.horizontalCenter
+        anchors.bottom: bottomHUD.top
+        anchors.bottomMargin: theme.marginLarge * 2
+        width:  220; height: 64; radius: 32
+        color:  "#2E7D32" // Material Design Green 800
+        border.color: "white"; border.width: 2
+        visible: safetyStatusModel.emergencyStop
+        z: 10001
+
+        RowLayout {
+            anchors.centerIn: parent
+            spacing: 12
+            Text {
+                text: "↩"
+                color: "white"
+                font.pixelSize: 32
+            }
+            Text {
+                text: "恢复远程驾驶"
+                color: "white"
+                font.pixelSize: 22
+                font.bold: true
+                font.family: root.chineseFont
+            }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: root.emergencyRecoverRequested()
+        }
+
+        SequentialAnimation on scale {
+            running: recoverBtn.visible
+            loops: Animation.Infinite
+            NumberAnimation { from: 1.0; to: 1.08; duration: 800; easing.type: Easing.InOutQuad }
+            NumberAnimation { from: 1.08; to: 1.0; duration: 800; easing.type: Easing.InOutQuad }
         }
     }
 

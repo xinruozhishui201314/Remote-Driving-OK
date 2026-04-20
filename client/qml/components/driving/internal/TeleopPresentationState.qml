@@ -75,6 +75,30 @@ Item {
             ? svcVehicleStatus.speed : 0.0
 
     Connections {
+        target: facade && facade.appServices ? facade.appServices.safetyMonitor : null
+        enabled: target !== null
+        function onEmergencyStopTriggered(reason) {
+            console.log("[Client][UI][Teleop] SafetyMonitor: Emergency stop triggered: " + reason)
+            root.emergencyStopPressed = true
+        }
+        function onSafetyStatusChanged(allOk) {
+            if (allOk) {
+                console.log("[Client][UI][Teleop] SafetyMonitor: Systems recovered, resetting E-Stop state")
+                root.emergencyStopPressed = false
+            }
+        }
+    }
+
+    Connections {
+        target: facade && facade.appServices ? facade.appServices.vehicleControl : null
+        enabled: target !== null
+        function onEmergencyStopActivated(reason) {
+            console.log("[Client][UI][Teleop] Emergency stop activated: " + reason)
+            root.emergencyStopPressed = true
+        }
+    }
+
+    Connections {
         target: svcVehicleStatus
         enabled: svcVehicleStatus !== null && svcMqtt && svcMqtt.mqttBrokerConnected
         function onSpeedChanged() {

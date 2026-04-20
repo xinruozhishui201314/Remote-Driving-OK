@@ -86,6 +86,10 @@ class AuthManager : public QObject {
   void setUnitTestServerUrl(const QString &url);
   void setUnitTestAuthToken(const QString &token);
 
+  /** 设置是否处于活跃驾驶状态（用于保护令牌过期不立即登出） */
+  void setDrivingActive(bool active) { m_isDrivingActive = active; }
+  bool isDrivingActive() const { return m_isDrivingActive; }
+
  private slots:
   void onLoginReply(QNetworkReply *reply);
   void onRefreshReply(QNetworkReply *reply);
@@ -118,12 +122,15 @@ class AuthManager : public QObject {
   qint64 m_tokenExpiresIn = 0;            // 令牌过期时间戳
   qint64 m_tokenIssuedAt = 0;             // 令牌发放时间
   QString m_refreshToken;                 // Refresh token（安全存储）
+  int m_refreshRetryCount = 0;            // 刷新重试计数（★ 架构增强）
+  static constexpr int MAX_REFRESH_RETRY = 3; // 最大重试次数
   KeystoreManager *m_keystore = nullptr;  // 安全存储管理器
   QTimer *m_tokenExpiryTimer = nullptr;   // 令牌过期检查定时器
 
   QNetworkAccessManager *m_networkManager = nullptr;
   QNetworkReply *m_currentReply = nullptr;  // 登录请求 reply
   QNetworkReply *m_refreshReply = nullptr;  // token 刷新 reply（独立，避免与登录 reply 竞态）
+  bool m_isDrivingActive = false;           // 是否处于活跃驾驶状态（★ 架构增强）
 
   // JWT 安全存储的 key 前缀
   static constexpr const char *KEY_ACCESS_TOKEN = "access_token";

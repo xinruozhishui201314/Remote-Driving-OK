@@ -384,6 +384,35 @@ void SafetyMonitorService::stop() {
   emit allSystemsGoChanged(false);
 }
 
+void SafetyMonitorService::clearEmergency() {
+  qInfo() << "[Client][SafetyMonitorService] User requested EMERGENCY CLEAR/RECOVER";
+
+  m_emergencyActive.store(false);
+  m_allSystemsGo.store(true);
+  {
+    QMutexLocker lock(&m_reasonMutex);
+    m_emergencyReason.clear();
+  }
+
+  // 通知 FSM 恢复到 READY 态
+  if (m_fsm) {
+    m_fsm->fire(SystemStateMachine::Trigger::RECOVER);
+  }
+
+  // 通知控制服务解除锁定（单测不链接 VehicleControlService 全量实现）
+#ifndef REMOTE_DRIVING_UNIT_TEST
+  if (m_control) {
+    m_control->clearEmergencyStop();
+  }
+#endif
+
+  emit emergencyActiveChanged();
+  emit allSystemsGoChanged(true);
+  emit safetyStatusChanged(true);
+
+  qInfo() << "[Client][SafetyMonitorService] Emergency cleared, systems back to READY";
+}
+
 void SafetyMonitorService::runSafetyChecks() {
   if (m_worker) {
     // 同线程直接调，异线程排队（单测通常在同线程执行以保证同步）

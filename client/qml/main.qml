@@ -516,6 +516,41 @@ ApplicationWindow {
             }
             
             Button {
+                text: "恢复驾驶"
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: AppContext.safetyMonitor && AppContext.safetyMonitor.emergencyActive
+                onClicked: {
+                    console.log("[Client][UI][Safety] User manually recovering from E-STOP")
+                    if (AppContext.safetyMonitor) {
+                        AppContext.safetyMonitor.clearEmergency()
+                    }
+                }
+                contentItem: Text {
+                    text: parent.text
+                    font.pixelSize: 20
+                    font.bold: true
+                    color: "white"
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                    font.family: window.chineseFont || ""
+                }
+                background: Rectangle {
+                    implicitWidth: 200
+                    implicitHeight: 60
+                    color: parent.pressed ? "#1B5E20" : "#2E7D32"
+                    border.color: "white"
+                    border.width: 2
+                    radius: 30
+                }
+                
+                SequentialAnimation on scale {
+                    loops: Animation.Infinite
+                    NumberAnimation { from: 1.0; to: 1.05; duration: 600; easing.type: Easing.InOutQuad }
+                    NumberAnimation { from: 1.05; to: 1.0; duration: 600; easing.type: Easing.InOutQuad }
+                }
+            }
+            
+            Button {
                 text: "重置会话"
                 anchors.horizontalCenter: parent.horizontalCenter
                 onClicked: {

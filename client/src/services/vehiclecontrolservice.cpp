@@ -108,93 +108,92 @@ class VehicleControlWorker : public QObject {
 
     if (input.emergencyStop) {
       m_svc->requestEmergencyStop();
-      return;
-    }
+    } else {
+      // 2. 输入处理
+      auto processed = m_svc->processInput(input);
 
-    // 2. 输入处理
-    auto processed = m_svc->processInput(input);
-
-    // ★ 核心修复：输入链路活跃度监控 (Input Link Watchdog)
-    // 2025/2026 规范修正：有效输入不仅包含物理踏板(throttle/brake)，也包含逻辑时速意图(targetSpeed)。
-    // 这样在“松开按键巡航”时，即使油门为0，看门狗也能识别到驾驶员的持续意图。
-    const int64_t nowMs = TimeUtils::wallClockMs();
-    bool hasEffectiveInput = (std::abs(processed.steeringAngle) > 0.001 || 
-                              processed.throttle > 0.001 || 
-                              processed.brake > 0.001 ||
-                              processed.targetSpeed > 0.1); 
-    
-    if (hasEffectiveInput) {
-      m_svc->m_lastEffectiveInputMs.store(nowMs, std::memory_order_relaxed);
-    }
-
-    // 检查静默状态：操作员有活动（来自 UI）但采样器持续上报 0
-    const int64_t lastActivity = m_svc->m_lastOperatorActivityMs.load(std::memory_order_relaxed);
-    const int64_t lastEffective = m_svc->m_lastEffectiveInputMs.load(std::memory_order_relaxed);
-    
-    // 如果 1s 内有 UI 活动，但采样器超过 silentThresholdMs 没有有效输入
-    bool isSilent = false;
-    if (nowMs - lastActivity < 1000) {
-      if (nowMs - lastEffective > m_svc->m_config.silentThresholdMs) {
-        isSilent = true;
-      }
-    }
-
-    if (isSilent != m_svc->m_inputLinkSilent.load()) {
-      m_svc->m_inputLinkSilent.store(isSilent);
-      auto svc = m_svc;
-      QMetaObject::invokeMethod(svc, [svc, isSilent]() {
-        emit svc->inputLinkSilentChanged(isSilent);
-      }, Qt::QueuedConnection);
+      // ★ 核心修复：输入链路活跃度监控 (Input Link Watchdog)
+      // 2025/2026 规范修正：有效输入不仅包含物理踏板(throttle/brake)，也包含逻辑时速意图(targetSpeed)。
+      // 这样在“松开按键巡航”时，即使油门为0，看门狗也能识别到驾驶员的持续意图。
+      const int64_t nowMs = TimeUtils::wallClockMs();
+      bool hasEffectiveInput = (std::abs(processed.steeringAngle) > 0.001 || 
+                                processed.throttle > 0.001 || 
+                                processed.brake > 0.001 ||
+                                processed.targetSpeed > 0.1); 
       
-      if (isSilent) {
-        qCritical() << "[Client][Control][Watchdog] ⚠ 检测到静默输入链路！"
-                    << "UI 有活动但控制环数据持续为 0。可能原因：焦点丢失、映射冲突或采样器断路。";
+      if (hasEffectiveInput) {
+        m_svc->m_lastEffectiveInputMs.store(nowMs, std::memory_order_relaxed);
       }
-    }
 
-    // 3. 延迟补偿预测
-    auto cmdHandle = m_svc->commandPool().acquireHandle();
-    auto& cmd = *cmdHandle;
-    
-    // 初始化命令基础信息 (2025/2026 规范：从热路径对象池获取)
-    cmd.steeringAngle = processed.steeringAngle;
-    cmd.throttle = processed.throttle;
-    cmd.brake = processed.brake;
-    cmd.gear = processed.gear;
-    cmd.targetSpeed = processed.targetSpeed; // [Crucial] 注入时速意图
-    cmd.emergencyStop = processed.emergencyStop;
-    cmd.timestamp = TimeUtils::wallClockMs();
-    cmd.sequenceNumber = m_svc->nextSequenceNumber();
+      // 检查静默状态：操作员有活动（来自 UI）但采样器持续上报 0
+      const int64_t lastActivity = m_svc->m_lastOperatorActivityMs.load(std::memory_order_relaxed);
+      const int64_t lastEffective = m_svc->m_lastEffectiveInputMs.load(std::memory_order_relaxed);
+      
+      // 如果 1s 内有 UI 活动，但采样器超过 silentThresholdMs 没有有效输入
+      bool isSilent = false;
+      if (nowMs - lastActivity < 1000) {
+        if (nowMs - lastEffective > m_svc->m_config.silentThresholdMs) {
+          isSilent = true;
+        }
+      }
 
-    if (m_svc->m_config.enablePrediction && m_svc->m_predictor) {
-      auto pred = m_svc->m_predictor->predict(processed, m_svc->m_currentRTTMs.load());
-      cmd.predictedSteeringAngle = pred.predictedSteeringAngle;
-      cmd.predictionHorizonMs = pred.predictionHorizonMs;
-    } else {
-      cmd.predictedSteeringAngle = processed.steeringAngle;
-      cmd.predictionHorizonMs = 0.0;
-    }
+      if (isSilent != m_svc->m_inputLinkSilent.load()) {
+        m_svc->m_inputLinkSilent.store(isSilent);
+        auto svc = m_svc;
+        QMetaObject::invokeMethod(svc, [svc, isSilent]() {
+          emit svc->inputLinkSilentChanged(isSilent);
+        }, Qt::QueuedConnection);
+        
+        if (isSilent) {
+          qCritical() << "[Client][Control][Watchdog] ⚠ 检测到静默输入链路！"
+                      << "UI 有活动但控制环数据持续为 0。可能原因：焦点丢失、映射冲突或采样器断路。";
+        }
+      }
 
-    // 4. 速率限制（无锁，因为只在此线程运行）
-    const double dt = 1.0 / m_svc->m_config.controlRateHz;
-    const double maxSteeringDelta = m_svc->m_config.maxSteeringRateRadPerSec * dt;
-    
-    // 对预测后的转向角应用物理限制
-    const double steeringDelta = cmd.predictedSteeringAngle - m_svc->m_lastCommand.steeringAngle;
-    if (std::abs(steeringDelta) > maxSteeringDelta) {
-      cmd.steeringAngle =
-          m_svc->m_lastCommand.steeringAngle + std::copysign(maxSteeringDelta, steeringDelta);
-    } else {
-      cmd.steeringAngle = cmd.predictedSteeringAngle;
-    }
+      // 3. 延迟补偿预测
+      auto cmdHandle = m_svc->commandPool().acquireHandle();
+      auto& cmd = *cmdHandle;
+      
+      // 初始化命令基础信息 (2025/2026 规范：从热路径对象池获取)
+      cmd.steeringAngle = processed.steeringAngle;
+      cmd.throttle = processed.throttle;
+      cmd.brake = processed.brake;
+      cmd.gear = processed.gear;
+      cmd.targetSpeed = processed.targetSpeed; // [Crucial] 注入时速意图
+      cmd.emergencyStop = processed.emergencyStop;
+      cmd.timestamp = TimeUtils::wallClockMs();
+      cmd.sequenceNumber = m_svc->nextSequenceNumber();
 
-    m_svc->m_lastCommand = cmd;
+      if (m_svc->m_config.enablePrediction && m_svc->m_predictor) {
+        auto pred = m_svc->m_predictor->predict(processed, m_svc->m_currentRTTMs.load());
+        cmd.predictedSteeringAngle = pred.predictedSteeringAngle;
+        cmd.predictionHorizonMs = pred.predictionHorizonMs;
+      } else {
+        cmd.predictedSteeringAngle = processed.steeringAngle;
+        cmd.predictionHorizonMs = 0.0;
+      }
 
-    // 5. 发送
-    if (m_svc->m_safety && !m_svc->m_safety->allSystemsGo()) {
-      m_svc->sendNeutralCommand();
-    } else {
-      m_svc->sendCommand(cmd);
+      // 4. 速率限制（无锁，因为只在此线程运行）
+      const double dt = 1.0 / m_svc->m_config.controlRateHz;
+      const double maxSteeringDelta = m_svc->m_config.maxSteeringRateRadPerSec * dt;
+      
+      // 对预测后的转向角应用物理限制
+      const double steeringDelta = cmd.predictedSteeringAngle - m_svc->m_lastCommand.steeringAngle;
+      if (std::abs(steeringDelta) > maxSteeringDelta) {
+        cmd.steeringAngle =
+            m_svc->m_lastCommand.steeringAngle + std::copysign(maxSteeringDelta, steeringDelta);
+      } else {
+        cmd.steeringAngle = cmd.predictedSteeringAngle;
+      }
+
+      m_svc->m_lastCommand = cmd;
+
+      // 5. 发送
+      if (m_svc->m_safety && !m_svc->m_safety->allSystemsGo()) {
+        m_svc->sendNeutralCommand();
+      } else {
+        m_svc->sendCommand(cmd);
+      }
     }
 
     // 6. 统计
@@ -631,6 +630,10 @@ void VehicleControlService::sendDriveCommand(double steering, double throttle, d
 }
 
 void VehicleControlService::requestEmergencyStop() {
+  // ★ 彻底修复：若已处于急停激活状态，则静默跳过，防止信号洪水和 I/O 阻塞
+  if (m_safety && m_safety->emergencyActive()) {
+    return;
+  }
   // ★ 安全增强：更新最新输入状态，确保控制环后续 tick 维持急停
   IInputDevice::InputState input = m_latestInput.load();
   input.emergencyStop = true;
@@ -656,6 +659,40 @@ void VehicleControlService::requestEmergencyStop() {
   evt.reason = "User emergency stop";
   evt.source = EmergencyStopEvent::Source::USER;
   EventBus::instance().publish(evt);
+}
+
+void VehicleControlService::clearEmergencyStop() {
+  qInfo() << "[Client][VehicleControlService] Clearing emergency stop lock";
+
+  // 1. 重置输入采样状态
+  IInputDevice::InputState input = m_latestInput.load();
+  input.emergencyStop = false;
+  input.brake = 0.0;
+  input.timestamp = TimeUtils::nowUs();
+  m_latestInput.store(input);
+
+  if (m_sampler) {
+    m_sampler->syncDeviceState(input);
+  }
+
+  // 2. 发送解除指令到 MQTT (enable: false)（单测目标不链接 mqttcontroller.cpp）
+#ifndef VEHICLE_CONTROL_SERVICE_UNIT_TEST
+  if (m_mqtt) {
+    m_mqtt->sendEmergencyStopCommand(false);
+  }
+#else
+  Q_UNUSED(m_mqtt);
+#endif
+
+  // 3. 发送一次中立命令（带刹车 0），确保覆盖车端状态
+  ControlCommand clearCmd{};
+  clearCmd.emergencyStop = false;
+  clearCmd.brake = 0.0;
+  clearCmd.timestamp = TimeUtils::wallClockMs();
+  clearCmd.sequenceNumber = nextSequenceNumber();
+  sendCommand(clearCmd);
+
+  qInfo() << "[Client][VehicleControlService] EMERGENCY STOP RELEASE sent to vehicle";
 }
 
 void VehicleControlService::sendRawControlJson(const QJsonObject& obj) {

@@ -343,8 +343,15 @@ int main(int argc, char *argv[]) {
       });
   QObject::connect(systemStateMachine.get(), &SystemStateMachine::stateChanged, &app,
                    [fsm = systemStateMachine.get(),
-                    vs = vehicleStatus.get()](const QString &newName, const QString & /*old*/) {
+                    vs = vehicleStatus.get(),
+                    am = authManager.get()](const QString &newName, const QString & /*old*/) {
                      {
+                       // ★ 架构增强：将驾驶状态同步至 AuthManager，开启令牌保护
+                       if (am) {
+                         bool driving = (newName == QLatin1String("DRIVING") || newName == QLatin1String("DEGRADED"));
+                         am->setDrivingActive(driving);
+                       }
+
                        if (newName != QLatin1String("PRE_FLIGHT") || !fsm || !vs)
                          return;
                        if (!vs->remoteControlEnabled())

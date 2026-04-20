@@ -3,6 +3,8 @@
 #include <QDebug>
 #include <QFile>
 #include <QProcess>
+#include <QMutex>
+#include <QMutexLocker>
 
 #ifdef ENABLE_VAAPI
 #include <adapters/media/VAAPIDecoder.h>
@@ -10,6 +12,11 @@
 #include <unistd.h>
 #include <va/va.h>
 #include <va/va_drm.h>
+
+// ★ 架构增强：解决多线程并发初始化 libva 导致的 malloc() heap corruption 崩溃
+static QMutex s_vaapiProbeMutex;
+static bool s_vaapiProbeDone = false;
+static bool s_vaapiLastResult = false;
 #endif
 
 #ifdef ENABLE_NVDEC
@@ -110,6 +117,16 @@ bool DecoderFactory::isVaapiAvailable() {
     return false;
   }
 
+  // ★ 架构修复：单例互斥探测，防止 4 路流并发初始化导致驱动层堆内存破坏
+  QMutexLocker locker(&s_vaapiProbeMutex);
+  if (s_vaapiProbeDone) {
+    return s_vaapiLastResult;
+  }
+
+  // 标记探测已开始/完成（后续流将直接返回缓存结果）
+  s_vaapiProbeDone = true;
+  s_vaapiLastResult = false;
+
   // 尝试打开DRM设备并检查VAAPI能力
   static const char* kDrmNodes[] = {"/dev/dri/renderD128", "/dev/dri/renderD129",
                                     "/dev/dri/renderD130", nullptr};
@@ -183,6 +200,7 @@ bool DecoderFactory::isVaapiAvailable() {
   close(drmFd);
   qInfo() << "[Client][DecoderFactory] VAAPI hardware decode available on" << drmPath 
           << "version" << major << "." << minor;
+  s_vaapiLastResult = true; // 缓存成功结果
   return true;
 #else
   return false;

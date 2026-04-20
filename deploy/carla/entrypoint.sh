@@ -196,9 +196,17 @@ echo "[entrypoint] CARLA 启动参数: UE_MAP=$UE_MAP RENDER_OPTS='$RENDER_OPTS'
 # ── 启动 CARLA ────────────────────────────────────────────────────────────────
 # 警告：CARLA 拒绝以 root 身份运行，必须切换回 carla 用户
 # 但 ulimit -n 已在脚本开头由 root 执行，容器内所有进程将继承该限制
-CARLA_EXEC="su -s /bin/bash $CARLA_USER -c \"export DISPLAY='$DISPLAY'; cd $CARLA_ROOT && bash CarlaUE4.sh $UE_MAP $RENDER_OPTS -nosound\""
+CARLA_LOG_FILE="/workspace/logs/carla_server_raw.log"
+echo "[entrypoint] CARLA 日志将重定向至 $CARLA_LOG_FILE"
+CARLA_EXEC="su -s /bin/bash $CARLA_USER -c \"export DISPLAY='$DISPLAY'; cd $CARLA_ROOT && bash CarlaUE4.sh $UE_MAP $RENDER_OPTS -nosound -quality-level=Low\" > $CARLA_LOG_FILE 2>&1"
 eval "$CARLA_EXEC" &
 CARLA_PID=$!
+# 获取真正的 CarlaUE4-Linux-Shipping 进程 PID（eval 启动的是 bash）
+sleep 2
+REAL_CARLA_PID=$(pgrep -f "CarlaUE4-Linux-Shipping" || echo "$CARLA_PID")
+echo "$REAL_CARLA_PID" > /tmp/carla_server.pid
+export CARLA_SERVER_PID="$REAL_CARLA_PID"
+echo "[entrypoint] CARLA PID: $CARLA_SERVER_PID"
 
 # 4) 等待端口就绪（CARLA 启动较慢，等待 90 秒；Bridge 启动前再额外等待 30 秒）
 echo "[entrypoint] 等待 CARLA 端口 $CARLA_PORT ..."

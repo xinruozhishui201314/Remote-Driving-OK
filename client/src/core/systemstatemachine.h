@@ -43,6 +43,7 @@ class SystemStateMachine : public QObject {
     PREFLIGHT_OK,
     PREFLIGHT_FAIL,
     EMERGENCY_STOP,
+    RECOVER,
     NETWORK_DEGRADE,
     NETWORK_RECOVER,
     STOP_SESSION,

@@ -104,6 +104,8 @@ class VehicleControlService : public QObject {
   Q_INVOKABLE void setGear(int gear);
   Q_INVOKABLE void sendDriveCommand(double steering, double throttle, double brake, double targetSpeed = 0.0);
   Q_INVOKABLE void requestEmergencyStop();
+  /** 解除急停状态锁定 */
+  Q_INVOKABLE void clearEmergencyStop();
   Q_INVOKABLE void sendRawControlJson(const QJsonObject& obj);
 
   ControlCommand lastCommand() const { return m_lastCommand; }

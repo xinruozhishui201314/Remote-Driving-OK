@@ -72,6 +72,8 @@ class SafetyMonitorService : public QObject {
   /** 启动 50Hz 安全巡检；后端会话建立后由 SessionManager 调用（幂等）。 */
   Q_INVOKABLE virtual void start();
   Q_INVOKABLE virtual void stop();
+  /** 人工确认恢复，清除所有安全锁定状态 */
+  Q_INVOKABLE void clearEmergency();
 
   /** 手动触发一次安全检查（主要用于单测模拟时钟或强制同步检查） */
   void runSafetyChecks();
