@@ -1240,7 +1240,7 @@ ColumnLayout {
                         Text {
                             text: "目标车速 km/h"
                             color: "#9CB2DF"
-                            font.pixelSize: 11
+                            font.pixelSize: 16
                             font.bold: true
                             font.family: facade.chineseFont || font.family
                             anchors.horizontalCenter: parent.horizontalCenter
@@ -1492,7 +1492,7 @@ ColumnLayout {
                     Text {
                         text: "设备状态"
                         color: "#7B8DB8"
-                        font.pixelSize: 11
+                        font.pixelSize: 18
                         font.bold: true
                         font.family: facade.chineseFont || font.family
                         anchors.horizontalCenter: parent.horizontalCenter
@@ -1535,7 +1535,7 @@ ColumnLayout {
                             model: parent.deviceList
                             
                             Rectangle {
-                                width: 52; height: 24; radius: 6
+                                width: 60; height: 26; radius: 6
                                 color: modelData.status ? Qt.rgba(0.2, 0.8, 0.5, 0.1) : Qt.rgba(1, 0.3, 0.3, 0.1)
                                 border.width: 1
                                 border.color: modelData.status ? Qt.rgba(0.2, 0.8, 0.5, 0.25) : Qt.rgba(1, 0.3, 0.3, 0.25)
@@ -1561,7 +1561,7 @@ ColumnLayout {
                                     Text {
                                         text: modelData.name
                                         color: modelData.status ? "#88CCAA" : "#CC8888"
-                                        font.pixelSize: 9
+                                        font.pixelSize: 12
                                         font.family: facade.chineseFont || font.family
                                         anchors.verticalCenter: parent.verticalCenter
                                     }
@@ -1609,7 +1609,7 @@ ColumnLayout {
                             Text {
                                 text: "清扫状态"
                                 color: "#9CB2DF"
-                                font.pixelSize: 13
+                                font.pixelSize: 18
                                 font.bold: true
                                 font.family: facade.chineseFont || font.family
                             }
@@ -1617,7 +1617,7 @@ ColumnLayout {
                     
                         // 进度环形显示
                         Item {
-                        width: 52; height: 52
+                        width: 65; height: 65
                         anchors.horizontalCenter: parent.horizontalCenter
                         
                         property real progressValue: facade.teleop.cleaningTotal > 0 ? (facade.teleop.cleaningCurrent / facade.teleop.cleaningTotal) : 0
@@ -1670,7 +1670,7 @@ ColumnLayout {
                                 return percent + "%"
                             }
                             color: "#55CCFF"
-                            font.pixelSize: 14
+                            font.pixelSize: 16
                             font.bold: true
                             font.family: "Consolas"
                         }
@@ -1738,7 +1738,7 @@ ColumnLayout {
                         Text {
                             text: "档位选择"
                             color: "#9CB2DF"
-                            font.pixelSize: 11
+                            font.pixelSize: 16
                             font.bold: true
                             font.family: facade.chineseFont || font.family
                             anchors.horizontalCenter: parent.horizontalCenter

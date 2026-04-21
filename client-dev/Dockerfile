@@ -2,6 +2,9 @@
 FROM docker.1ms.run/library/ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
+# 强制 Qt 使用硬件加速路径
+ENV QT_XCB_GL_INTEGRATION=glx
+ENV __GLX_VENDOR_LIBRARY_NAME=nvidia
 
 # 安装基础工具和开发库
 RUN apt-get update && apt-get install -y \

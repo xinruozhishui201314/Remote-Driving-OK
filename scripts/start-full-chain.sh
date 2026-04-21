@@ -1464,6 +1464,92 @@ verify_client_container_health() {
     return 0
 }
 
+# ---------- 启动前自动诊断清单（容器运行条件门禁） ----------
+# 目标：在编译/启动客户端前，自动确认 docker 镜像环境具备真实运行条件。
+# 规则：任一“必需项”失败 -> 立即退出，避免进入编译/启动后才因 GL 门禁失败。
+run_client_runtime_preflight_checklist() {
+    echo -e "${CYAN}========== 客户端运行前诊断清单（自动门禁）==========${NC}"
+    local failed=0
+    local require_hw=0
+    if [ "${TELEOP_GPU_OPTIONAL:-0}" != "1" ] && [ "${TELEOP_REQUIRE_HW_GL:-0}" = "1" ]; then
+        require_hw=1
+    fi
+
+    # 1) 宿主 DISPLAY 与 X11 socket 必须一致
+    echo -n "  [P1] DISPLAY 与 X11 socket ... "
+    local dnum="${DISPLAY:-}"
+    dnum="${dnum#:}"
+    dnum="${dnum%%.*}"
+    if [ -n "${dnum}" ] && [ -S "/tmp/.X11-unix/X${dnum}" ]; then
+        echo -e "${GREEN}✓${NC} (DISPLAY=${DISPLAY})"
+    else
+        echo -e "${RED}✗${NC} (DISPLAY=${DISPLAY:-<unset>}，对应 socket 不存在)"
+        failed=1
+    fi
+
+    # 2) NVIDIA GL 模式下，Xauthority 必须可读且非空
+    if [ "${TELEOP_CLIENT_NVIDIA_GL:-0}" = "1" ]; then
+        echo -n "  [P2] XAUTHORITY_HOST_PATH 有效性 ... "
+        if [ -n "${XAUTHORITY_HOST_PATH:-}" ] && [ -r "${XAUTHORITY_HOST_PATH}" ] && [ -s "${XAUTHORITY_HOST_PATH}" ]; then
+            echo -e "${GREEN}✓${NC} (${XAUTHORITY_HOST_PATH})"
+        else
+            echo -e "${RED}✗${NC} (XAUTHORITY_HOST_PATH 缺失/不可读/空文件)"
+            failed=1
+        fi
+    fi
+
+    # 3) 容器必须可执行基础图形命令
+    echo -n "  [P3] 容器图形工具可用（glxinfo）... "
+    if dc_main exec -T client-dev bash -c 'command -v glxinfo >/dev/null 2>&1' 2>/dev/null; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${RED}✗${NC} (未找到 glxinfo)"
+        failed=1
+    fi
+
+    # 4) 需要硬件 GL 时，容器内必须可见 NVIDIA 设备并通过 nvidia-smi
+    if [ "$require_hw" -eq 1 ]; then
+        echo -n "  [P4] 容器 NVIDIA 设备与 nvidia-smi ... "
+        if dc_main exec -T client-dev bash -c 'test -c /dev/nvidia0 && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi -L >/dev/null 2>&1' 2>/dev/null; then
+            echo -e "${GREEN}✓${NC}"
+        else
+            echo -e "${RED}✗${NC} (/dev/nvidia0 或 nvidia-smi 不可用)"
+            failed=1
+        fi
+    fi
+
+    # 5) 需要硬件 GL 时，容器内 OpenGL 渲染器必须不是软件光栅
+    if [ "$require_hw" -eq 1 ]; then
+        echo -n "  [P5] 容器 OpenGL 渲染器（必须硬件）... "
+        local renderer
+        renderer="$(dc_main exec -T -e DISPLAY="$DISPLAY" -e XAUTHORITY=/root/.Xauthority client-dev bash -lc 'glxinfo -B 2>/dev/null | sed -n "s/^OpenGL renderer string:[[:space:]]*//p" | head -1' 2>/dev/null || true)"
+        renderer="$(printf '%s' "$renderer" | tr -d '\r')"
+        if [ -z "$renderer" ]; then
+            echo -e "${RED}✗${NC} (无法获取 OpenGL renderer)"
+            failed=1
+        elif printf '%s' "$renderer" | grep -Eqi 'llvmpipe|softpipe|swrast|lavapipe|software rasterizer'; then
+            echo -e "${RED}✗${NC} ($renderer)"
+            failed=1
+        else
+            echo -e "${GREEN}✓${NC} ($renderer)"
+        fi
+    else
+        echo -e "  [P4/P5] ${YELLOW}⊘${NC} 已启用 GPU 可选模式（跳过硬件强制项）"
+    fi
+
+    if [ "$failed" -eq 1 ]; then
+        echo -e "${RED}══════════════════════════════════════════════════════════════════════${NC}"
+        echo -e "${RED}客户端运行前诊断清单未通过：已阻断后续编译与启动。${NC}"
+        echo -e "${YELLOW}请先修复 DISPLAY/Xauthority/NVIDIA/GL 渲染器问题后重试。${NC}"
+        echo -e "${RED}══════════════════════════════════════════════════════════════════════${NC}"
+        return 1
+    fi
+
+    echo -e "${GREEN}✓ 运行前诊断清单通过，继续后续编译与启动${NC}"
+    echo ""
+    return 0
+}
+
 # ---------- 确保 client-dev 内已安装 FlatBuffers（用于协议解析）----------
 ensure_client_flatbuffers() {
     if dc_main exec -T client-dev bash -c 'command -v flatc >/dev/null 2>&1 && test -f /usr/include/flatbuffers/flatbuffers.h' 2>/dev/null; then
@@ -1814,14 +1900,18 @@ start_client() {
     if command -v xhost &>/dev/null; then
         xhost +local:docker 2>/dev/null || true
     fi
+    local _manual_compose_files="-f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml"
+    if [ "${TELEOP_CLIENT_NVIDIA_GL:-0}" = "1" ]; then
+        _manual_compose_files="${_manual_compose_files} -f ${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE}"
+    fi
     # 检查当前终端是否有可用的 X11 socket（无则说明在 SSH/无图形，只给出手动命令）
     if [ ! -S "/tmp/.X11-unix/X${DISPLAY#*:}" ]; then
         echo -e "${YELLOW}当前环境无可用图形界面（无 X11 socket），无法在此终端直接打开客户端。${NC}"
         echo -e "${GREEN}所有节点已运行。请在本机有图形界面的终端执行以下命令启动远程驾驶客户端：${NC}"
         echo ""
         echo "  xhost +local:docker"
-        echo "  # GL 栈由客户端自动选择（glxinfo/nvidia-smi）；强制软件可设 CLIENT_ASSUME_SOFTWARE_GL=1"
-        echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+        echo "  # GL 栈由脚本强制指定（glx）；通过 CLIENT_SKIP_AUTO_GL_STACK=1 禁用 C++ 自动策略"
+        echo "  docker compose ${_manual_compose_files} exec -it -e DISPLAY=${_manual_display} -e XAUTHORITY=/root/.Xauthority -e QT_QPA_PLATFORM=xcb -e CLIENT_SKIP_AUTO_GL_STACK=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -lc 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
         echo ""
         return 0
     fi
@@ -1831,11 +1921,12 @@ start_client() {
     export CLIENT_RESET_LOGIN=1
     # 2c 自动化曾用 CLIENT_AUTO_CONNECT_VIDEO=1 跳过登录；手动客户端强制关闭，避免宿主机 export 遗留进 exec
     export CLIENT_AUTO_CONNECT_VIDEO=0
+    local _manual_display="${DISPLAY:-:0}"
     echo ""
     echo -e "${CYAN}若无法打开客户端窗口（如报 Authorization required），请在本机有图形界面的终端执行：${NC}"
     echo "  xhost +local:docker"
-    echo "  # GL 栈由客户端自动选择；强制软件: CLIENT_ASSUME_SOFTWARE_GL=1"
-    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=$ZLM_VIDEO_URL -e MQTT_BROKER_URL=$MQTT_BROKER_URL client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+    echo "  # GL 栈由脚本强制指定（glx）；通过 CLIENT_SKIP_AUTO_GL_STACK=1 禁用 C++ 自动策略"
+    echo "  docker compose ${_manual_compose_files} exec -it -e DISPLAY=${_manual_display} -e XAUTHORITY=/root/.Xauthority -e QT_QPA_PLATFORM=xcb -e CLIENT_SKIP_AUTO_GL_STACK=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=${_client_log} -e ZLM_VIDEO_URL=$ZLM_VIDEO_URL -e MQTT_BROKER_URL=$MQTT_BROKER_URL client-dev bash -lc 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
     echo ""
     echo -e "${GREEN}请按以下步骤在客户端界面操作验证：${NC}"
     echo "  1) 登录（如 123 / 123）"
@@ -1888,6 +1979,16 @@ start_client() {
         )
         echo -e "${GREEN}✓ 注入视频诊断 env：CLIENT_H264_DECODE_FRAME_SUMMARY_EVERY=60 CLIENT_VIDEO_EVIDENCE_CHAIN=1 STRIPE_ROWS=1${NC}"
     fi
+    # 注入推荐的显卡环境变量
+    if [ -n "${__GLX_VENDOR_LIBRARY_NAME:-}" ]; then
+        _CLIENT_VIDEO_ENV_EXTRA+=( -e __GLX_VENDOR_LIBRARY_NAME="${__GLX_VENDOR_LIBRARY_NAME}" )
+    fi
+    if [ -n "${QT_XCB_GL_INTEGRATION:-}" ]; then
+        _CLIENT_VIDEO_ENV_EXTRA+=( -e QT_XCB_GL_INTEGRATION="${QT_XCB_GL_INTEGRATION}" )
+    fi
+    if [ -n "${NVIDIA_DRIVER_CAPABILITIES:-}" ]; then
+        _CLIENT_VIDEO_ENV_EXTRA+=( -e NVIDIA_DRIVER_CAPABILITIES="${NVIDIA_DRIVER_CAPABILITIES}" )
+    fi
     if [ "${TELEOP_CLIENT_SKIP_HW_VIDEO_DECODE:-0}" = "1" ]; then
         _CLIENT_VIDEO_ENV_EXTRA+=(
             -e CLIENT_MEDIA_HARDWARE_DECODE=0
@@ -1898,14 +1999,18 @@ start_client() {
     if [ "${TELEOP_CLIENT_NVIDIA_GL:-0}" = "1" ] && [ "${TELEOP_GPU_OPTIONAL:-0}" != "1" ] &&
         [ "${TELEOP_CLIENT_SKIP_HW_VIDEO_DECODE:-0}" != "1" ]; then
         _CLIENT_VIDEO_ENV_EXTRA+=(
+            -e CLIENT_SKIP_AUTO_GL_STACK=1
+            -e QT_XCB_GL_INTEGRATION=glx
+            -e __GLX_VENDOR_LIBRARY_NAME=nvidia
             -e CLIENT_MEDIA_HARDWARE_DECODE=1
             -e CLIENT_MEDIA_REQUIRE_HARDWARE_DECODE=1
             -e CLIENT_WEBRTC_HW_EXPORT_DMABUF=1
         )
-        echo -e "${GREEN}✓ 注入硬件视频路径：CLIENT_MEDIA_*_HARDWARE_DECODE=1 CLIENT_WEBRTC_HW_EXPORT_DMABUF=1（require=1 时硬解失败不回退软解）${NC}"
+        echo -e "${GREEN}✓ 注入硬件视频路径：CLIENT_SKIP_AUTO_GL_STACK=1 CLIENT_MEDIA_*_HARDWARE_DECODE=1 ...${NC}"
     fi
     dc_main exec -it \
         -e DISPLAY="$DISPLAY" \
+        -e XAUTHORITY=/root/.Xauthority \
         -e QT_QPA_PLATFORM=xcb \
         -e QT_LOGGING_RULES="qt.qpa.*=false" \
         -e ZLM_VIDEO_URL="$ZLM_VIDEO_URL" \
@@ -1917,7 +2022,7 @@ start_client() {
         -e "TELEOP_CLIENT_CMAKE_BUILD_TYPE=${TELEOP_CLIENT_CMAKE_BUILD_TYPE}" \
         "${_TELEOP_HW_GATE[@]}" \
         "${_CLIENT_VIDEO_ENV_EXTRA[@]}" \
-        client-dev bash -c '
+        client-dev bash -lc '
         set -e  # 任何错误立即退出
         mkdir -p /tmp/client-build && cd /tmp/client-build
         JOBS="${TELEOP_CLIENT_MAKE_JOBS:-$(nproc)}"
@@ -1960,6 +2065,11 @@ start_client() {
 # DO_* / SKIP_CARLA 已在脚本开头解析（早于 NVIDIA 预检）
 ensure_client_dev_image
 
+# 确保宿主机环境已准备好（X11 权限、NVIDIA 驱动等）
+if [ "$DO_CLIENT" -eq 1 ]; then
+    bash "$SCRIPT_DIR/setup-host-for-client.sh" || echo -e "${YELLOW}警告: 宿主机环境设置脚本执行失败，将继续尝试启动${NC}"
+fi
+
 # 执行清理（如果启用）
 if [ "$DO_CLEANUP" -eq 1 ]; then
     stop_and_cleanup_all
@@ -1992,6 +2102,9 @@ ensure_vehicle_dataset_verified
 
 # 若需要验证或启动客户端，检查中文字体和客户端编译状态（不强制安装/编译）
 if [ "$DO_VERIFY" -eq 1 ] || [ "$DO_CLIENT" -eq 1 ]; then
+    # 强制门禁：确保容器运行条件完整后，才允许继续编译/启动
+    run_client_runtime_preflight_checklist
+
     # 仅检查，不安装（镜像应已预装）
     ensure_client_chinese_font
     ensure_client_mosquitto_pub
@@ -2123,10 +2236,13 @@ if [ "$DO_CLIENT" -eq 1 ]; then
     start_client
     wait_stream_e2e_background
 else
+    _manual_compose_files="-f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml"
+    if [ "${TELEOP_CLIENT_NVIDIA_GL:-0}" = "1" ]; then
+        _manual_compose_files="${_manual_compose_files} -f ${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE}"
+    fi
     echo -e "${CYAN}未启动客户端（no-client）。所有节点已运行。手动启动远程驾驶客户端请执行：${NC}"
     echo "  xhost +local:docker"
-    echo "  # GL 栈由客户端自动选择（见 stderr [Client][DisplayPolicy]）"
-    echo "  # 视频诊断/硬解 env 与脚本内 start_client 默认一致，见本文件 _CLIENT_VIDEO_ENV_EXTRA 与 TELEOP_CLIENT_* 注释"
-    echo "  docker compose -f docker-compose.yml -f docker-compose.vehicle.dev.yml -f docker-compose.dev.yml exec -it -e DISPLAY=:0 -e QT_QPA_PLATFORM=xcb -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=$(teleop_client_log_container_path) -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -c 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
+    echo "  # GL 栈由脚本强制指定（glx）；通过 CLIENT_SKIP_AUTO_GL_STACK=1 禁用 C++ 自动策略"
+    echo "  docker compose ${_manual_compose_files} exec -it -e DISPLAY=:0 -e XAUTHORITY=/root/.Xauthority -e QT_QPA_PLATFORM=xcb -e CLIENT_SKIP_AUTO_GL_STACK=1 -e QT_XCB_GL_INTEGRATION=glx -e CLIENT_AUTO_CONNECT_VIDEO=0 -e CLIENT_LOG_FILE=$(teleop_client_log_container_path) -e ZLM_VIDEO_URL=http://zlmediakit:80 -e MQTT_BROKER_URL=mqtt://teleop-mosquitto:1883 client-dev bash -lc 'cd /tmp/client-build && ./RemoteDrivingClient --reset-login'"
     wait_stream_e2e_background
 fi

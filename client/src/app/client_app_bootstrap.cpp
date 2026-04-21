@@ -14,6 +14,7 @@
 #include <QOpenGLContext>
 #include <QOpenGLFunctions>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QSurfaceFormat>
 #include <QVariant>
@@ -21,6 +22,7 @@
 
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 
 static bool g_lastHardwarePresentationOk = false;
 /** 最近一次 OpenGL 探测的 GL_RENDERER（或 skipped/empty），供透底类故障一行指纹日志使用。 */
@@ -231,6 +233,31 @@ bool rendererStringLooksLikeSoftwareRaster(const QString &renderer) {
   return r.contains(QLatin1String("llvmpipe")) || r.contains(QLatin1String("softpipe")) ||
          r.contains(QLatin1String("software rasterizer")) ||
          r.contains(QLatin1String("lavapipe")) || r.contains(QLatin1String("swrast"));
+}
+
+bool nvidiaHintAvailableForDisplayPath() {
+#if defined(Q_OS_LINUX)
+  if (QFile::exists(QStringLiteral("/dev/nvidia0"))) {
+    return true;
+  }
+
+  FILE *pipe = ::popen(
+      "sh -c 'command -v nvidia-smi >/dev/null 2>&1 && exec timeout 3 nvidia-smi -L 2>/dev/null' "
+      "|| true",
+      "r");
+  if (!pipe) {
+    return false;
+  }
+  QString acc;
+  char buf[256];
+  while (std::fgets(buf, sizeof(buf), pipe)) {
+    acc += QString::fromLocal8Bit(buf);
+  }
+  (void)::pclose(pipe);
+  return acc.contains(QRegularExpression(QStringLiteral(R"(GPU\s+\d+:)")));
+#else
+  return false;
+#endif
 }
 
 bool hasInteractiveDisplaySession() {
@@ -517,7 +544,41 @@ int enforceHardwarePresentationGate(const OpenGlFramebufferProbeResult &r) {
 }
 
 int runDisplayEnvironmentCheck() {
-  const OpenGlFramebufferProbeResult r = probeOpenGlDefaultFramebuffer();
+  OpenGlFramebufferProbeResult r = probeOpenGlDefaultFramebuffer();
+  const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+
+#if defined(Q_OS_LINUX)
+  // Root-cause-oriented auto-remediation:
+  // If NVIDIA hints are present but xcb_egl probing lands on software rasterizer,
+  // retry with GLX once to avoid false gate failure on EGL auth path.
+  if (!r.skipped && r.success && r.rendererLooksSoftware &&
+      QGuiApplication::platformName() == QLatin1String("xcb")) {
+    const QString xcbGl = env.value(QStringLiteral("QT_XCB_GL_INTEGRATION")).trimmed().toLower();
+    if ((xcbGl.isEmpty() || xcbGl == QLatin1String("xcb_egl")) && nvidiaHintAvailableForDisplayPath()) {
+      qWarning().noquote()
+          << "[Client][GLProbe][AutoRemediate] 检测到 xcb_egl + software raster + NVIDIA 线索，"
+             "尝试切换 QT_XCB_GL_INTEGRATION=glx 后复探一次。";
+      if (!qputenv("QT_XCB_GL_INTEGRATION", "glx")) {
+        qWarning().noquote()
+            << "[Client][GLProbe][AutoRemediate] qputenv(QT_XCB_GL_INTEGRATION=glx) 失败，保持原探测结果。";
+      } else {
+        const OpenGlFramebufferProbeResult retried = probeOpenGlDefaultFramebuffer();
+        if (retried.success && !retried.rendererLooksSoftware) {
+          qInfo().noquote()
+              << "[Client][GLProbe][AutoRemediate] 复探成功，GL_RENDERER=" << retried.renderer
+              << "（已从 xcb_egl 回退到 glx）。";
+          r = retried;
+        } else {
+          qWarning().noquote()
+              << "[Client][GLProbe][AutoRemediate] 复探仍未获得硬件渲染器；保持门禁行为。"
+              << " retry_success=" << retried.success << " retry_renderer=" << retried.renderer;
+          r = retried;
+        }
+      }
+    }
+  }
+#endif
+
   if (r.skipped) {
     g_lastGlProbeRendererForDiag = QStringLiteral("(probe_skipped)");
   } else {
@@ -526,8 +587,6 @@ int runDisplayEnvironmentCheck() {
   }
   logOpenGlProbeResult(r);
   recordDisplayProbeMetrics(r);
-
-  const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
 
   if (!r.skipped && r.success) {
     const bool libglSw = envTruthyUi(env.value(QStringLiteral("LIBGL_ALWAYS_SOFTWARE")));

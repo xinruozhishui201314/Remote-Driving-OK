@@ -2,20 +2,27 @@
 # 严格预检：TELEOP_CLIENT_NVIDIA_GL=1 使用 docker-compose.client-nvidia-gl*.yml 之前必须满足的条件。
 #
 # 检查项（失败非 0 退出）：
-#   1) X11 cookie：解析为绝对路径、存在、可读、非空文件
-#   2) DISPLAY：非空（可用 TELEOP_CLIENT_NVIDIA_GL_SKIP_DISPLAY_CHECK=1 跳过，仅无头自动化）
-#   3) Docker 可将 GPU 交给容器：docker run --rm --gpus all …（可用 TELEOP_CLIENT_NVIDIA_GL_SKIP_DOCKER_GPU_TEST=1 跳过）
-#   4) 与主链路相同的 compose 合并能通过 `docker compose … config -q`
-#      - 默认依次尝试 docker-compose.client-nvidia-gl.yml（gpus: all）与
-#        docker-compose.client-nvidia-gl.deploy.yml（deploy.reservations.devices）
-#      - 已设置 TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE 时只校验该文件
+#   1) Host NVIDIA 驱动：nvidia-smi 是否可见 GPU
+#   2) Host NVIDIA Container Toolkit：nvidia-ctk 是否安装，docker --gpus all 是否可用
+#   3) X11 cookie：解析为绝对路径、存在、可读、非空文件
+#   4) DISPLAY：非空（可用 TELEOP_CLIENT_NVIDIA_GL_SKIP_DISPLAY_CHECK=1 跳过，仅无头自动化）
+#   5) Docker 可将 GPU 交给容器：docker run --rm --gpus all …（可用 TELEOP_CLIENT_NVIDIA_GL_SKIP_DOCKER_GPU_TEST=1 跳过）
+#   6) 与主链路相同的 compose 合并能通过 `docker compose … config -q`
+#
+# 自动修复项（需要 sudo 时会提示）：
+#   - 检查并建议安装 nvidia-container-toolkit
+#   - 配置 docker nvidia runtime
+#   - 设置 xhost 权限
 #
 # 用法：
 #   bash scripts/verify-client-nvidia-gl-prereqs.sh
 #   eval "$(bash scripts/verify-client-nvidia-gl-prereqs.sh --emit-export)"   # 导出 XAUTHORITY_HOST_PATH 与 TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE
 #
 # 解析顺序（cookie 文件）：
-#   XAUTHORITY_HOST_PATH → 环境变量 XAUTHORITY（若为绝对路径且为文件）→ ${HOME}/.Xauthority
+#   已设置 XAUTHORITY_HOST_PATH → 非空则只用该路径（无效则失败，不自动改）
+#   否则：XAUTHORITY（若为绝对路径且为可读非空文件）→ ~/.Xauthority →
+#   常见 GDM：/run/user/$UID/gdm/Xauthority → $XDG_RUNTIME_DIR/gdm/Xauthority
+#   均无效时回退为 ~/.Xauthority（由校验步骤报出明确错误）
 #
 set -euo pipefail
 
@@ -33,20 +40,35 @@ COMPOSE_BASE=(
 )
 
 resolve_xauthority_path() {
-  local p
+  local p c dir base candidates
   if [[ -n "${XAUTHORITY_HOST_PATH:-}" ]]; then
     p="${XAUTHORITY_HOST_PATH}"
   elif [[ -n "${XAUTHORITY:-}" && "${XAUTHORITY}" == /* && -f "${XAUTHORITY}" ]]; then
     p="${XAUTHORITY}"
   else
-    p="${HOME}/.Xauthority"
+    p=""
+    candidates=(
+      "${HOME}/.Xauthority"
+      "/run/user/$(id -u)/gdm/Xauthority"
+    )
+    if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+      candidates+=("${XDG_RUNTIME_DIR}/gdm/Xauthority")
+    fi
+    for c in "${candidates[@]}"; do
+      if [[ -f "$c" ]] && [[ -r "$c" ]] && [[ -s "$c" ]]; then
+        p="$c"
+        log "[$0] INFO 未显式设置 XAUTHORITY_HOST_PATH，已自动选用有效 X11 cookie: ${p}"
+        break
+      fi
+    done
+    [[ -z "${p}" ]] && p="${HOME}/.Xauthority"
   fi
-  # 绝对化（compose bind source 必须稳定）
-  if [[ "${p}" == /* ]]; then
-    printf '%s' "${p}"
-    return 0
+  if [[ "${p}" != /* ]]; then
+    die "X authority 路径须为绝对路径，当前: ${p}（请设置 XAUTHORITY_HOST_PATH）"
   fi
-  die "X authority 路径须为绝对路径，当前: ${p}（请设置 XAUTHORITY_HOST_PATH）"
+  dir="$(cd "$(dirname "$p")" && pwd)"
+  base="$(basename "$p")"
+  printf '%s/%s' "$dir" "$base"
 }
 
 validate_xauthority_file() {
@@ -70,6 +92,60 @@ validate_display() {
   log "[$0] OK DISPLAY=${DISPLAY}"
 }
 
+validate_host_nvidia_driver() {
+  log "[$0] 正在检查宿主机 NVIDIA 驱动..."
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    die "宿主机未检测到 nvidia-smi。请先安装 NVIDIA 驱动 (如 sudo apt install nvidia-driver-535)。"
+  fi
+  if ! nvidia-smi -L >/dev/null 2>&1; then
+    die "nvidia-smi 运行失败，可能驱动未加载或硬件异常。请检查: dmesg | grep -i nvidia"
+  fi
+  local gpu_info
+  gpu_info=$(nvidia-smi -L | head -n 1)
+  log "[$0] OK 宿主机 NVIDIA 驱动已就绪: ${gpu_info}"
+}
+
+validate_nvidia_toolkit_and_remediate() {
+  log "[$0] 正在检查 NVIDIA Container Toolkit..."
+  local has_toolkit=1
+  if ! command -v nvidia-ctk >/dev/null 2>&1; then
+    has_toolkit=0
+  fi
+
+  if [[ "${has_toolkit}" -eq 0 ]]; then
+    log "[$0] WARN 未检测到 nvidia-container-toolkit。"
+    log "[$0]      请执行以下命令安装 (Ubuntu/Debian):"
+    log "          curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg"
+    log "          curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list"
+    log "          sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit"
+    die "缺失核心组件: nvidia-container-toolkit"
+  fi
+
+  # 检查是否配置了 docker runtime
+  if ! docker info 2>/dev/null | grep -i "Runtimes:" | grep -qi "nvidia"; then
+    log "[$0] WARN Docker 未注册 nvidia runtime。"
+    log "[$0]      正在尝试自动配置 (可能需要 sudo)..."
+    if command -v sudo >/dev/null 2>&1; then
+      sudo nvidia-ctk runtime configure --runtime=docker
+      sudo systemctl restart docker
+      log "[$0] OK 已自动配置并重启 Docker。请稍候..."
+      sleep 2
+    else
+      die "请手动执行: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
+    fi
+  fi
+  log "[$0] OK NVIDIA Container Toolkit 已正确配置"
+}
+
+validate_x11_permissions() {
+  if command -v xhost >/dev/null 2>&1; then
+    log "[$0] 正在自动设置 X11 访问权限 (xhost +local:docker)..."
+    xhost +local:docker >/dev/null 2>&1 || true
+    xhost +local:root >/dev/null 2>&1 || true
+    xhost +si:localuser:root >/dev/null 2>&1 || true
+  fi
+}
+
 validate_docker_gpu() {
   if [[ "${TELEOP_CLIENT_NVIDIA_GL_SKIP_DOCKER_GPU_TEST:-0}" == "1" ]]; then
     log "[$0] WARN 已跳过 docker --gpus 探测（TELEOP_CLIENT_NVIDIA_GL_SKIP_DOCKER_GPU_TEST=1）"
@@ -78,12 +154,14 @@ validate_docker_gpu() {
   command -v docker >/dev/null 2>&1 || die "未找到 docker 命令"
   local out ec
   local ec=0
-  out="$(docker run --rm --gpus all busybox:latest true 2>&1)" || ec=$?
+  log "[$0] 正在探测 Docker GPU 穿透能力 (docker run --rm --gpus all)..."
+  out="$(docker run --rm --gpus all remote-driving-client-dev:full nvidia-smi -L 2>&1)" || ec=$?
   if [[ "${ec}" -ne 0 ]]; then
     log "${out}"
-    die "docker run --gpus all 失败（exit=${ec}）。请安装并配置 nvidia-container-toolkit，并重启 Docker；见 https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/"
+    log "[$0] ERROR: docker --gpus all 运行失败。这通常意味着 nvidia-container-toolkit 虽然安装了但未正确配置或 Docker 未重启。"
+    die "docker GPU 穿透失败。请运行: sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker"
   fi
-  log "[$0] OK docker run --rm --gpus all busybox:latest true"
+  log "[$0] OK Docker 容器内已可见 GPU: $(echo "${out}" | head -n 1)"
 
   # 额外检查 nvidia runtime 是否注册（CARLA 仿真器 docker-compose.carla.yml 强依赖此名称）
   if ! docker info 2>/dev/null | grep -i "Runtimes:" | grep -qi "nvidia"; then
@@ -140,6 +218,10 @@ main() {
 
   local mode="${1:-}"
 
+  validate_host_nvidia_driver
+  validate_nvidia_toolkit_and_remediate
+  validate_x11_permissions
+
   local x_path
   x_path="$(resolve_xauthority_path)"
   x_path="$(cd "$(dirname "${x_path}")" && pwd)/$(basename "${x_path}")"
@@ -156,6 +238,10 @@ main() {
   if [[ "${mode}" == "--emit-export" ]]; then
     printf "export XAUTHORITY_HOST_PATH=%q\n" "${XAUTHORITY_HOST_PATH}"
     printf "export TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE=%q\n" "${TELEOP_CLIENT_NVIDIA_GL_COMPOSE_FILE}"
+    printf "export __GLX_VENDOR_LIBRARY_NAME=nvidia\n"
+    printf "export TELEOP_CLIENT_NVIDIA_GL=1\n"
+    printf "export NVIDIA_DRIVER_CAPABILITIES=all\n"
+    printf "export QT_XCB_GL_INTEGRATION=glx\n"
     return 0
   fi
 
