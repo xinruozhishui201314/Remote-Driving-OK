@@ -91,6 +91,5 @@ client/deps/libdatachannel-install/*
 .aider*
 .cecli*
 
-# 开发依赖（通过脚本克隆的第三方库，不提交）
-deps/
+# 根目录 deps/ 已纳入版本库（供 Vehicle-side 等构建；不再忽略）
 logs/
