@@ -1331,9 +1331,11 @@ ColumnLayout {
                                     cursorShape: Qt.PointingHandCursor
                                     onClicked: {
                                         console.log("[Client][UI][EmergencyStop] ========== 急停/恢复按钮点击 ==========")
+                                        var ssm = facade.appServices.systemStateMachine
+                                        var currentState = ssm ? ssm.currentState : "UNKNOWN"
                                         
-                                        if (facade.teleop.emergencyStopPressed) {
-                                            console.log("[Client][UI][EmergencyStop] 正在执行恢复...")
+                                        if (facade.teleop.emergencyStopPressed || currentState === "EMERGENCY" || currentState === "STOPPING") {
+                                            console.log("[Client][UI][EmergencyStop] 正在执行恢复 (当前状态: " + currentState + ")...")
                                             facade.teleop.emergencyStopPressed = false
                                             emergencyStopButton.enabled = true
                                             
@@ -1341,7 +1343,7 @@ ColumnLayout {
                                             if (smRec && typeof smRec.clearEmergency === "function")
                                                 smRec.clearEmergency()
                                             
-                                            console.log("[Client][UI][EmergencyStop] ✓ 已发送恢复请求")
+                                            console.log("[Client][UI][EmergencyStop] ✓ 已发送恢复/重置请求")
                                         } else {
                                             console.log("[Client][UI][EmergencyStop] 正在执行急停...")
                                             console.log("[Client][UI][EmergencyStop] 当前目标速度: " + facade.teleop.targetSpeed)
@@ -1436,11 +1438,6 @@ ColumnLayout {
                                     }
                                     
                                     text = facade.teleop.targetSpeed.toFixed(1)
-                                    
-                                    if (facade.teleop.targetSpeed > 0.0) {
-                                        facade.teleop.emergencyStopPressed = false
-                                        console.log("[Client][UI][Speed] 目标速度非0，急停按钮状态已重置为: 未按下（正常颜色）")
-                                    }
                                     
                                     var remoteControlEnabled = false;
                                     if (facade.appServices.vehicleStatus) {

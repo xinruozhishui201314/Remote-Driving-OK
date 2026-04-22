@@ -389,6 +389,18 @@ void SafetyMonitorService::clearEmergency() {
                     << "Current Status: emergencyActive=" << (m_emergencyActive.load() ? "YES" : "NO")
                     << " allSystemsGo=" << (m_allSystemsGo.load() ? "YES" : "NO");
 
+  // ★ 核心修复：复位所有安全判定计数器和时间戳
+  // 这样做是为了让下一次安全检查（20ms后）看到的是最新的、正常的起始数据
+  int64_t now = safetyNowMs(); 
+  m_missedHeartbeats.store(0);           // 重置心跳丢失计数
+  m_latencyViolationCount.store(0);      // 重置延迟超限计数
+  m_lastHeartbeatMs.store(now);          // 更新最后心跳时间为当前
+  m_lastOperatorActivityMs.store(now);   // 更新操作员最后活动时间
+  m_lastControlTickMs.store(now);        // 更新控制环最后 Tick 时间
+  m_lastUiHeartbeatMs.store(now);        // 更新 UI 最后心跳时间
+  m_deadmanActive.store(true);           // 恢复后默认标记操作员在线（或等待下一次 UI 触发）
+
+
   m_emergencyActive.store(false);
   m_allSystemsGo.store(true);
   {
@@ -398,10 +410,18 @@ void SafetyMonitorService::clearEmergency() {
 
   // 通知 FSM 恢复到 READY 态
   if (m_fsm) {
-    if (m_fsm->fire(SystemStateMachine::Trigger::RECOVER)) {
-        qInfo().noquote() << "[Client][SafetyMonitorService] FSM state transitioned to READY/DRIVE after recovery.";
+    auto currentState = m_fsm->stateEnum();
+    if (currentState == SystemStateMachine::SystemState::EMERGENCY) {
+      if (m_fsm->fire(SystemStateMachine::Trigger::RECOVER)) {
+          qInfo().noquote() << "[Client][SafetyMonitorService] FSM state transitioned to READY/DRIVE after recovery.";
+      } else {
+          qWarning().noquote() << "[Client][SafetyMonitorService] FSM REJECTED recovery trigger. Current State:" << m_fsm->currentState();
+      }
+    } else if (currentState == SystemStateMachine::SystemState::STOPPING) {
+      qInfo().noquote() << "[Client][SafetyMonitorService] FSM is in STOPPING, triggering RESET to return to IDLE.";
+      m_fsm->fire(SystemStateMachine::Trigger::RESET);
     } else {
-        qWarning().noquote() << "[Client][SafetyMonitorService] FSM REJECTED recovery trigger. Current State:" << m_fsm->currentState();
+      qInfo().noquote() << "[Client][SafetyMonitorService] FSM in state" << m_fsm->currentState() << ", bypassing RECOVER trigger.";
     }
   }
 

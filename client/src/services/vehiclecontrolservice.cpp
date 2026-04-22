@@ -45,6 +45,13 @@ class VehicleControlWorker : public QObject {
   }
 
  public slots:
+  // 重置内部状态，用于紧急恢复后重新开始
+  void resetInternalState() {
+    m_lastPollEmg = false;
+    m_lastPollGear = 0; // 或者当前实际档位
+    m_lastPollSpeed = 0.0;
+  }
+
   void start() {
     m_timer.start();
   }
@@ -108,6 +115,15 @@ class VehicleControlWorker : public QObject {
 
     static std::atomic<int64_t> s_tickCount{0};
     Q_UNUSED(s_tickCount.fetch_add(1, std::memory_order_relaxed));
+
+    if (input.emergencyStop) {
+      // 允许 clearEmergencyStop() 先落地：若当前全局状态已解锁，则忽略这帧过期急停采样。
+      // 这能避免“恢复”后被采样队列中的旧 emergencyStop=true 再次锁回急停。
+      const IInputDevice::InputState latest = m_svc->m_latestInput.load();
+      if (!latest.emergencyStop) {
+        input = latest;
+      }
+    }
 
     if (input.emergencyStop) {
       // 增加诊断日志：每 100 次 tick (约 1s) 记录一次急停状态跳过
@@ -714,6 +730,12 @@ void VehicleControlService::clearEmergencyStop() {
   // 1. 重置输入采样状态
   IInputDevice::InputState input = m_latestInput.load();
   input.emergencyStop = false;
+
+  // 重置 worker 内部状态，用于紧急恢复后重新开始
+  if (m_worker) {
+    // 必须用异步调用，因为 worker 在安全线程
+    QMetaObject::invokeMethod(m_worker.get(), "resetInternalState", Qt::QueuedConnection);
+  }
   input.brake = 0.0;
   input.timestamp = TimeUtils::nowUs();
   m_latestInput.store(input);

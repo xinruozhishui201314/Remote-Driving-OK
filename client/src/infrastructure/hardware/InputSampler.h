@@ -6,7 +6,8 @@
 #include <QObject>
 #include <QThread>
 #include <QTimer>
-
+#include <QDebug>
+#include <QMutex>
 #include <atomic>
 #include <memory>
 
@@ -47,6 +48,16 @@ class InputSampler : public QObject {
       m_device->syncState(state);
     }
     m_latestInput.store(state);
+    // ★ 关键修复：清除旧的采样“回声”
+    // 1. 重置滤波器的历史值，防止平滑算法把旧的刹车/速度值带到新周期
+    m_previousFiltered = state; 
+    // 2. 清空无锁队列。防止恢复瞬间，控制环读到队列里还没消化的“旧急停”采样点
+    IInputDevice::InputState dummy;
+    while (m_queue.pop(dummy)) {
+        // 持续弹出直到队列为空
+    }
+    
+    qInfo() << "[Client][InputSampler] Device state synced and queue cleared for recovery.";
   }
 
   // 供控制线程拉取数据的无锁队列
