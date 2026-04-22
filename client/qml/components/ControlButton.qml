@@ -57,7 +57,7 @@ Rectangle {
         anchors.centerIn: parent
         text: controlButton.label
         color: controlButton.active ? "#FFFFFF" : "#DDE6FF"
-        font.pixelSize: Math.max(10, Math.min(13, controlButton.width / 4))
+        font.pixelSize: Math.max(10, Math.min(14, controlButton.width / 2.5))
         font.bold: controlButton.active
         font.family: ThemeModule.Theme.fontFamily
     }

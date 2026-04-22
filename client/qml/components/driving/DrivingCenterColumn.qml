@@ -766,7 +766,7 @@ ColumnLayout {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: "km/h"
                             color: facade.colorTextSecondary
-                            font.pixelSize: speedometerBg.width * 0.1
+                            font.pixelSize: speedometerBg.width * 0.11
                         }
                         
                         Text {
@@ -782,7 +782,7 @@ ColumnLayout {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: "档位 " + facade.teleop.displayGear
                             color: "#9CB2DF"
-                            font.pixelSize: speedometerBg.width * 0.09
+                            font.pixelSize: speedometerBg.width * 0.10
                             font.bold: true
                             font.family: facade.chineseFont || font.family
                         }
@@ -1019,7 +1019,7 @@ ColumnLayout {
                 Text {
                     text: "箱体状态"
                     color: "#9CB2DF"
-                    font.pixelSize: 11
+                    font.pixelSize: 18
                     font.bold: true
                     font.family: facade.chineseFont || font.family
                     Layout.alignment: Qt.AlignHCenter
@@ -1058,7 +1058,7 @@ ColumnLayout {
                         Text {
                             text: "水箱"
                             color: "#8899BB"
-                            font.pixelSize: 11
+                            font.pixelSize: 13
                             font.family: facade.chineseFont || font.family
                         }
                         
@@ -1145,7 +1145,7 @@ ColumnLayout {
                         Text {
                             text: "垃圾箱"
                             color: "#8899BB"
-                            font.pixelSize: 11
+                            font.pixelSize: 13
                             font.family: facade.chineseFont || font.family
                         }
                         
@@ -1240,20 +1240,33 @@ ColumnLayout {
                         Text {
                             text: "目标车速 km/h"
                             color: "#9CB2DF"
-                            font.pixelSize: 16
+                            font.pixelSize: 18
                             font.bold: true
                             font.family: facade.chineseFont || font.family
                             anchors.horizontalCenter: parent.horizontalCenter
                         }
-                    
+                        // 车端反馈车速（与 vehicle/status、CARLA 桥一致）
+                        //Column {
+                        //    spacing: 2
+                        //    width: parent.width  // ★ 严重缺陷：Row 内部子项 width: parent.width 会导致 polish 递归死循环 (QQuickItem::polish loop)
+                        Text {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            visible: facade.appServices.mqttController
+                                        && facade.appServices.mqttController.mqttBrokerConnected
+                            text: "车端 " + Math.round(facade.teleop.reportedSpeedKmh).toString() + " km/h"
+                            color: "#7AE2A8"
+                            font.pixelSize: 12
+                            font.family: facade.chineseFont || font.family
+                        }
+                        //}
                         Row {
                             anchors.horizontalCenter: parent.horizontalCenter
-                            spacing: 8
+                            spacing: 3
                         
                             // ★ 急停按钮（带动画效果，尺寸调大）
                             Rectangle {
                                 id: emergencyStopButton
-                                width: 52; height: 46; radius: 12
+                                width: 62; height: 42; radius: 12
                             
                                 // 背景渐变
                                 gradient: Gradient {
@@ -1277,7 +1290,7 @@ ColumnLayout {
                                 
                                 Text {
                                     text: facade.teleop.emergencyStopPressed ? "✅" : "⛔"
-                                    font.pixelSize: facade.teleop.emergencyStopPressed ? 10 : 12
+                                    font.pixelSize: facade.teleop.emergencyStopPressed ? 14 : 12
                                     anchors.horizontalCenter: parent.horizontalCenter
                                 }
                                 Text {
@@ -1355,29 +1368,16 @@ ColumnLayout {
                                 }
                             }
                         
-                            // 车端反馈车速（与 vehicle/status、CARLA 桥一致）
-                            Column {
-                                spacing: 2
-                                // width: parent.width  // ★ 严重缺陷：Row 内部子项 width: parent.width 会导致 polish 递归死循环 (QQuickItem::polish loop)
-                                Text {
-                                    anchors.horizontalCenter: parent.horizontalCenter
-                                    visible: facade.appServices.mqttController
-                                             && facade.appServices.mqttController.mqttBrokerConnected
-                                    text: "车端 " + Math.round(facade.teleop.reportedSpeedKmh).toString() + " km/h"
-                                    color: "#7AE2A8"
-                                    font.pixelSize: 11
-                                    font.family: facade.chineseFont || font.family
-                                }
-                            }
+                            
 
                             // ★ 目标速度输入框（美化版，尺寸调大）
                             Rectangle {
-                                width: 96; height: 42; radius: 10
+                                width: 70; height: 42; radius: 10
                                 gradient: Gradient {
                                     GradientStop { position: 0.0; color: "#182236" }
                                     GradientStop { position: 1.0; color: "#111A2C" }
                                 }
-                                border.width: 2
+                                border.width: 1
                                 border.color: targetSpeedInput.activeFocus ? "#5E93FF" : "#36507D"
                             
                                 // 聚焦光效
@@ -1403,7 +1403,7 @@ ColumnLayout {
                                 verticalAlignment: TextInput.AlignVCenter
                                 text: facade.teleop.targetSpeed.toFixed(1)
                                 color: "#E8F0FF"
-                                font.pixelSize: 17
+                                font.pixelSize: 15
                                 font.bold: true
                                 font.family: "Consolas"
                                 
@@ -1502,7 +1502,7 @@ ColumnLayout {
                     Grid {
                         columns: 2
                         rowSpacing: 4
-                        columnSpacing: 6
+                        columnSpacing: 4
                         anchors.horizontalCenter: parent.horizontalCenter
                         
                         // 定义支持绑定的设备列表 (通过 Connections 更新)
@@ -1535,7 +1535,7 @@ ColumnLayout {
                             model: parent.deviceList
                             
                             Rectangle {
-                                width: 60; height: 26; radius: 6
+                                width: 62; height: 28; radius: 6
                                 color: modelData.status ? Qt.rgba(0.2, 0.8, 0.5, 0.1) : Qt.rgba(1, 0.3, 0.3, 0.1)
                                 border.width: 1
                                 border.color: modelData.status ? Qt.rgba(0.2, 0.8, 0.5, 0.25) : Qt.rgba(1, 0.3, 0.3, 0.25)
@@ -1604,7 +1604,7 @@ ColumnLayout {
                         
                         Text {
                             text: "🧹"
-                            font.pixelSize: 16
+                            font.pixelSize: 15
                         }
                             Text {
                                 text: "清扫状态"
@@ -1738,7 +1738,7 @@ ColumnLayout {
                         Text {
                             text: "档位选择"
                             color: "#9CB2DF"
-                            font.pixelSize: 16
+                            font.pixelSize: 18
                             font.bold: true
                             font.family: facade.chineseFont || font.family
                             anchors.horizontalCenter: parent.horizontalCenter
